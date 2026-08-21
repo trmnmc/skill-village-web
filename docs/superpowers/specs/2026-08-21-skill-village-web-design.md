@@ -20,7 +20,8 @@ The core loop nobody has built (verified by a GitHub scan on 2026-08-21): **the 
 | Personality engine | ~80% LLM / 20% procedural; Haiku for fast chatter; auth inherited from the user's existing Claude Code login (no login screen) |
 | Stakes | Gentle liveness + growth: moods/needs evolve with absence, creatures never die, levels never decay, no work is ever lost |
 | Scope | Full "Living World" (village + live session reactions + autonomous life), built in one implementation push with ordered milestones |
-| Creature art | Full mix-and-match generation from Kenney Monster Builder parts (CC0), governed by five anti-cursed rules (§4) |
+| Creature art | Procedurally generated **pixel grids defined in code** — hand-authored archetypes with feature variants and a locked palette (§4). No third-party art assets. |
+| Visual reference | The animated trailer in `reference/animation-trailer/` is the visual bible for art, typography, and motion |
 
 ## 2. Game design
 
@@ -39,6 +40,7 @@ Each creature has:
 
 - **DNA** — deterministic: `SHA-256(kind + canonical name)` seeds all appearance choices. Same skill → same creature on any machine.
 - **Appearance** — generated from DNA per §4.
+- **Nickname** — a short given name distinct from the filename (Sparky for `brainstorming/`, Nit for `code-review/`). Written once by Haiku with the personality card; shown above the filename on the creature's sign. The player can rename it.
 - **Personality card** — written once at import by Haiku after reading the skill/agent content: archetype, voice, quirks, 2–3 likes/dislikes. Stored in game state; used as the system prompt for everything this creature ever says. Stable across re-syncs (external file edits update knowledge, not identity).
 - **Stats** — `mood`, `energy` (drift down with absence; care restores), `bond` (with the player; only rises), `xp`/`level` (only rise), `friendships` (per-creature affinity scores).
 - **Stage** — Egg → Hatchling → Adult → Elder. Hatchling→Adult happens the moment its file is installed and valid. Adult→Elder at a level threshold. Visual growth per stage (size, accessories).
@@ -76,23 +78,69 @@ The game must be playable at every rung:
 
 ## 4. Creature generation (anti-cursed by construction)
 
-**Pipeline:** name → SHA-256 seed → body archetype (1 of ~6) → parts (eyes, mouth, limbs, accessory — only tag-compatible ones) → palette (1 body hue + 1 accent) → a `CreatureAppearance` record (archetype id, part ids per slot, two hex colors, species markers).
+> **Reference implementation:** `reference/animation-trailer/skill-village-scene.jsx` — an animated trailer built as a Claude Design canvas that already realizes this system. It is the visual bible; constants below come from it, and the implementation should copy rather than reinvent them.
 
-Core computes that record and stops; the web package turns it into pixels. Keeping the decision separate from the drawing is what makes the generator unit-testable — the golden-set check below runs on records, not screenshots.
+**Creatures are pixel grids, not image assets.** A body archetype is an array of strings, one character per pixel, where each character is a *color role* rather than a color:
 
-**Art source:** Kenney **Monster Builder Pack** (CC0, ~170 mix-and-match parts, one consistent pixel style/scale), supplemented by Kenney Tiny Dungeon and sparklinlabs/superpowers-asset-packs (both CC0) for village tiles/props/FX.
+```js
+bean: {
+  rows: ['.X...X.', '.XXXXX.', 'XXXXXXX', 'XWWXWWX', 'XWWXWWX',
+         'XXXKXXX', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '.DD.DD.'],
+  eyes: [{ c: 1, r: 3 }, { c: 4, r: 3 }], w: 7, h: 10,
+}
+```
 
-**The five hard rules:**
+`X` body · `D` feet · `W` eye white · `K` mouth · `A` light accent · `.` transparent. Rendered as one rect per pixel at a unit size `U` (12px in the trailer) with `shapeRendering: crispEdges`.
 
-1. **Anatomy templates.** ~6 hand-made body archetypes with fixed part *slots* (anchor points). Randomness picks *which* part, never *where* it goes.
-2. **Curated part sets.** A one-time tagging pass over every part (which archetypes/slots it fits, skill-vs-agent affinity). Untagged combinations cannot be generated. This tagging pass is an explicit build task.
-3. **Palette lock.** Body hue from the agent's `color` frontmatter when present, else from DNA; accent hue offset by a fixed harmony rule; both clamped to a pastel saturation/lightness band. Clashing colors are unrepresentable.
-4. **Symmetry & scale.** Paired parts mirror; all parts render at one pixel scale.
-5. **Golden-set eyeball test.** Because generation is deterministic, the build includes a script that renders every catalog creature plus 500 random names to a contact-sheet grid for human review; bad combos get their tags fixed before ship.
+This replaces the earlier plan to composite Kenney PNG parts, and is better on every axis that matters: **no downloads, no licensing, no part-tagging pass**; a creature is ~10 strings plus three hex colors, so it is trivially serializable and diffable; and because archetype grids are hand-authored, a generated creature cannot come out anatomically wrong.
 
-**Species markers:** agents always receive a wings-or-antennae accessory slot; skills never do.
+**Pipeline:** name → SHA-256 seed → archetype → feature variants → palette → a `CreatureAppearance` record (archetype id, variant ids, three hex colors, species markers). Core computes that record and stops; the web package turns it into pixels. Keeping the decision separate from the drawing is what makes the generator unit-testable — the golden-set check below runs on records, not screenshots.
 
-**Breeding visuals:** offspring DNA splices parent part choices (each slot inherits from one parent, chosen by the child-name hash), so family resemblance is real and still deterministic.
+**Anatomy.** Eyes are **not** baked into the grid; they are overlaid at the archetype's `eyes` anchor coordinates so they can blink (lid = a body-colored rect with a dark lash line) and track a target (pupil offset ±3.5px). Everything else — mouth, feet — is grid pixels. This split is what lets one archetype carry every expression.
+
+**The four hard rules** (the fifth, part tagging, is now obsolete):
+
+1. **Hand-authored archetypes.** ~6 grids (`bean`, `mound`, `boxy`, + three more to author), each already a complete, good-looking creature. Generation varies features *within* an archetype; it never assembles a body from loose parts.
+2. **Feature variants, not free parts.** Each archetype ships a small set of alternate mouth rows, feet rows, and eye anchor pairs, authored against that grid. A variant is only ever drawn on the archetype it was authored for.
+3. **Palette lock.** Body hue from the agent's `color` frontmatter when present, else from DNA. `dark` and `lite` derive from it by fixed lightness offsets, and all three are clamped to the warm band the trailer uses (see §4.1). Two inks are shared and never vary: `#FFF9EE` eye white, `#33241C` pupil and mouth. Clashing colors are unrepresentable.
+4. **Golden-set eyeball test.** Because generation is deterministic, the build renders every catalog creature plus 500 random names to a contact-sheet grid for human review before ship.
+
+**Species markers.** Agents fly and get **wings** (`['XXX.', 'XXXX', '.XX.']`, flapping) and **antennae** (a `dark` stalk topped with a `lite` bulb, swaying); skills stay grounded and get a contact shadow. Skills use the rounder archetypes (`bean`, `mound`), agents the angular `boxy`.
+
+**Names.** Every creature has a **nickname** distinct from its filename — Sparky for `brainstorming/`, Nit for `code-review/`, Gus for `debugger.md`. The nickname is written once by Haiku alongside the personality card; the filename is shown beneath it in mono. Skills display with a trailing slash (they are folders), agents with `.md`, which is how a glance tells the two apart.
+
+**Breeding visuals:** offspring inherit archetype from one parent and each feature variant from one parent (chosen by the child-name hash), with a palette interpolated between the two. Family resemblance is real and still deterministic.
+
+### 4.1 Visual identity
+
+| | |
+|---|---|
+| **Type** | **Pixelify Sans** for creature names, signs, and headings; **IBM Plex Mono** for filenames, dialogue, and UI. |
+| **Ground** | `#171310` deep brown-black (letterbox/night), `#3A2E22` ink and outlines, `#F2E5C4` sign cream, `#FFFDF4` bubble white, `#8A6B4A` wood. |
+| **Accent** | `#D97757` clay — the one warm highlight; used sparingly. |
+| **Nature** | `#7FA85F` / `#8FB86B` foliage, `#9DBA77` moss. |
+| **Creature hues** | Mid-saturation warm pastels: `#E58C68` coral, `#B79FD6` lilac, `#9DBA77` sage, `#7FBF8A` mint, `#E2B45E` gold, `#E0A3B2` rose, `#7FB6D9` sky, `#6FBCAD` teal. |
+
+Village props (houses, trees, grass tufts, signs) are **flat colored rectangles**, not sprites — the trailer builds every one of them from plain divs. No tileset is required, which removes the last reason to ship third-party art.
+
+### 4.2 Motion vocabulary
+
+Motion is where the personality lives, and the trailer's constants are tuned. Implement these in KAPLAY rather than inventing new ones:
+
+- **Idle breathing** — `sy = 1 + sin(T·2.0 + φ)·0.028`, with `sx = 1 − (sy−1)·0.7` so volume is preserved. Flyers breathe shallower and faster (`·3.1`, `0.02`).
+- **Blink** — `(T·1000 + φ·1700) mod 3400 < 130`: a 130ms blink roughly every 3.4s.
+- **Gaze** — a slow sine picks left/centre/right; when the player interacts, creatures look at the cursor or speaker instead.
+- **Hop** — a 2.6s cycle: anticipation squash to 0.84 over 0.18s, an arc of `−sin(q·π)·64px` while stretched to 1.07, then a landing squash that recovers over 0.23s.
+- **Shadow** — width scales with height (`clamp(1 + dy/130, 0.55, 1)`), which is what sells the hop as real.
+- **Wings** — `sin(T·16 + φ·3)·26 − 8` degrees, mirrored per side. **Antennae** — `sin(T·2.3 + φ)·12` degrees.
+- **Phase offset `φ`** — every creature carries one, so the village never moves in lockstep. This single detail is most of the "living community" feeling.
+- **Punctuation** — `PuffBurst` (five cream squares on an expanding ring) on landing; floating `z` glyphs for sleep; speech bubbles that pop in on `easeOutBack` over 0.38s and shrink out over 0.28s.
+
+**Behaviours are data,** not code paths: a creature carries flags like `hopper`, `asleep`, `fly: 'roam' | 'hover'`, and the renderer reads them. Mood and energy (§2.2) select which flags are active, so a well-cared-for skill hops and a neglected one dozes.
+
+### 4.3 First-run sequence
+
+The trailer doubles as the game's cold open, and it is worth building: a terminal types `ls skills/ agents/`, then `npx skill-village`; the terminal blooms outward and fades as the ground rises; each filename flies out of the listing and lands as a creature's sign. Tagline: *"your skills folder… is alive."* Played once on first run — and replayable from the About screen — it teaches the core premise in fifteen seconds without a word of instruction.
 
 ## 5. LLM layer
 
@@ -159,7 +207,7 @@ One **Node + TypeScript** process = game server + daemon:
 
 ### 7.1 The client
 
-**`@village/web`** — Vite + TypeScript + **KAPLAY** (MIT). Renders the scrollable pixel-art village from state streamed over WebSocket and posts player intents over REST. Composites each creature at load from Kenney parts per its `CreatureAppearance`. It holds no game truth: everything it shows came from the server, and everything the player does goes back as an intent.
+**`@village/web`** — Vite + TypeScript + **KAPLAY** (MIT). Renders the scrollable pixel-art village from state streamed over WebSocket and posts player intents over REST. Draws each creature from its `CreatureAppearance` by painting the archetype grid a pixel at a time, then animates it with the §4.2 vocabulary. It holds no game truth: everything it shows came from the server, and everything the player does goes back as an intent.
 
 - **Repo layout:**
 
@@ -169,8 +217,8 @@ packages/
               parsers/validators, personality prompt assembly. Pure logic.
   server/     sim engine, LLM service, file bridge, hook ingest, scheduler,
               state store. Depends on core only.
-  web/        KAPLAY browser game + Kenney sprite compositor.
-assets/       Kenney parts + parts.manifest.json (tag curation), village tiles.
+  web/        KAPLAY browser game + grid renderer + motion vocabulary.
+reference/    the animation trailer — visual bible for art and motion.
 catalog/      adoption snapshot JSON + build script.
 docs/         specs.
 ```
@@ -211,38 +259,39 @@ Each package carries a README stating what it owns and what it must never import
 
 | Asset | License | Use |
 |---|---|---|
-| Kenney Monster Builder / Tiny Dungeon (kenney.nl) | CC0 | Creature parts, tiles |
-| sparklinlabs/superpowers-asset-packs | CC0 | Village tiles, props, FX, sounds |
 | Ido-Levi/claude-code-tamagotchi | MIT | Reference/lift: stat-decay engine patterns |
 | siegerts/tama96 | MIT | Reference: lifecycle/care state machine |
 | KAPLAY | MIT | Client game framework |
+| Pixelify Sans, IBM Plex Mono | OFL | Typography |
 | anthropics/skills (Apache-2.0 entries only) | Apache-2.0 | Catalog seed (document skills excluded) |
 | obra/superpowers | MIT | Catalog seed |
 | wshobson/agents | MIT | Catalog seed |
 | VoltAgent/awesome-claude-code-subagents | MIT | Catalog seed |
 
-Rules: preserve upstream LICENSE/attribution in the catalog metadata and installed files; an in-game "About" credits screen lists art + catalog sources. vscode-pets sprites are **not** used (cat-asset restriction; unnecessary given Kenney).
+**No third-party art is shipped.** Every creature, prop, and effect is drawn from grids and rectangles defined in this repo (§4), which removes an entire class of licensing and attribution obligation. The earlier plan to use Kenney and sparklinlabs CC0 packs — and the vscode-pets sprites before them — is dropped as unnecessary.
+
+Rules: preserve upstream LICENSE/attribution in the catalog metadata and installed files; an in-game "About" credits screen lists the catalog sources and the recycled engine references.
 
 ## 13. Testing
 
 - **Unit:** DNA→parts determinism (fixed vectors), palette-lock math (property test: no output outside the band), XP/decay math, frontmatter validators against fixture files copied from the real repos (valid + broken).
 - **Integration:** fake `claude` binary (scripted JSON responses) driving LLMService — routing, ledger, cap fallback; File bridge against a sandbox fake `$HOME` — import, adopt, hatch-install, release/restore, watcher sync; hook ingest endpoint.
-- **Asset coverage:** a test asserts every archetype and part id the generator can emit has a corresponding file in `assets/parts/` and a manifest tag, so a valid creature can never fail to draw.
+- **Grid integrity:** a test asserts every archetype grid is rectangular, uses only known color-role characters, has in-bounds eye anchors, and that every feature variant the generator can emit was authored for the archetype it lands on — so a valid creature can never fail to draw.
 - **E2E smoke:** boot server + headless browser: village renders, an adoption completes into the sandbox `~/.claude`, the new creature appears.
 - **Golden set:** the §4 contact-sheet render script, run as a build step; failures are reviewed by a human, not asserted.
 
 ## 14. Milestones (one plan, ordered)
 
-1. **M1 Core** — `@village/core`: types, DNA→appearance, part-tagging pass over the Kenney set, sim rules, file-format parsers/validators. Pure logic, fully unit-tested, no server or client yet.
+1. **M1 Core** — `@village/core`: types, DNA→appearance, authoring the ~6 archetype grids and their feature variants, sim rules, file-format parsers/validators. Pure logic, fully unit-tested, no server or client yet.
 2. **M2 Server** — state store, file bridge + first-run import, sim ticking, REST + WebSocket API. Verified with API calls only.
-3. **M3 Web village** — KAPLAY scene, sprite compositor, four zones, founding villagers visibly alive.
-4. **M4 Voice** — LLM service, personality cards, chat, canned pools, budget meter, silent-movie mode.
+3. **M3 Web village** — KAPLAY scene, grid renderer, the §4.2 motion vocabulary, four zones, founding villagers visibly alive. *The bar for this milestone is the trailer: if the village doesn't feel like `reference/animation-trailer/`, it isn't done.*
+4. **M4 Voice** — LLM service, personality cards + nicknames, chat, canned pools, budget meter, silent-movie mode.
 5. **M5 Adoption** — catalog build script + snapshot, Adoption Center, install/release/restore.
 6. **M6 Hatchery** — interview flow, draft/validate/review/install, export.
 7. **M7 Lineage** — breed (incl. DNA splicing), train (diff flow).
 8. **M8 Live reactions** — hook consent flow, ingest, XP/friendship from real sessions.
 9. **M9 Autonomous life** — headless ticking, scheduler, sub-budget, notice board.
-10. **M10 Polish** — golden-set pass, sounds/FX, About/credits, first-run experience.
+10. **M10 Polish** — golden-set pass, the §4.3 cold-open sequence, sounds/FX, About/credits.
 
 ## 15. Out of scope (v1)
 

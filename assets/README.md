@@ -1,8 +1,10 @@
 # assets
 
-Shared art, consumed by `@village/web`. All sources are **CC0** — no attribution obligation, though the in-game About screen credits them anyway.
+**No creature or scenery art lives here.** Every creature is a pixel grid defined in `@village/core`, and every prop is a flat rectangle drawn by `@village/web` — see §4 of the spec. That is deliberate: it removes all third-party art licensing from the project.
 
-- **`parts/`** — Kenney Monster Builder Pack pieces (bodies, eyes, mouths, limbs, accessories), plus `parts.manifest.json`: the one-time curation pass that tags every part with the archetypes and slots it may occupy, and its skill/agent affinity. **Nothing untagged can ever be generated** — this manifest is what keeps creatures from looking cursed.
-- **`village/`** — tiles, buildings, and props for the four zones (Kenney Tiny Dungeon + sparklinlabs/superpowers-asset-packs).
+What this folder is for:
 
-Consumed only by `@village/web`. `@village/core` names parts by id and never loads a file from here.
+- **`fonts/`** — self-hosted **Pixelify Sans** and **IBM Plex Mono** (both OFL), so the game renders correctly offline rather than depending on Google Fonts at runtime.
+- **`sfx/`** — short interaction sounds (hop, pop, chime), added in the polish milestone. Anything placed here must be CC0 or OFL-equivalent, with its source recorded in the About screen.
+
+If you find yourself adding a PNG of a creature, stop: the appearance system is the wrong shape for it, and the grid approach is what keeps creatures deterministic and diffable.

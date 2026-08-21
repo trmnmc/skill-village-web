@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; background: #171310; }
+  a { color: #D97757; } a:hover { color: #B85C3E; }
+</style>
+<script>window.OM_SCENES = '[{"name":"Terminal","dur":3.2,"desc":"A terminal lists the skills folder and launches the game"},{"name":"Bloom","dur":3,"desc":"The terminal blooms into a pixel village and filenames become creatures"},{"name":"Village","dur":6,"desc":"The village lives: hops, chatter, naps, and flying agents"},{"name":"Title","dur":2.8,"desc":"The Skill Village wordmark settles over the living village"}]';</script>
+<script>window.OM_PLAYBACK = '{"mode":"times","count":1}';</script>
+<script>window.TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{"motionEditor":true,"showSigns":true,"speechBubbles":true}/*EDITMODE-END*/;</script>
+</helmet>
+<x-import component-from-global-scope="SkillVillageApp" from="./animations-v3.jsx ./tweaks-panel.jsx ./skill-village-scene.jsx" hint-size="100%,100%"></x-import>
+</x-dc>
+</body>
+</html>
