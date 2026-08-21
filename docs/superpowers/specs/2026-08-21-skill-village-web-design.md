@@ -3,6 +3,7 @@
 **Date:** 2026-08-21
 **Status:** Approved design, pending implementation plan
 **Working title:** "Skill Village" (placeholder — rename freely)
+**Platform:** Local web app (this project). A terminal TUI variant of the same concept is designed separately in `Claude-Projects/agent-skills-tamagotchi` — independent codebase, independent decisions.
 
 ## 1. Overview
 
@@ -15,7 +16,7 @@ The core loop nobody has built (verified by a GitHub scan on 2026-08-21): **the 
 | Decision | Choice |
 |---|---|
 | Where creatures come from | Both: adopt existing (GitHub collections) **and** raise/breed new ones |
-| Form factor | Local Node server + **two independent clients**: a browser game (full fidelity) and a terminal TUI. Each lives in its own package; neither depends on the other. |
+| Form factor | Local web app: one Node server (also the daemon) + a KAPLAY browser game, split into `core` / `server` / `web` packages |
 | Personality engine | ~80% LLM / 20% procedural; Haiku for fast chatter; auth inherited from the user's existing Claude Code login (no login screen) |
 | Stakes | Gentle liveness + growth: moods/needs evolve with absence, creatures never die, levels never decay, no work is ever lost |
 | Scope | Full "Living World" (village + live session reactions + autonomous life), built in one implementation push with ordered milestones |
@@ -48,7 +49,7 @@ Each creature has:
 
 ### 2.3 The village
 
-In the web client, one scrollable pixel-art screen with four spatial zones (the terminal client presents the same four as sections of a list — §7.1):
+One scrollable pixel-art screen with four zones:
 
 1. **Homes** — installed creatures wander, idle, nap, and chat in speech bubbles.
 2. **Adoption Center** — catalog creatures (from GitHub collections, §6.2) waiting for homes; also where released creatures return.
@@ -75,9 +76,9 @@ The game must be playable at every rung:
 
 ## 4. Creature generation (anti-cursed by construction)
 
-**Pipeline:** name → SHA-256 seed → body archetype (1 of ~6) → parts (eyes, mouth, limbs, accessory — only tag-compatible ones) → palette (1 body hue + 1 accent) → a renderer-neutral `CreatureAppearance` record.
+**Pipeline:** name → SHA-256 seed → body archetype (1 of ~6) → parts (eyes, mouth, limbs, accessory — only tag-compatible ones) → palette (1 body hue + 1 accent) → a `CreatureAppearance` record (archetype id, part ids per slot, two hex colors, species markers).
 
-Core's job ends at that record; each client draws it its own way (§7.1). Everything below governs the *choices*, so both renderings inherit the same guarantees.
+Core computes that record and stops; the web package turns it into pixels. Keeping the decision separate from the drawing is what makes the generator unit-testable — the golden-set check below runs on records, not screenshots.
 
 **Art source:** Kenney **Monster Builder Pack** (CC0, ~170 mix-and-match parts, one consistent pixel style/scale), supplemented by Kenney Tiny Dungeon and sparklinlabs/superpowers-asset-packs (both CC0) for village tiles/props/FX.
 
@@ -156,35 +157,25 @@ One **Node + TypeScript** process = game server + daemon:
 - **Server:** Fastify + `ws`. Default port **8262** ("TAMA" on a phone keypad), configurable.
 - **State:** single game-state JSON with atomic writes (write-temp-then-rename) + a rolling backup, plus an append-only JSONL event log, in `~/.skill-village/` — fully separate from `~/.claude`, so the game can never corrupt real config. Creature records store a *pointer* to their source file; the file remains the single source of truth for what the tool does.
 
-### 7.1 Two clients, one village
+### 7.1 The client
 
-The browser game and the terminal TUI are **peer clients of the same server**, each in its own package, neither importing the other. They are two windows onto one village: play in the terminal during a coding session, open the browser later, and it is the same creatures in the same state — the server is the only source of truth, and both clients speak the same REST + WebSocket API.
-
-| Client | Renders | Trade-off |
-|---|---|---|
-| **`@village/web`** | Vite + TypeScript + **KAPLAY** (MIT). Scrollable pixel-art village, four spatial zones, wandering/idle animation, speech bubbles. Sprites composited at load from Kenney parts. | Full fidelity; needs a browser. |
-| **`@village/terminal`** | ANSI/ASCII creatures in a compact list view with mood, stage, level, and current activity. Chat, interview, and diff review as scrolling panes. | Lives where you already work; no spatial map, no pixel art. |
-
-**What makes this work:** `@village/core` computes a **renderer-neutral `CreatureAppearance`** — archetype id, part ids per slot, palette, species markers — and stops there. Core never draws. The web client composites those part ids from Kenney PNGs; the terminal client maps the same ids through an ASCII part table and the same palette through 256-color ANSI. One creature, one DNA, two renderings, and `dataviz` is recognizably `dataviz` in both.
-
-The terminal client can attach to a server the web app already started, or start one itself; a second launch detects the running instance rather than forking the village (§11).
+**`@village/web`** — Vite + TypeScript + **KAPLAY** (MIT). Renders the scrollable pixel-art village from state streamed over WebSocket and posts player intents over REST. Composites each creature at load from Kenney parts per its `CreatureAppearance`. It holds no game truth: everything it shows came from the server, and everything the player does goes back as an intent.
 
 - **Repo layout:**
 
 ```
 packages/
   core/       shared brain — types, DNA→appearance, sim rules, file-format
-              parsers/validators, personality prompt assembly. Imports no client.
+              parsers/validators, personality prompt assembly. Pure logic.
   server/     sim engine, LLM service, file bridge, hook ingest, scheduler,
-              state store. Depends on core; never imports a client.
+              state store. Depends on core only.
   web/        KAPLAY browser game + Kenney sprite compositor.
-  terminal/   TUI client + ASCII part table.
 assets/       Kenney parts + parts.manifest.json (tag curation), village tiles.
 catalog/      adoption snapshot JSON + build script.
 docs/         specs.
 ```
 
-Each package carries a README stating what it owns and what it must never import; those boundaries are the design, not documentation of it.
+Each package carries a README stating what it owns and what it must never import; those boundaries are the design, not documentation of it. The payoff for keeping `core` free of both server and browser concerns is that the generator, sim math, and file validators are testable as plain functions — see §13.
 
 ## 8. File formats & validation (verified against docs 2026-08-21)
 
@@ -236,8 +227,8 @@ Rules: preserve upstream LICENSE/attribution in the catalog metadata and install
 
 - **Unit:** DNA→parts determinism (fixed vectors), palette-lock math (property test: no output outside the band), XP/decay math, frontmatter validators against fixture files copied from the real repos (valid + broken).
 - **Integration:** fake `claude` binary (scripted JSON responses) driving LLMService — routing, ledger, cap fallback; File bridge against a sandbox fake `$HOME` — import, adopt, hatch-install, release/restore, watcher sync; hook ingest endpoint.
-- **Client parity:** both renderers consume the same `CreatureAppearance` fixtures; a test asserts every archetype and part id has an ASCII mapping, so a creature can never render in the browser but crash the terminal.
-- **E2E smoke:** boot server + headless browser: village renders, an adoption completes into the sandbox `~/.claude`, the new creature appears. Same flow scripted against the terminal client.
+- **Asset coverage:** a test asserts every archetype and part id the generator can emit has a corresponding file in `assets/parts/` and a manifest tag, so a valid creature can never fail to draw.
+- **E2E smoke:** boot server + headless browser: village renders, an adoption completes into the sandbox `~/.claude`, the new creature appears.
 - **Golden set:** the §4 contact-sheet render script, run as a build step; failures are reviewed by a human, not asserted.
 
 ## 14. Milestones (one plan, ordered)
@@ -249,12 +240,9 @@ Rules: preserve upstream LICENSE/attribution in the catalog metadata and install
 5. **M5 Adoption** — catalog build script + snapshot, Adoption Center, install/release/restore.
 6. **M6 Hatchery** — interview flow, draft/validate/review/install, export.
 7. **M7 Lineage** — breed (incl. DNA splicing), train (diff flow).
-8. **M8 Terminal client** — ASCII renderer + part table, list view, chat/interview/review panes against the same API. *Doubles as the audit of the core/server boundary: if this milestone is painful, a client concern leaked into the server.*
-9. **M9 Live reactions** — hook consent flow, ingest, XP/friendship from real sessions.
-10. **M10 Autonomous life** — headless ticking, scheduler, sub-budget, notice board.
-11. **M11 Polish** — golden-set pass, sounds/FX, About/credits, first-run experience, both clients.
-
-M8 can move earlier (straight after M4) to validate the API boundary sooner, at the cost of reworking the TUI as later flows land.
+8. **M8 Live reactions** — hook consent flow, ingest, XP/friendship from real sessions.
+9. **M9 Autonomous life** — headless ticking, scheduler, sub-budget, notice board.
+10. **M10 Polish** — golden-set pass, sounds/FX, About/credits, first-run experience.
 
 ## 15. Out of scope (v1)
 

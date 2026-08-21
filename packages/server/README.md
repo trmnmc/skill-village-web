@@ -15,4 +15,4 @@ The one process that is both game server and daemon. Holds all game truth; clien
 
 **Depends on:** `@village/core`.
 
-**Must never import:** `web` or `terminal`. If the server needs to know how something looks, the design is wrong.
+**Must never import:** `web`. If the server needs to know how something looks, the design is wrong.
