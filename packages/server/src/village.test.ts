@@ -331,6 +331,71 @@ describe('chat', () => {
     expect(village.getState().creatures['skill:busy']!.stats.bond).toBe(24);
   });
 
+  it('answers from the pool when the service throws instead of refusing', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('unlucky', skillFixture('unlucky'));
+    const throwing: LlmService = {
+      probe: async () => 'full',
+      mode: () => 'full',
+      async request(req) {
+        if (!isChat(req.prompt)) return { ok: true, text: CARD };
+        // The service writes the ledger through the village's own commit, so a
+        // disk failure surfaces as a throw from request() rather than an ok:false.
+        throw new Error('the disk went away mid-request');
+      },
+    };
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000, llm: throwing });
+
+    const reply = await village.chat('skill:unlucky', 'hello?');
+    expect(reply.source).toBe('canned');
+    expect(reply.text).toBe('mm.'); // its own pool, not the stock line
+    expect(village.getState().creatures['skill:unlucky']!.stats.bond).toBe(16);
+  });
+
+  it('survives a refresh that starts while the model is thinking', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('talker', skillFixture('talker'));
+
+    let thinking = () => {};
+    let letGo = () => {};
+    let stall: Promise<void> = Promise.resolve();
+    const stalling: LlmService = {
+      probe: async () => 'full',
+      mode: () => 'full',
+      async request(req) {
+        if (!isChat(req.prompt)) return { ok: true, text: CARD };
+        thinking();
+        await stall;
+        return { ok: true, text: 'still here.' };
+      },
+    };
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000, llm: stalling });
+    await village.chat('skill:talker', 'first'); // persona written; bond 10 + 6 = 16
+
+    // The watcher fires refresh() un-awaited, so it really does run alongside a
+    // chat. updateShadow reads paths.shadowDir, so this getter says when the
+    // refresh has finished scanning and is mirroring files — the window where a
+    // reconcile built on a copy of the state read too early would revert things.
+    const realShadowDir = sandbox.paths.shadowDir;
+    let mirroring = () => {};
+    const mirrored = new Promise<void>((resolve) => { mirroring = resolve; });
+    Object.defineProperty(sandbox.paths, 'shadowDir', {
+      configurable: true,
+      get() { mirroring(); return realShadowDir; },
+    });
+
+    const asked = new Promise<void>((resolve) => { thinking = resolve; });
+    stall = new Promise<void>((resolve) => { letGo = resolve; });
+    const talking = village.chat('skill:talker', 'second');
+    await asked; // the chat is waiting on the model
+    const refreshing = village.refresh();
+    await mirrored; // the refresh is past its scan
+    letGo(); // so the chat commits from inside the refresh
+    await Promise.all([talking, refreshing]);
+
+    expect(village.getState().creatures['skill:talker']!.stats.bond).toBe(22);
+  });
+
   it('writes one persona when two chats reach a stranger at once', async () => {
     sandbox = await makeSandbox();
     await sandbox.writeSkill('twin', skillFixture('twin'));

@@ -6,7 +6,7 @@ import { reconcile } from './bridge/reconcile.js';
 import { scanVillage } from './bridge/scan.js';
 import type { LlmConfig, LlmState } from './llm/ledger.js';
 import { generatePersona } from './llm/persona.js';
-import type { LlmMode, LlmService } from './llm/service.js';
+import type { LlmMode, LlmReply, LlmService } from './llm/service.js';
 import { appendEvents, type VillageEvent } from './state/events.js';
 import type { VillageState } from './state/schema.js';
 import { loadState, saveState } from './state/store.js';
@@ -145,23 +145,32 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
   const refresh = async () => {
     const at = now();
     const scan = await scanVillage(paths, at);
-    const result = reconcile(state, scan, at);
 
-    // Every present creature is re-mirrored on every refresh, so the shadow copy
+    // Every creature on disk is re-mirrored on every refresh, so the shadow copy
     // never goes stale — it always holds the file's latest content, not just what
-    // it looked like when first imported. Departed creatures' mirrors are then
-    // promoted to the archive. The guarantee comes from mirroring being
-    // unconditional and repeated on every call, not from the order of these two
-    // loops: reconcile() guarantees a creature id is either present (mirrored) or
-    // departed (released), never both, so the loops never touch the same file.
-    for (const creature of Object.values(result.state.creatures)) {
+    // it looked like when first imported. Mirroring straight from the scan covers
+    // exactly the creatures reconcile is about to keep, since reconcile takes
+    // each one's path from the scan and only ever adds or drops whole creatures.
+    for (const creature of scan.creatures) {
       await updateShadow(paths, creature);
     }
+
+    // Fold the scan in and commit with nothing awaited in between. The scan and
+    // the mirroring above take real time, and a chat, a persona card or a ledger
+    // spend may well have committed while they ran — reconciling a copy of
+    // `state` read before all that would revert every one of them, and then save
+    // the result as the newest truth.
+    const result = reconcile(state, scan, at);
+    await commit(result.state, result.events);
+
+    // Departed creatures' mirrors are promoted to the archive afterwards: the
+    // mirror is still on disk, and this keeps the read-modify-write above
+    // uninterrupted. reconcile() guarantees a creature id is either present
+    // (mirrored above) or departed (archived here), never both, so the two loops
+    // never touch the same file.
     for (const creature of result.released) {
       await archiveFromShadow(paths, creature.kind, creature.name);
     }
-
-    await commit(result.state, result.events);
   };
 
   /**
@@ -283,7 +292,16 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
         'Reply as yourself, in one or two short sentences.',
       ].join('\n');
 
-      const reply = await llm.request({ kind: 'chatter', budget: 'interactive', prompt });
+      // A request can throw as well as refuse: the service books its spend
+      // through this village's own commit, so a disk hiccup surfaces here. The
+      // player showed up and must still get an answer, so a throw is just
+      // another way of not having one.
+      let reply: LlmReply;
+      try {
+        reply = await llm.request({ kind: 'chatter', budget: 'interactive', prompt });
+      } catch {
+        reply = { ok: false, why: 'failed' };
+      }
 
       // Everything from here reads the state that exists *now*, never a copy
       // taken before the request. The service booked its spend through setLlm
@@ -327,10 +345,12 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
 
     async close() {
       listeners.clear();
-      // Let any queued write finish first, so the last save is not renaming a
-      // temp file out from under one still in flight.
-      await writing;
-      await saveState(paths, state);
+      // Take a turn in the queue rather than waiting on its tail: a commit that
+      // lands while this save is waiting installs a new tail behind us, and a
+      // bare `await writing` would leave the two renaming the same temp file.
+      const written = writing.then(() => saveState(paths, state));
+      writing = written.catch(() => {});
+      await written;
     },
   };
 }
