@@ -1,6 +1,6 @@
 import type { KAPLAYCtx } from 'kaplay';
 import { WING, type Creature } from '@village/core/visual';
-import { THEME, U } from '../theme.js';
+import { TEXT_SS, THEME, U } from '../theme.js';
 import { composeGrid } from '../render/compose.js';
 import { bakePixels } from '../render/bake.js';
 import { roleMap } from '../render/roles.js';
@@ -10,7 +10,7 @@ import { breathe, gaze, hopState, isBlinking, phaseFor, shadowSquash, wingAngle 
 import type { Spot } from '../layout/zones.js';
 
 export interface CreatureActor {
-  update(t: number, lookAt: number | null): void;
+  update(t: number, lookAt: number | null, hovered?: boolean): void;
   /**
    * Adopt a fresh copy of this creature — same look, newer stats — without
    * respawning it. See the implementation's note in `spawnCreature`.
@@ -234,25 +234,63 @@ export async function spawnCreature(
     return { pupil, lid, lash };
   });
 
-  const nameplate = root.add([
-    k.text(displayName(creature), { size: 13, font: fonts.pixel }),
-    k.pos(0, -restH - 26),
+  // Labels start invisible and fade in on hover. Seventy always-on plates
+  // stacked four depth rows deep were the first thing the first human viewer
+  // complained about; one label, on the villager under the cursor, is the
+  // village's whole name UI. And it is a *sign*, not floating text — bare ink
+  // over a crowd of colourful bodies was the second thing they complained
+  // about. The spec and the trailer both put names on cream signs; the
+  // deferred finding that said so was deferred wrongly.
+  // Until the LLM writes a nickname (M4), displayName falls back to the
+  // filename — so a two-line sign would show the same long string twice and
+  // size its plate to a 30-character mono line. One line until a creature has
+  // a real given name; two lines after.
+  const hasNickname = creature.nickname.trim().length > 0;
+
+  const plate = root.add([
+    k.rect(10, hasNickname ? 36 : 24, { radius: 4 }),
+    k.pos(0, -restH - (hasNickname ? 25 : 20)),
     k.anchor('center'),
+    k.color(k.Color.fromHex(THEME.signCream)),
+    k.outline(2, k.Color.fromHex(THEME.ink)),
+    k.opacity(0),
+    k.z(4.6),
+  ]);
+
+  // Text renders at TEXT_SS times its intended size and is scaled back down,
+  // so glyphs downsample crisply instead of nearest-neighbour upscaling on
+  // scaled displays (see theme.ts). Mono for the name line too: Pixelify Sans
+  // is a decorative blocky face, and the first human reader could not read it
+  // at sign size — it stays on the big zone signs only.
+  const nameplate = root.add([
+    k.text(hasNickname ? displayName(creature) : fileLabel(creature), {
+      size: 14 * TEXT_SS,
+      font: fonts.mono,
+    }),
+    k.pos(0, -restH - (hasNickname ? 32 : 20)),
+    k.anchor('center'),
+    k.scale(1 / TEXT_SS),
     k.color(k.Color.fromHex(THEME.ink)),
-    // `update` dims this for scruffy creatures; the component must be
-    // declared here or `.opacity` isn't a settable property on the object.
-    k.opacity(1),
+    k.opacity(0),
     k.z(5),
   ]);
 
-  const fileTag = root.add([
-    k.text(fileLabel(creature), { size: 10, font: fonts.mono }),
-    k.pos(0, -restH - 12),
-    k.anchor('center'),
-    k.color(k.Color.fromHex(THEME.ink)),
-    k.opacity(0.6),
-    k.z(5),
-  ]);
+  const fileTag = hasNickname
+    ? root.add([
+        k.text(fileLabel(creature), { size: 11 * TEXT_SS, font: fonts.mono }),
+        k.pos(0, -restH - 15),
+        k.anchor('center'),
+        k.scale(1 / TEXT_SS),
+        k.color(k.Color.fromHex(THEME.ink)),
+        k.opacity(0),
+        k.z(5),
+      ])
+    : null;
+
+  // Fit the sign to whichever line runs longer. Text width is only known
+  // after the components exist (and is measured pre-scale, hence / TEXT_SS);
+  // the rect starts at a dummy size for the same reason.
+  plate.width = Math.max(nameplate.width, fileTag ? fileTag.width : 0) / TEXT_SS + 12;
 
   // Sleep glyphs: three z's drifting up on their own offsets. Built for every
   // creature and shown only while it is asleep — a creature that dozes off an
@@ -260,9 +298,10 @@ export async function spawnCreature(
   // this actor and nothing respawns it when it does.
   const zzz = [0, 1, 2].map((i) =>
     root.add([
-      k.text('z', { size: 12 + i * 2, font: fonts.mono }),
+      k.text('z', { size: (12 + i * 2) * TEXT_SS, font: fonts.mono }),
       k.pos(bw * 0.4, -restH),
       k.anchor('center'),
+      k.scale(1 / TEXT_SS),
       k.color(k.Color.fromHex(THEME.ink)),
       k.opacity(0.7),
       k.z(5),
@@ -276,8 +315,16 @@ export async function spawnCreature(
   // until the first landing is observed — never again after that.
   let lastLanding: number | null = null;
 
+  // Hover-label fade state. `lastT` exists only to derive a frame delta —
+  // update() receives absolute time, and the fade should be frame-rate
+  // independent rather than a fixed step per frame.
+  let plateAlpha = 0;
+  let lastT: number | null = null;
+
   return {
-    update(t, lookAt) {
+    update(t, lookAt, hovered = false) {
+      const frameDt = lastT === null ? 0 : Math.min(t - lastT, 0.1);
+      lastT = t;
       // t0 = -phi * 2.6 (the hop cycle length, private to motion.ts) shifts
       // each hopper's cycle start by its own phase, the same way breathe/
       // isBlinking/gaze/wingAngle/hover already do — without it every hopper
@@ -361,8 +408,9 @@ export async function spawnCreature(
         }
       });
 
-      nameplate.pos.y = -bh - 26;
-      fileTag.pos.y = -bh - 12;
+      plate.pos.y = -bh - (fileTag ? 25 : 20);
+      nameplate.pos.y = -bh - (fileTag ? 32 : 20);
+      if (fileTag) fileTag.pos.y = -bh - 15;
 
       for (const glyph of zzz) {
         glyph.hidden = !behaviour.asleep;
@@ -390,7 +438,16 @@ export async function spawnCreature(
         }
       }
 
-      nameplate.opacity = behaviour.scruffy ? 0.55 : 1;
+      // Ease the label in and out of hover; scruffiness dims whatever shows.
+      plateAlpha += ((hovered ? 1 : 0) - plateAlpha) * Math.min(1, frameDt * 14);
+      plate.opacity = plateAlpha * 0.95;
+      nameplate.opacity = plateAlpha * (behaviour.scruffy ? 0.55 : 1);
+      if (fileTag) fileTag.opacity = plateAlpha * 0.65;
+      // Pop the hovered villager (and its sign) in front of the crowd; depth
+      // sorting is keyed on the feet's y, so a big additive term wins over
+      // every unhovered neighbour and fades back as the label does. Composes
+      // with setSpot, which writes the base depth into `at`.
+      root.z = at.y + plateAlpha * 100000;
     },
     /**
      * Stats change on every server tick and the appearance does not, so

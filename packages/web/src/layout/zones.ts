@@ -41,9 +41,11 @@ const DEPTH_REACH = (ROWS - 1) * ROW_DEPTH;
  * Clearance between the furthest row and the horizon. A creature's contact
  * shadow is centred on its feet, so it reaches ~5px above them; the rest is so
  * the back row reads as standing *in* the field rather than balanced on its
- * far edge.
+ * far edge. 24px looked fine in the arithmetic and airborne on the first real
+ * screen — bodies and labels rise ~128px above the feet, so the field behind
+ * the back row has to be on that scale, not shadow-scale.
  */
-const HORIZON_MARGIN = 24;
+const HORIZON_MARGIN = 120;
 
 /**
  * Top edge of the painted ground: derived from the depth rows, never typed in.

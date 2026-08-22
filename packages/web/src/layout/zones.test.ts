@@ -128,6 +128,17 @@ describe('placeCreatures', () => {
     }
   });
 
+  it('gives the back row real field behind it, not a razor-thin horizon', () => {
+    // The first human to see the village render reported "everything is
+    // floating in the sky". Feet-on-grass was arithmetically true, but the
+    // back row stood 24px from the horizon while bodies and labels rose
+    // ~128px above it, so the composition read as airborne. Grounded is a
+    // visual property, not just a coordinate one: the furthest row needs a
+    // meaningful band of grass behind it.
+    const backRow = Math.min(...[...placeCreatures(ids).values()].map((s) => s.y));
+    expect(backRow - GROUND_TOP).toBeGreaterThanOrEqual(100);
+  });
+
   it('varies depth so the village reads as a field, not a line', () => {
     const ys = new Set([...placeCreatures(ids).values()].map((s) => s.y));
     expect(ys.size).toBeGreaterThan(1);

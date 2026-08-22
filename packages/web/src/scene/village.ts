@@ -1,6 +1,6 @@
 import kaplay, { type KAPLAYCtx } from 'kaplay';
 import type { Creature } from '@village/core/visual';
-import { THEME } from '../theme.js';
+import { TEXT_SS, THEME } from '../theme.js';
 import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, placeCreatures, type Spot } from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
@@ -40,7 +40,8 @@ function sign(k: KAPLAYCtx, x: number, y: number, label: string, font: string) {
   block(k, x + 44, y - 34, 10, 34, THEME.wood, 3);
   block(k, x, y - 62, 100, 30, THEME.signCream, 3);
   k.add([
-    k.text(label, { size: 15, font }),
+    k.text(label, { size: 15 * TEXT_SS, font }),
+    k.scale(1 / TEXT_SS),
     k.pos(x + 50, y - 47),
     k.anchor('center'),
     k.color(hex(k, THEME.ink)),
@@ -84,15 +85,24 @@ export async function startVillage(): Promise<VillageScene> {
     background: THEME.sky,
     crisp: true,
     global: false,
+    // KAPLAY's default pixelDensity is 1: the canvas backing store gets one
+    // texel per CSS pixel, and on a display scaled above 100% (the Windows
+    // default) the browser then upscales it nearest-neighbour — which crisp
+    // requested. Blocky creatures survive that; 10-13px text gets glyph rows
+    // randomly doubled or dropped and reads as broken. Match the backing
+    // store to the physical display, capped at 2 per KAPLAY's own
+    // performance warning. Logical coordinates are unaffected — KAPLAY
+    // divides gfx dimensions back down by this factor.
+    pixelDensity: Math.min(window.devicePixelRatio || 1, 2),
   });
 
-  // Ground: a far band and a near band, so the field reads as having depth.
-  // The far band starts at GROUND_TOP, which zones.ts derives from the depth
-  // rows themselves, so the painted ground reaches back past the furthest row
-  // instead of stopping 98px short of it and leaving most of the village
-  // standing on sky.
-  block(k, 0, GROUND_TOP, WORLD_W, GROUND_Y - GROUND_TOP, THEME.groundDark, 0);
-  block(k, 0, GROUND_Y, WORLD_W, k.height() * 2, THEME.ground, 0);
+  // Ground: a thin dark strip at the horizon over one light field — the
+  // trailer's own construction. GROUND_TOP is derived in zones.ts from the
+  // depth rows themselves, so the field always reaches back past the furthest
+  // villager; painting everything above GROUND_Y dark instead turned into a
+  // 250px wall once GROUND_TOP moved up to give the back row real field.
+  block(k, 0, GROUND_TOP, WORLD_W, 14, THEME.groundDark, 0);
+  block(k, 0, GROUND_TOP + 14, WORLD_W, k.height() * 2, THEME.ground, 0);
 
   for (const zone of ZONES) {
     sign(k, zone.x + zone.w / 2 - 50, GROUND_Y - 6, zone.label, pixelFont);
@@ -138,7 +148,8 @@ export async function startVillage(): Promise<VillageScene> {
   window.addEventListener('blur', stopPanning);
 
   const status = k.add([
-    k.text('connecting…', { size: 14, font: monoFont }),
+    k.text('connecting…', { size: 14 * TEXT_SS, font: monoFont }),
+    k.scale(1 / TEXT_SS),
     k.pos(12, 12),
     k.fixed(),
     k.color(hex(k, THEME.ink)),
@@ -146,14 +157,22 @@ export async function startVillage(): Promise<VillageScene> {
   ]);
 
   const counter = k.add([
-    k.text('', { size: 14, font: monoFont }),
+    k.text('', { size: 14 * TEXT_SS, font: monoFont }),
+    k.scale(1 / TEXT_SS),
     k.pos(12, 32),
     k.fixed(),
     k.color(hex(k, THEME.ink)),
     k.z(100),
   ]);
 
-  k.setCamPos(k.width() / 2, GROUND_Y - 160);
+  // Open on the middle of Homes — the crowd — not on the empty Hatchery at
+  // world x=0, and frame the field as the lower two thirds rather than
+  // centring the camera on the horizon line, which put half the opening
+  // frame in the sky and read as the village floating.
+  k.setCamPos(
+    k.clamp(homes.x + homes.w / 2, k.width() / 2, WORLD_W - k.width() / 2),
+    GROUND_Y - 130,
+  );
 
   const actors = new Map<string, CreatureActor>();
   // Bumped every time setView decides to (re)spawn a given id. A spawn's own
@@ -178,13 +197,33 @@ export async function startVillage(): Promise<VillageScene> {
   // (see the comment on the drag-pan block). camPos() is deprecated in the
   // installed KAPLAY build (Task 9 hit the same thing); getCamPos() is its
   // replacement.
+  let cursorY: number | null = null;
+
   k.onMouseMove((pos) => {
     lookAt = pos.x + k.getCamPos().x - k.width() / 2;
+    cursorY = pos.y + k.getCamPos().y - k.height() / 2;
   });
 
   k.onUpdate(() => {
     const t = k.time();
-    for (const actor of actors.values()) actor.update(t, lookAt);
+    // One hovered villager at a time: the nearest to the cursor within reach,
+    // measured against the body's midpoint (~34px above the feet) so tall and
+    // short creatures compete fairly. Its actor fades its nameplate in;
+    // everyone else stays a clean, label-free silhouette.
+    let hoveredId: string | null = null;
+    if (lookAt !== null && cursorY !== null) {
+      let best = 90 * 90;
+      for (const [id, spot] of placements) {
+        const dx = lookAt - spot.x;
+        const dyMid = cursorY - (spot.y - 34);
+        const d = dx * dx + dyMid * dyMid;
+        if (d < best) {
+          best = d;
+          hoveredId = id;
+        }
+      }
+    }
+    for (const [id, actor] of actors) actor.update(t, lookAt, id === hoveredId);
   });
 
   return {
