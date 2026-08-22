@@ -6,8 +6,26 @@ import { bakePixels } from '../render/bake.js';
 import { roleMap } from '../render/roles.js';
 import { displayName, fileLabel } from '../render/label.js';
 import { behaviourFor } from '../motion/behaviour.js';
-import { breathe, gaze, hopState, isBlinking, phaseFor, shadowSquash, wingAngle } from '../motion/motion.js';
+import {
+  breathe,
+  bubbleLifetime,
+  bubbleScale,
+  gaze,
+  hopState,
+  isBlinking,
+  phaseFor,
+  shadowSquash,
+  wingAngle,
+} from '../motion/motion.js';
 import type { Spot } from '../layout/zones.js';
+
+/** Speech-bubble geometry, all in screen pixels. */
+const BUBBLE_SIZE = 13;
+const BUBBLE_PAD = 10;
+/** Where a long line breaks. A short quip never reaches it — see `say`. */
+const BUBBLE_MAX_W = 180;
+/** How far above the feet the bubble's tail sits — clear of the hover sign. */
+const BUBBLE_LIFT = 50;
 
 export interface CreatureActor {
   update(t: number, lookAt: number | null, hovered?: boolean): void;
@@ -22,7 +40,75 @@ export interface CreatureActor {
    * its root position, so it has to be told.
    */
   setSpot(next: Spot): void;
+  /**
+   * Float one line over this creature's head. Scene furniture, not chat
+   * history — the panel keeps the log — so a second `say` replaces the first
+   * rather than queueing behind it.
+   */
+  say(text: string): void;
   destroy(): void;
+}
+
+/**
+ * KAPLAY runs every string a text component holds through its styled-text
+ * parser: `[name]…[/name]` opens a style span and `\` escapes the next
+ * character. A stray tag or a trailing backslash does not degrade — it
+ * *throws* (compileStyledText, kaplay/src/gfx/formatText.ts), from the `.text`
+ * setter and then from every subsequent draw of that object, which would take
+ * the whole scene down. Creature replies are LLM prose, where `[laughs]` or a
+ * Windows path is entirely ordinary. Escaping both characters renders them
+ * literally, cannot throw, and does not change the measured width: the parser
+ * strips the backslashes before anything is laid out.
+ */
+function escapeStyled(text: string): string {
+  return text.replace(/[\\[]/g, (ch) => `\\${ch}`);
+}
+
+/**
+ * One unbroken run — a path, a URL, an id — can be wider than the bubble is
+ * allowed to be, and no word boundary will save it. The bubble font is mono,
+ * so every glyph advances by the same width and the character budget for a
+ * line follows exactly from the measured width of the run.
+ */
+function splitLongWord(measure: (line: string) => number, word: string, maxWidth: number): string[] {
+  const width = measure(word);
+  if (width <= maxWidth) return [word];
+  // Code points, not UTF-16 units: slicing a surrogate pair in half would
+  // hand the renderer a lone surrogate.
+  const chars = [...word];
+  const per = Math.max(1, Math.floor((chars.length * maxWidth) / width));
+  const pieces: string[] = [];
+  for (let i = 0; i < chars.length; i += per) pieces.push(chars.slice(i, i + per).join(''));
+  return pieces;
+}
+
+/**
+ * Greedy word wrap against whatever `measure` says a line is worth. The
+ * bubble does its own wrapping rather than handing KAPLAY a `width` option
+ * because that option is a wrap *constraint* and formatText then reports the
+ * constraint as the text's width however short the line is — which is how you
+ * end up with a three-word quip in a 180px box. Breaking the lines here means
+ * the reported width is always the longest line actually drawn, so the box can
+ * hug it. Whitespace collapses on the way through: a reply's own newlines are
+ * the LLM's paragraphing, not this bubble's.
+ */
+function wrapToWidth(measure: (line: string) => number, text: string, maxWidth: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const word of text.split(/\s+/)) {
+    if (word === '') continue;
+    for (const piece of splitLongWord(measure, word, maxWidth)) {
+      const candidate = line === '' ? piece : `${line} ${piece}`;
+      if (line !== '' && measure(candidate) > maxWidth) {
+        lines.push(line);
+        line = piece;
+      } else {
+        line = candidate;
+      }
+    }
+  }
+  if (line !== '') lines.push(line);
+  return lines;
 }
 
 /** Paint raw pixels onto a canvas so KAPLAY can load it as a sprite. */
@@ -292,6 +378,45 @@ export async function spawnCreature(
   // the rect starts at a dummy size for the same reason.
   plate.width = Math.max(nameplate.width, fileTag ? fileTag.width : 0) / TEXT_SS + 12;
 
+  // One speech bubble per creature, built empty and hidden: a villager that
+  // is spoken to an hour from now has to have it ready, because nothing
+  // respawns an actor when the player clicks it.
+  // Deliberately no `width` option on the text — see wrapToWidth above; this
+  // component's `.width` must report the rendered line, not a wrap budget.
+  const bubbleText = root.add([
+    k.text('', { size: BUBBLE_SIZE * TEXT_SS, font: fonts.mono, align: 'center' }),
+    k.pos(0, 0),
+    k.anchor('bot'),
+    k.scale(1 / TEXT_SS),
+    k.color(k.Color.fromHex(THEME.ink)),
+    k.z(7),
+  ]);
+  const bubbleBg = root.add([
+    // Sized from the rendered text on every `say`; these are placeholders.
+    k.rect(10, 10, { radius: 6 }),
+    k.pos(0, 0),
+    k.anchor('bot'),
+    k.scale(1),
+    k.color(k.Color.fromHex(THEME.bubbleWhite)),
+    k.outline(2, k.Color.fromHex(THEME.ink)),
+    k.opacity(0.97),
+    k.z(6.5),
+  ]);
+  bubbleText.hidden = true;
+  bubbleBg.hidden = true;
+
+  /**
+   * When the current line started, on `update`'s clock. `null` is "no bubble";
+   * -1 is "`say` ran since the last frame, start on the next one" — the age
+   * has to be measured against the same `t` every other motion here uses, and
+   * `say` is called from a network callback that has no `t` in hand.
+   */
+  let bubbleShownAt: number | null = null;
+  let bubbleLife = 0;
+  /** The rendered size of the current line, in screen pixels. Set by `say`. */
+  let bubbleW = 0;
+  let bubbleH = 0;
+
   // Sleep glyphs: three z's drifting up on their own offsets. Built for every
   // creature and shown only while it is asleep — a creature that dozes off an
   // hour from now has to have them ready, because `behaviour` changes under
@@ -412,6 +537,36 @@ export async function spawnCreature(
       nameplate.pos.y = -bh - (fileTag ? 32 : 20);
       if (fileTag) fileTag.pos.y = -bh - 15;
 
+      if (bubbleShownAt !== null) {
+        if (bubbleShownAt === -1) bubbleShownAt = t;
+        const age = t - bubbleShownAt;
+        const scale = bubbleScale(age, bubbleLife);
+        // Scale is 0 at both ends of the life; the age guard is what tells the
+        // frame the bubble was born on from the frame it finished shrinking.
+        if (scale <= 0 && age > 0.5) {
+          bubbleShownAt = null;
+          bubbleText.hidden = true;
+          bubbleBg.hidden = true;
+        } else {
+          // Both pieces are anchored 'bot' at the same base point, so the pop
+          // grows the bubble upward out of the villager's head rather than out
+          // of its own middle.
+          const baseY = -bh - BUBBLE_LIFT;
+          bubbleBg.width = bubbleW + BUBBLE_PAD * 2;
+          bubbleBg.height = bubbleH + BUBBLE_PAD * 2;
+          bubbleBg.pos = k.vec2(0, baseY);
+          bubbleBg.scale = k.vec2(scale, scale);
+          // The padding scales with the box. The box's own bottom is pinned at
+          // baseY and its top rises by scale * (h + 2 * pad); a text baseline
+          // held a fixed pad above baseY would therefore burst out of the top
+          // of it early in the pop, when the box is still small.
+          bubbleText.pos = k.vec2(0, baseY - BUBBLE_PAD * scale);
+          bubbleText.scale = k.vec2(scale / TEXT_SS, scale / TEXT_SS);
+          bubbleText.hidden = scale <= 0;
+          bubbleBg.hidden = scale <= 0;
+        }
+      }
+
       for (const glyph of zzz) {
         glyph.hidden = !behaviour.asleep;
         const d = (glyph as unknown as { drift: number }).drift;
@@ -478,6 +633,39 @@ export async function spawnCreature(
       root.pos.x = next.x;
       root.pos.y = next.y;
       root.z = next.y;
+    },
+    say(text) {
+      if (text.trim() === '') return;
+      // Measure on the component that will draw the line. Assigning `.text`
+      // re-runs KAPLAY's own formatter synchronously and republishes
+      // `.width`/`.height` (its `set text` → `update()` path), so these are
+      // the dimensions of the glyphs that actually land on screen — the box is
+      // sized from the text, never from a wrap budget, which is the whole
+      // point of the first playtest's complaint about oversized signs.
+      //
+      // The scale is pinned first because the component reports the
+      // *pre-scale* width (`formatted.width / scale.x`, components/draw/text.ts)
+      // and `say` can arrive while the previous line is mid-shrink at some
+      // arbitrary scale. At 1 the reported numbers are supersampled pixels,
+      // so screen pixels are one division away. `update` takes the scale back
+      // over on the next frame.
+      bubbleText.scale = k.vec2(1, 1);
+      const measure = (line: string) => {
+        bubbleText.text = escapeStyled(line);
+        return bubbleText.width / TEXT_SS;
+      };
+      bubbleText.text = wrapToWidth(measure, text, BUBBLE_MAX_W).map(escapeStyled).join('\n');
+      bubbleW = bubbleText.width / TEXT_SS;
+      bubbleH = bubbleText.height / TEXT_SS;
+      // Reading time comes off the line the creature said, not the wrapped
+      // one — the line breaks are this bubble's business, not the reader's.
+      bubbleLife = bubbleLifetime(text);
+      bubbleShownAt = -1;
+      // Nothing draws until `update` has given this line a real scale; without
+      // this it could flash for one frame at the measuring scale of 1, which
+      // is TEXT_SS times too big.
+      bubbleText.hidden = true;
+      bubbleBg.hidden = true;
     },
     destroy() {
       k.destroy(root);

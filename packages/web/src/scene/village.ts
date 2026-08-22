@@ -9,11 +9,40 @@ export interface VillageScene {
   k: KAPLAYCtx;
   setView(view: VillageView): void;
   setStatus(status: string): void;
+  /**
+   * Float a reply over one creature's head. The chat panel calls this; the
+   * bubble is a second showing of the line, not the record of it.
+   */
+  sayFor(creatureId: string, text: string): void;
 }
+
+export interface VillageOptions {
+  /**
+   * A villager was clicked — a press that did not turn into a drag. The scene
+   * does not know what a chat panel is; `main.ts` connects the two.
+   */
+  onCreatureClick?(creature: Creature): void;
+}
+
+/** How far a press may travel and still count as a click, in pixels. */
+const CLICK_SLOP = 6;
 
 function hex(k: KAPLAYCtx, value: string) {
   return k.Color.fromHex(value);
 }
+
+/** Token counts at a glance: 483000 reads as "483k". */
+const fmt = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+
+/**
+ * Ten cells of remaining budget. Clamped rather than trusted: an empty bar is
+ * a true thing to draw, and `'░'.repeat(-1)` would throw inside `setView` and
+ * cost the whole frame's update.
+ */
+const bar = (remainingTok: number, cap: number) => {
+  const filled = cap > 0 ? Math.min(10, Math.max(0, Math.round((remainingTok / cap) * 10))) : 0;
+  return '█'.repeat(filled) + '░'.repeat(10 - filled);
+};
 
 /** A flat rectangle prop. Spec §4.1: props are rectangles, never sprites. */
 function block(k: KAPLAYCtx, x: number, y: number, w: number, h: number, colour: string, z = 0) {
@@ -75,7 +104,7 @@ async function resolveWebFont(family: string, fallback: string): Promise<string>
   return document.fonts.check(`16px "${family}"`) ? family : fallback;
 }
 
-export async function startVillage(): Promise<VillageScene> {
+export async function startVillage(opts: VillageOptions = {}): Promise<VillageScene> {
   const [pixelFont, monoFont] = await Promise.all([
     resolveWebFont('Pixelify Sans', 'monospace'),
     resolveWebFont('IBM Plex Mono', 'monospace'),
@@ -165,6 +194,18 @@ export async function startVillage(): Promise<VillageScene> {
     k.z(100),
   ]);
 
+  // How much interactive voice budget is left. Empty text is the whole of
+  // "hidden": a server that reports no llm block (M3) simply has no third HUD
+  // line, and nothing below it has to move.
+  const meter = k.add([
+    k.text('', { size: 14 * TEXT_SS, font: monoFont }),
+    k.scale(1 / TEXT_SS),
+    k.pos(12, 52),
+    k.fixed(),
+    k.color(hex(k, THEME.ink)),
+    k.z(100),
+  ]);
+
   // Open on the middle of Homes — the crowd — not on the empty Hatchery at
   // world x=0, and frame the field as the lower two thirds rather than
   // centring the camera on the horizon line, which put half the opening
@@ -199,6 +240,11 @@ export async function startVillage(): Promise<VillageScene> {
   // replacement.
   let cursorY: number | null = null;
 
+  // The villager under the cursor this frame, or null. Written by the update
+  // loop and read by the click handler below — "the one I clicked" is exactly
+  // "the one whose name I can see", so both answers come from one test.
+  let hoveredId: string | null = null;
+
   k.onMouseMove((pos) => {
     lookAt = pos.x + k.getCamPos().x - k.width() / 2;
     cursorY = pos.y + k.getCamPos().y - k.height() / 2;
@@ -210,7 +256,7 @@ export async function startVillage(): Promise<VillageScene> {
     // measured against the body's midpoint (~34px above the feet) so tall and
     // short creatures compete fairly. Its actor fades its nameplate in;
     // everyone else stays a clean, label-free silhouette.
-    let hoveredId: string | null = null;
+    hoveredId = null;
     if (lookAt !== null && cursorY !== null) {
       let best = 90 * 90;
       for (const [id, spot] of placements) {
@@ -226,10 +272,44 @@ export async function startVillage(): Promise<VillageScene> {
     for (const [id, actor] of actors) actor.update(t, lookAt, id === hoveredId);
   });
 
+  // A click is a press that did not turn into a drag — the same gesture pans
+  // the camera, so only a release within a few pixels of the press means "I
+  // meant that villager".
+  //
+  // `k.onMousePress`, not the pan block's `k.onMouseDown`: onMouseDown fires
+  // every frame the button is held, so recording the origin there would move
+  // it along under the cursor and make every drag look like a click. The
+  // release is read off the window for the same reason the pan block reads it
+  // there (see the long comment above): KAPLAY's own release event is bound to
+  // the canvas and never fires for a drag that ends outside it. `k.mousePos()`
+  // is the last position KAPLAY saw, which for any release inside the canvas
+  // is the release point — and a drag that left the canvas is already far
+  // past the slop.
+  let pressedAt: { x: number; y: number } | null = null;
+
+  k.onMousePress('left', () => {
+    const down = k.mousePos();
+    pressedAt = { x: down.x, y: down.y };
+  });
+
+  window.addEventListener('mouseup', () => {
+    const from = pressedAt;
+    pressedAt = null;
+    if (from === null || hoveredId === null) return;
+    const up = k.mousePos();
+    if (Math.hypot(up.x - from.x, up.y - from.y) >= CLICK_SLOP) return;
+    const creature = known.get(hoveredId);
+    if (creature) opts.onCreatureClick?.(creature);
+  });
+
   return {
     k,
     setView(view) {
       counter.text = `${view.creatures.length} villagers`;
+      const llm = view.llm;
+      meter.text = llm
+        ? `voice ${bar(llm.interactiveRemaining, llm.interactiveCap)} ${fmt(llm.interactiveRemaining)}/${fmt(llm.interactiveCap)}`
+        : '';
       const spots = placeCreatures(view.creatures.map((c) => c.id));
       placements = spots;
       const seen = new Set<string>();
@@ -293,6 +373,12 @@ export async function startVillage(): Promise<VillageScene> {
     },
     setStatus(s) {
       status.text = s;
+    },
+    sayFor(creatureId, text) {
+      // A villager that has despawned — or is still loading its sprites when
+      // its reply lands — has no actor to speak through. The panel holds the
+      // line either way, so there is nothing to recover here.
+      actors.get(creatureId)?.say(text);
     },
   };
 }
