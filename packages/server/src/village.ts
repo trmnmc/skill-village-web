@@ -72,6 +72,8 @@ export interface Village {
   chat(creatureId: string, message: string): Promise<ChatReply>;
   /** Whether a model is answering at all, for the quiet-village banner. */
   llmMode(): LlmMode;
+  /** One cheap call to find out whether a model is reachable at all. */
+  probeLlm(): Promise<LlmMode>;
   /** Change the daily caps, or turn autonomous spending on. */
   setLlmConfig(patch: Partial<LlmConfig>): Promise<void>;
   subscribe(listener: VillageListener): () => void;
@@ -331,6 +333,10 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
 
     llmMode() {
       return llm.mode();
+    },
+
+    probeLlm() {
+      return llm.probe();
     },
 
     async setLlmConfig(patch) {
