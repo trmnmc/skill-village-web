@@ -20,7 +20,9 @@
       html, body { margin: 0; height: 100%; background: #171310; overflow: hidden; }
       canvas { display: block; image-rendering: pixelated; }
       #chat-panel {
-        position: fixed; top: 0; right: 0; bottom: 0; width: 320px;
+        /* Above #silent-banner (10): the banner spans the full width, and its
+           own × sits exactly where the panel's close button lives. */
+        position: fixed; top: 0; right: 0; bottom: 0; width: 320px; z-index: 11;
         background: #FFFDF4; border-left: 3px solid #3A2E22;
         display: flex; flex-direction: column;
         font: 14px/1.5 'IBM Plex Mono', monospace; color: #3A2E22;

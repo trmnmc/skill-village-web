@@ -24,7 +24,7 @@ export interface VillageOptions {
   onCreatureClick?(creature: Creature): void;
 }
 
-/** How far a press may travel and still count as a click, in pixels. */
+/** How far a press may travel and still count as a click, in client pixels. */
 const CLICK_SLOP = 6;
 
 function hex(k: KAPLAYCtx, value: string) {
@@ -276,28 +276,45 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // the camera, so only a release within a few pixels of the press means "I
   // meant that villager".
   //
-  // `k.onMousePress`, not the pan block's `k.onMouseDown`: onMouseDown fires
-  // every frame the button is held, so recording the origin there would move
-  // it along under the cursor and make every drag look like a click. The
-  // release is read off the window for the same reason the pan block reads it
-  // there (see the long comment above): KAPLAY's own release event is bound to
-  // the canvas and never fires for a drag that ends outside it. `k.mousePos()`
-  // is the last position KAPLAY saw, which for any release inside the canvas
-  // is the release point — and a drag that left the canvas is already far
-  // past the slop.
+  // Both ends are plain DOM listeners, and both halves of that are deliberate:
+  //
+  //  - Not `k.onMouseDown`: it fires every frame the button is held, so the
+  //    origin would crawl along under the cursor and every pan would end
+  //    looking like a click.
+  //  - Not `k.onMousePress` either, which is the subtler trap. KAPLAY's canvas
+  //    mousedown handler does not raise mousePress there and then — it queues
+  //    the whole thing on its `input` event (`state.events.onOnce("input",
+  //    ...)` in app.ts), drained once per frame by `processInput()`. A window
+  //    mouseup runs synchronously during DOM dispatch, so a press and release
+  //    that complete inside one frame — a trackpad tap, the second click of a
+  //    double-click — reach the release with the press still unrecorded: the
+  //    click is dropped, and then `processInput` arms the origin *after* the
+  //    fact, leaving a stale press to be spent on the next gesture. A
+  //    synchronous `mousedown` on `k.canvas` keeps the canvas scoping (a press
+  //    on the chat panel must not arm this) without the deferral.
+  //  - The release is read on `window`, for the same reason the pan block
+  //    reads it there: KAPLAY's own release is canvas-scoped and never fires
+  //    for a drag that ends outside the canvas.
+  //
+  // The slop is measured in the events' own client coordinates rather than
+  // `k.mousePos()`, which is frame-quantized for the same reason as above (the
+  // mousemove handler defers `state.mousePos` onto the input queue) and so can
+  // still be reporting a stale position during a fast gesture.
   let pressedAt: { x: number; y: number } | null = null;
 
-  k.onMousePress('left', () => {
-    const down = k.mousePos();
-    pressedAt = { x: down.x, y: down.y };
+  k.canvas.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    pressedAt = { x: event.clientX, y: event.clientY };
   });
 
-  window.addEventListener('mouseup', () => {
+  window.addEventListener('mouseup', (event) => {
+    // Left button only, symmetric with the press: a right-button release
+    // during a left-button drag is not the end of that gesture.
+    if (event.button !== 0) return;
     const from = pressedAt;
     pressedAt = null;
     if (from === null || hoveredId === null) return;
-    const up = k.mousePos();
-    if (Math.hypot(up.x - from.x, up.y - from.y) >= CLICK_SLOP) return;
+    if (Math.hypot(event.clientX - from.x, event.clientY - from.y) >= CLICK_SLOP) return;
     const creature = known.get(hoveredId);
     if (creature) opts.onCreatureClick?.(creature);
   });

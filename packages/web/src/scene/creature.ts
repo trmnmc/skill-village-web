@@ -22,6 +22,8 @@ import type { Spot } from '../layout/zones.js';
 /** Speech-bubble geometry, all in screen pixels. */
 const BUBBLE_SIZE = 13;
 const BUBBLE_PAD = 10;
+/** Extra leading between wrapped lines; KAPLAY's own default is none. */
+const BUBBLE_LEADING = 4;
 /** Where a long line breaks. A short quip never reaches it — see `say`. */
 const BUBBLE_MAX_W = 180;
 /** How far above the feet the bubble's tail sits — clear of the hover sign. */
@@ -384,7 +386,16 @@ export async function spawnCreature(
   // Deliberately no `width` option on the text — see wrapToWidth above; this
   // component's `.width` must report the rendered line, not a wrap budget.
   const bubbleText = root.add([
-    k.text('', { size: BUBBLE_SIZE * TEXT_SS, font: fonts.mono, align: 'center' }),
+    // lineSpacing because formatText advances a line by `size + lineSpacing`
+    // and defaults that to 0 — a multi-line reply would otherwise have its em
+    // boxes touching. `say` reads the height back off this component, so the
+    // leading is already inside the box it sizes.
+    k.text('', {
+      size: BUBBLE_SIZE * TEXT_SS,
+      font: fonts.mono,
+      align: 'center',
+      lineSpacing: BUBBLE_LEADING * TEXT_SS,
+    }),
     k.pos(0, 0),
     k.anchor('bot'),
     k.scale(1 / TEXT_SS),
