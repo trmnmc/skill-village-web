@@ -4,15 +4,15 @@ The one process that is both game server and daemon. Holds all game truth; clien
 
 **Owns:**
 
-- **Sim engine** — ticks core's rules (2s with a client attached, 60s headless). Broadcasts state diffs.
-- **LLM service** — the single door for every model call: shells out to the local `claude` CLI (auth inherited from the user's Claude Code login), routes Haiku vs. session-default model, enforces the daily budget ledger and caps, queues calls, falls back to canned lines.
-- **File bridge** — import/adopt/install/release/export against `~/.claude` (and project `.claude`), plus a watcher so manual installs and external edits show up live. Uses core's validators; never writes without a confirmed intent.
-- **Hook ingest** — `POST /events` endpoint for Claude Code hook events (skill invoked, session start/end).
-- **Autonomous scheduler** — the slow LLM heartbeat for while-you're-away scenes, on its own sub-budget.
-- **State store** — atomic JSON writes + rolling backup + append-only event log in `~/.skill-village/`.
-
-**API surface (identical for both clients):** REST for actions (`/api/creatures`, `/api/chat`, `/api/hatch`, `/api/adopt`, …) and a WebSocket for live state.
+- **State store** — atomic JSON writes with a rolling backup and corrupt-file recovery, plus an append-only JSONL event log, all under `~/.skill-village/`.
+- **File bridge** — scans `~/.claude/skills` and `~/.claude/agents` (and the project's `.claude/` when launched inside one), turns valid files into creatures, and keeps a shadow copy of each so an externally deleted file still has a last-known copy to archive.
+- **Sim engine** — ticks the rules from `@village/core`: mood and energy drift, stage transitions, friendship. Every tick is a pure function of state and a timestamp.
+- **API** — Fastify REST for player intents, WebSocket for live state.
 
 **Depends on:** `@village/core`.
 
-**Must never import:** `web`. If the server needs to know how something looks, the design is wrong.
+**Must never import:** `@village/web`. If the server needs to know how something looks, the design is wrong.
+
+**Safety:** M2 never writes to `~/.claude`. It reads that directory and writes only inside its own data directory. Installing and releasing real files arrives in M5.
+
+**Determinism:** no module here reads the clock. `now` is a parameter, supplied at the edge, which is what makes decay and tick behaviour testable.
