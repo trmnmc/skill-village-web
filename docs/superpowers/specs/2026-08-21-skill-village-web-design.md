@@ -20,7 +20,7 @@ The core loop nobody has built (verified by a GitHub scan on 2026-08-21): **the 
 | Personality engine | ~80% LLM / 20% procedural; Haiku for fast chatter; auth inherited from the user's existing Claude Code login (no login screen) |
 | Stakes | Gentle liveness + growth: moods/needs evolve with absence, creatures never die, levels never decay, no work is ever lost |
 | Scope | Full "Living World" (village + live session reactions + autonomous life), built in one implementation push with ordered milestones |
-| Creature art | Procedurally generated **pixel grids defined in code** — hand-authored archetypes with feature variants and a locked palette (§4). No third-party art assets. |
+| Creature art | Procedurally generated **pixel grids defined in code** — six bodies × five crowns, with a locked palette (§4). No third-party art assets. |
 | Visual reference | The animated trailer in `reference/animation-trailer/` is the visual bible for art, typography, and motion |
 
 ## 2. Game design
@@ -34,14 +34,14 @@ Your Claude Code setup is a living village. Using your tools feeds their creatur
 Two species, visually distinct:
 
 - **Skills** — grounded, rounder critters. Source of truth: a `skills/<name>/SKILL.md` folder.
-- **Agents** — winged or antenna'd (they go off and do things). Source of truth: an `agents/<name>.md` file.
+- **Agents** — winged (they go off and do things), airborne, with a tapered underside instead of feet. Source of truth: an `agents/<name>.md` file.
 
 Each creature has:
 
 - **DNA** — deterministic: `SHA-256(kind + canonical name)` seeds all appearance choices. Same skill → same creature on any machine.
 - **Appearance** — generated from DNA per §4.
 - **Nickname** — a short given name distinct from the filename (Sparky for `brainstorming/`, Nit for `code-review/`). Written once by Haiku with the personality card; shown above the filename on the creature's sign. The player can rename it.
-- **Personality card** — written once at import by Haiku after reading the skill/agent content: archetype, voice, quirks, 2–3 likes/dislikes. Stored in game state; used as the system prompt for everything this creature ever says. Stable across re-syncs (external file edits update knowledge, not identity).
+- **Personality card** — written once at import by Haiku after reading the skill/agent content: temperament, voice, quirks, 2–3 likes/dislikes. ("Archetype" is reserved for visual bodies — a personality has a temperament.) Stored in game state; used as the system prompt for everything this creature ever says. Stable across re-syncs (external file edits update knowledge, not identity).
 - **Stats** — `mood`, `energy` (drift down with absence; care restores), `bond` (with the player; only rises), `xp`/`level` (only rise), `friendships` (per-creature affinity scores).
 - **Stage** — Egg → Hatchling → Adult → Elder. Hatchling→Adult happens the moment its file is installed and valid. Adult→Elder at a level threshold. Visual growth per stage (size, accessories).
 
@@ -80,36 +80,78 @@ The game must be playable at every rung:
 
 > **Reference implementation:** `reference/animation-trailer/skill-village-scene.jsx` — an animated trailer built as a Claude Design canvas that already realizes this system. It is the visual bible; constants below come from it, and the implementation should copy rather than reinvent them.
 
-**Creatures are pixel grids, not image assets.** A body archetype is an array of strings, one character per pixel, where each character is a *color role* rather than a color:
+**Creatures are pixel grids, not image assets.** A body is an array of strings, one character per pixel, where each character is a *color role* rather than a color:
 
 ```js
-bean: {
-  rows: ['.X...X.', '.XXXXX.', 'XXXXXXX', 'XWWXWWX', 'XWWXWWX',
-         'XXXKXXX', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '.DD.DD.'],
-  eyes: [{ c: 1, r: 3 }, { c: 4, r: 3 }], w: 7, h: 10,
+round: {
+  rows: ['.XXXXXXX.', 'XXXXXXXXX', 'XXWWXWWXX', 'XXWWXWWXX',
+         'XXXXKXXXX', 'XXXXXXXXX', '.XXXXXXX.', '..DD.DD..'],
+  eyes: [{ c: 2, r: 2 }, { c: 5, r: 2 }], w: 9, h: 8,
 }
 ```
 
 `X` body · `D` feet · `W` eye white · `K` mouth · `A` light accent · `.` transparent. Rendered as one rect per pixel at a unit size `U` (12px in the trailer) with `shapeRendering: crispEdges`.
 
-This replaces the earlier plan to composite Kenney PNG parts, and is better on every axis that matters: **no downloads, no licensing, no part-tagging pass**; a creature is ~10 strings plus three hex colors, so it is trivially serializable and diffable; and because archetype grids are hand-authored, a generated creature cannot come out anatomically wrong.
+This replaces the earlier plan to composite Kenney PNG parts, and is better on every axis that matters: **no downloads, no licensing, no part-tagging pass**; a creature is ~10 strings plus a couple of hex colors, so it is trivially serializable and diffable; and because grids are hand-authored, a generated creature cannot come out anatomically wrong.
 
-**Pipeline:** name → SHA-256 seed → archetype → feature variants → palette → a `CreatureAppearance` record (archetype id, variant ids, three hex colors, species markers). Core computes that record and stops; the web package turns it into pixels. Keeping the decision separate from the drawing is what makes the generator unit-testable — the golden-set check below runs on records, not screenshots.
+### 4.0 Two axes: body × crown
 
-**Anatomy.** Eyes are **not** baked into the grid; they are overlaid at the archetype's `eyes` anchor coordinates so they can blink (lid = a body-colored rect with a dark lash line) and track a target (pupil offset ±3.5px). Everything else — mouth, feet — is grid pixels. This split is what lets one archetype carry every expression.
+A first pass used one fixed archetype per creature shape, and it failed the way single-axis systems do: three of the shapes differed only in their top one to three rows, so creatures sharing a body were near-twins — the exact complaint the system was meant to solve. **Appearance is therefore split into two independent axes.**
 
-**The four hard rules** (the fifth, part tagging, is now obsolete):
+**Bodies (6)** — complete creatures from the neck down, crown-free:
 
-1. **Hand-authored archetypes.** ~6 grids (`bean`, `mound`, `boxy`, + three more to author), each already a complete, good-looking creature. Generation varies features *within* an archetype; it never assembles a body from loose parts.
-2. **Feature variants, not free parts.** Each archetype ships a small set of alternate mouth rows, feet rows, and eye anchor pairs, authored against that grid. A variant is only ever drawn on the archetype it was authored for.
-3. **Palette lock.** Body hue from the agent's `color` frontmatter when present, else from DNA. `dark` and `lite` derive from it by fixed lightness offsets, and all three are clamped to the warm band the trailer uses (see §4.1). Two inks are shared and never vary: `#FFF9EE` eye white, `#33241C` pupil and mouth. Clashing colors are unrepresentable.
-4. **Golden-set eyeball test.** Because generation is deterministic, the build renders every catalog creature plus 500 random names to a contact-sheet grid for human review before ship.
+| body | size | character |
+|---|---|---|
+| `pip` | 7×7 | tiny and round |
+| `round` | 9×8 | the classic |
+| `lanky` | 7×12 | stilt legs |
+| `bean` | 7×9 | upright oval |
+| `mound` | 12×7 | wide and low |
+| `boxy` | 8×7 | angular |
 
-**Species markers.** Agents fly and get **wings** (`['XXX.', 'XXXX', '.XX.']`, flapping) and **antennae** (a `dark` stalk topped with a `lite` bulb, swaying); skills stay grounded and get a contact shadow. Skills use the rounder archetypes (`bean`, `mound`), agents the angular `boxy`.
+**Crowns (5)** — head features: `none`, `ears`, `crest`, `tuft`, `horns`.
+
+Crowns are defined **parametrically from the body's width**, not as fixed columns — ears anchor at columns `1` and `w-2`, a crest centres on `⌊(w-1)/2⌋` — so one crown definition sits correctly on a 7-wide `pip` and a 12-wide `mound` alike. Crown pixels draw in the body hue in the rows immediately above the grid.
+
+That yields **30 silhouettes from 11 authored pieces**, and it changes the collision arithmetic: two creatures must now match on *two* independent axes to read as twins. Adding a sixth crown later adds six creatures, not one.
+
+**Incompatible pairs.** A short deny-list of body+crown combinations the generator will never emit, for pairings that are individually fine but ugly together. Vetoing a pair costs one silhouette and keeps both pieces available elsewhere. The list is populated from the golden-set review (rule 4) and lives beside the body and crown data.
+
+**The four hard rules** (the fifth, part tagging, is obsolete):
+
+1. **Hand-authored pieces.** Every body is a complete, good-looking creature on its own, and every crown is authored to sit on any body width. Generation picks a body and a crown; it never assembles anatomy from loose parts.
+2. **Feature variants, not free parts.** Each body ships a small set of alternate mouth and eye-anchor variants authored against that grid. A variant is only ever drawn on the body it was authored for.
+3. **Palette lock.** Body hue from the agent's `color` frontmatter when present, else from DNA; `lite` derives from it by a fixed lightness offset, and both are clamped to the warm band in §4.1. Two inks are shared and never vary: `#FFF9EE` eye white, `#33241C` pupil and mouth. Clashing colors are unrepresentable.
+4. **Golden-set eyeball test.** Because generation is deterministic, the build renders all 30 combinations plus every catalog creature and 500 random names to a contact sheet for human review before ship. Its output is the incompatible-pairs list.
+
+**Pipeline:** name → SHA-256 seed → body → crown (re-rolled if the pair is denied) → feature variants → palette → a `CreatureAppearance` record (body id, crown id, variant ids, hex colors, species flag). Core computes that record and stops; the web package turns it into pixels. Keeping the decision separate from the drawing is what makes the generator unit-testable — the golden-set check runs on records, not screenshots.
+
+**Anatomy.** Eyes are **not** baked into the grid; they are overlaid at the body's `eyes` anchor coordinates so they can blink (lid = a body-colored rect with a dark lash line) and track a target (pupil offset ±3.5px). Everything else — mouth, feet — is grid pixels. This split is what lets one body carry every expression.
+
+**Feet share the body colour.** The `D` role stays in the grids as a semantic marker — it identifies which pixels are feet, which a future walk cycle will need — but renders in the body hue, not a darker shade. Feet still read as *shape*, since the notch between them reads as legs; the contact shadow does the grounding work that a darker tone used to. A consequence worth noting: with feet no longer darker and antennae dropped, the `dark` shade is currently drawn nowhere. It stays defined in the palette so shading, wing undersides, or a night variant can use it later without a data-model change.
+
+**Species marker: wings only.** Agents get **wings** (`['XXX.', 'XXXX', '.XX.']` in `lite`, flapping, mounted at the sides) and a fainter, smaller shadow; skills stay grounded with a full shadow. Antennae are dropped — they occupied the same rows as crowns and collided with them. Because wings sit at the sides, **every body and every crown is available to both species**, so agents keep the full 30-silhouette range instead of collapsing to a reserved subset.
+
+### 4.0.1 Flight undersides
+
+An agent is in the air, so it must not have feet planted under it. Every body therefore has a **tapered underside**: a one-row variant that replaces the foot row when the creature is an agent, narrower than the row above so the body ends on a deliberate curve rather than a flat cut. Six one-line definitions, one per body.
+
+`lanky` is the exception, and the interesting one — it is the only body with real legs rather than a base, so it can dangle. It carries four leg treatments, which resolve onto two different axes rather than competing:
+
+| posture | rows below the hips | when |
+|---|---|---|
+| `stubs` | `..X.X..` | resting — assigned by DNA |
+| `splayed` | `..X.X..` `.X...X.` | resting — assigned by DNA |
+| `floating` | `..X.X..` `.......` `.X...X.` | resting — assigned by DNA |
+| `trailing` | `..X.X..` `.......` `...X.X.` `....X.X` | **motion state** — while roaming |
+
+The three resting postures are part of a creature's identity: two `lanky` agents hovering side by side hang differently, and each always hangs the same way. `trailing` is not an identity but a state — any `lanky` agent sweeps into it while crossing the village and settles back into its own resting posture on stopping. That is why it reads as directional: it is, and as a motion state that becomes intent rather than an odd fixed choice.
+
+Detached feet are legible here only because these are pixel creatures at this scale — a one-row gap reads as "tucked up" where in smooth artwork it would read as severed. Any legged body added later inherits the same four posture slots for free.
 
 **Names.** Every creature has a **nickname** distinct from its filename — Sparky for `brainstorming/`, Nit for `code-review/`, Gus for `debugger.md`. The nickname is written once by Haiku alongside the personality card; the filename is shown beneath it in mono. Skills display with a trailing slash (they are folders), agents with `.md`, which is how a glance tells the two apart.
 
-**Breeding visuals:** offspring inherit archetype from one parent and each feature variant from one parent (chosen by the child-name hash), with a palette interpolated between the two. Family resemblance is real and still deterministic.
+**Breeding visuals:** offspring inherit body from one parent and crown from the other (which parent gives which is chosen by the child-name hash), with feature variants split the same way and a palette interpolated between the two. Two axes make the resemblance legible — a child visibly has one parent's build and the other's ears — and it stays deterministic.
 
 ### 4.1 Visual identity
 
@@ -132,7 +174,7 @@ Motion is where the personality lives, and the trailer's constants are tuned. Im
 - **Gaze** — a slow sine picks left/centre/right; when the player interacts, creatures look at the cursor or speaker instead.
 - **Hop** — a 2.6s cycle: anticipation squash to 0.84 over 0.18s, an arc of `−sin(q·π)·64px` while stretched to 1.07, then a landing squash that recovers over 0.23s.
 - **Shadow** — width scales with height (`clamp(1 + dy/130, 0.55, 1)`), which is what sells the hop as real.
-- **Wings** — `sin(T·16 + φ·3)·26 − 8` degrees, mirrored per side. **Antennae** — `sin(T·2.3 + φ)·12` degrees.
+- **Wings** — `sin(T·16 + φ·3)·26 − 8` degrees, mirrored per side. **Flight posture** — a `lanky` agent swaps to `trailing` legs while roaming and back to its own resting posture when it stops (§4.0.1).
 - **Phase offset `φ`** — every creature carries one, so the village never moves in lockstep. This single detail is most of the "living community" feeling.
 - **Punctuation** — `PuffBurst` (five cream squares on an expanding ring) on landing; floating `z` glyphs for sleep; speech bubbles that pop in on `easeOutBack` over 0.38s and shrink out over 0.28s.
 
@@ -207,7 +249,7 @@ One **Node + TypeScript** process = game server + daemon:
 
 ### 7.1 The client
 
-**`@village/web`** — Vite + TypeScript + **KAPLAY** (MIT). Renders the scrollable pixel-art village from state streamed over WebSocket and posts player intents over REST. Draws each creature from its `CreatureAppearance` by painting the archetype grid a pixel at a time, then animates it with the §4.2 vocabulary. It holds no game truth: everything it shows came from the server, and everything the player does goes back as an intent.
+**`@village/web`** — Vite + TypeScript + **KAPLAY** (MIT). Renders the scrollable pixel-art village from state streamed over WebSocket and posts player intents over REST. Draws each creature from its `CreatureAppearance` by painting the body grid a pixel at a time, adding the crown above it, then animating with the §4.2 vocabulary. It holds no game truth: everything it shows came from the server, and everything the player does goes back as an intent.
 
 - **Repo layout:**
 
@@ -276,13 +318,13 @@ Rules: preserve upstream LICENSE/attribution in the catalog metadata and install
 
 - **Unit:** DNA→parts determinism (fixed vectors), palette-lock math (property test: no output outside the band), XP/decay math, frontmatter validators against fixture files copied from the real repos (valid + broken).
 - **Integration:** fake `claude` binary (scripted JSON responses) driving LLMService — routing, ledger, cap fallback; File bridge against a sandbox fake `$HOME` — import, adopt, hatch-install, release/restore, watcher sync; hook ingest endpoint.
-- **Grid integrity:** a test asserts every archetype grid is rectangular, uses only known color-role characters, has in-bounds eye anchors, and that every feature variant the generator can emit was authored for the archetype it lands on — so a valid creature can never fail to draw.
+- **Grid integrity:** a test asserts every body grid is rectangular, uses only known color-role characters, and has in-bounds eye anchors; that every crown, evaluated against every body width, lands within bounds and above row 0; that every body has a tapered underside of matching width; and that no feature variant is emitted onto a body it wasn't authored for. A valid creature can never fail to draw.
 - **E2E smoke:** boot server + headless browser: village renders, an adoption completes into the sandbox `~/.claude`, the new creature appears.
 - **Golden set:** the §4 contact-sheet render script, run as a build step; failures are reviewed by a human, not asserted.
 
 ## 14. Milestones (one plan, ordered)
 
-1. **M1 Core** — `@village/core`: types, DNA→appearance, authoring the ~6 archetype grids and their feature variants, sim rules, file-format parsers/validators. Pure logic, fully unit-tested, no server or client yet.
+1. **M1 Core** — `@village/core`: types, DNA→appearance, authoring the 6 bodies, 5 crowns, tapered undersides and `lanky` postures, sim rules, file-format parsers/validators. Pure logic, fully unit-tested, no server or client yet.
 2. **M2 Server** — state store, file bridge + first-run import, sim ticking, REST + WebSocket API. Verified with API calls only.
 3. **M3 Web village** — KAPLAY scene, grid renderer, the §4.2 motion vocabulary, four zones, founding villagers visibly alive. *The bar for this milestone is the trailer: if the village doesn't feel like `reference/animation-trailer/`, it isn't done.*
 4. **M4 Voice** — LLM service, personality cards + nicknames, chat, canned pools, budget meter, silent-movie mode.
