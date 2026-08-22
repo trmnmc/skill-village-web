@@ -255,9 +255,10 @@ export async function spawnCreature(
     ]),
   );
 
-  // Timestamp of the most recently fired landing puff, so a hopper's `update`
-  // (called once per frame) fires the puff exactly once per landing rather
-  // than on every frame the hop's own `landedAt` continues to report it.
+  // Timestamp of the most recently *observed* landing, so a hopper's `update`
+  // (called once per frame) fires a puff exactly once per landing rather than
+  // on every frame the hop's own `landedAt` continues to report it. Null only
+  // until the first landing is observed — never again after that.
   let lastLanding: number | null = null;
 
   return {
@@ -360,9 +361,18 @@ export async function spawnCreature(
       // landing (see motion.ts); comparing it against lastLanding rather than
       // firing on every frame the hop is "in a landed state" is what keeps
       // one hop to exactly one puff.
-      if (hop && hop.landedAt !== null && hop.landedAt !== lastLanding) {
-        lastLanding = hop.landedAt;
-        puff(k, root.pos.x, root.pos.y);
+      if (hop && hop.landedAt !== null) {
+        if (lastLanding === null) {
+          // The first landing this actor ever sees is one it did not watch
+          // happen: the hop clock is staggered by -phi * 2.6, so most hoppers
+          // are already mid-cycle on their first drawn frame and hopState
+          // reports a landing that took place before the creature existed.
+          // Adopt it silently — a puff is punctuation on a transition.
+          lastLanding = hop.landedAt;
+        } else if (hop.landedAt !== lastLanding) {
+          lastLanding = hop.landedAt;
+          puff(k, root.pos.x, root.pos.y);
+        }
       }
 
       nameplate.opacity = behaviour.scruffy ? 0.55 : 1;
