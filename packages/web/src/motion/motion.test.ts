@@ -43,6 +43,13 @@ describe('breathe', () => {
     for (let t = 0; t < 10; t += 0.01) flyMax = Math.max(flyMax, breathe(t, 0, true).sy);
     expect(flyMax).toBeCloseTo(1.02, 3);
   });
+
+  it('is offset per creature, so no two chests rise together', () => {
+    // Same instant, different phase. Drop the phi term from the sine and both
+    // of these collapse onto one value.
+    expect(breathe(1.4, 0.1, false).sy).not.toBeCloseTo(breathe(1.4, 0.7, false).sy, 4);
+    expect(breathe(1.4, 0.1, true).sy).not.toBeCloseTo(breathe(1.4, 0.7, true).sy, 4);
+  });
 });
 
 describe('isBlinking', () => {
@@ -77,6 +84,14 @@ describe('gaze', () => {
     const seen = new Set<number>();
     for (let t = 0; t < 40; t += 0.05) seen.add(gaze(t, 0));
     expect(seen).toEqual(new Set([-1, 0, 1]));
+  });
+
+  it('is offset per creature, so the village does not glance in unison', () => {
+    // No target, so the drift sine is the only thing choosing and the phase is
+    // the only thing that differs between these four. Without the phi term
+    // they all return the same direction.
+    const directions = new Set([0, 0.25, 0.5, 0.75].map((phi) => gaze(0.5, phi)));
+    expect(directions.size).toBeGreaterThan(1);
   });
 });
 
@@ -126,6 +141,10 @@ describe('wingAngle', () => {
     expect(max).toBeCloseTo(18, 0);
     expect(min).toBeCloseTo(-34, 0);
   });
+
+  it('is offset per creature, so a flock never beats in unison', () => {
+    expect(wingAngle(0.2, 0.1)).not.toBeCloseTo(wingAngle(0.2, 0.8), 4);
+  });
 });
 
 describe('shadowSquash', () => {
@@ -136,5 +155,28 @@ describe('shadowSquash', () => {
   it('shrinks as the creature rises, and never past the floor', () => {
     expect(shadowSquash(-26)).toBeCloseTo(1 - 26 / 130, 5);
     expect(shadowSquash(-1000)).toBe(0.55);
+  });
+});
+
+describe('nobody moves in lockstep', () => {
+  // phaseFor exists to shift every cycle by a per-creature offset, and the
+  // spec credits that one detail with most of the living-community feeling.
+  // Each periodic function is guarded above on hand-picked phases; this is the
+  // same property stated over creatures rather than numbers, so deleting any
+  // phi term fails here too.
+  const ids = ['skill:code-review', 'skill:dataviz', 'agent:explore', 'skill:ship', 'agent:plan'];
+  const phases = ids.map(phaseFor);
+  const t = 2.15;
+
+  it('gives every creature its own point in the breathing cycle', () => {
+    expect(new Set(phases.map((phi) => breathe(t, phi, false).sy)).size).toBe(ids.length);
+  });
+
+  it('gives every creature its own point in the wing beat', () => {
+    expect(new Set(phases.map((phi) => wingAngle(t, phi))).size).toBe(ids.length);
+  });
+
+  it('does not point every gaze the same way', () => {
+    expect(new Set(phases.map((phi) => gaze(t, phi))).size).toBeGreaterThan(1);
   });
 });

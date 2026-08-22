@@ -49,6 +49,22 @@ describe('behaviourFor — skills', () => {
     expect(b.asleep).toBe(false);
   });
 
+  it('is not scruffy while its mood is fine', () => {
+    // Asserting only the `true` side leaves `scruffy: true` hardcoded in the
+    // implementation passing the whole file, so pin the other polarity and the
+    // threshold between them.
+    expect(behaviourFor(creature({ mood: 80, energy: 80 })).scruffy).toBe(false);
+    expect(behaviourFor(creature({ mood: 35, energy: 80 })).scruffy).toBe(false);
+    expect(behaviourFor(creature({ mood: 34, energy: 80 })).scruffy).toBe(true);
+  });
+
+  it('carries its grooming into sleep, either way', () => {
+    // The asleep branch returns early with its own object, so it needs its own
+    // pair — a contented sleeper is not scruffy and a miserable one is.
+    expect(behaviourFor(creature({ mood: 80, energy: 10 })).scruffy).toBe(false);
+    expect(behaviourFor(creature({ mood: 20, energy: 10 })).scruffy).toBe(true);
+  });
+
   it('never flies', () => {
     expect(behaviourFor(creature({ mood: 99, energy: 99 })).fly).toBeNull();
   });
