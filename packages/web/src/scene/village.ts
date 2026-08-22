@@ -1,7 +1,9 @@
 import kaplay, { type KAPLAYCtx } from 'kaplay';
+import type { Creature } from '@village/core/visual';
 import { THEME } from '../theme.js';
-import { ZONES, WORLD_W, GROUND_Y } from '../layout/zones.js';
+import { ZONES, WORLD_W, GROUND_Y, placeCreatures } from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
+import { spawnCreature, type CreatureActor } from './creature.js';
 
 export interface VillageScene {
   k: KAPLAYCtx;
@@ -149,10 +151,52 @@ export async function startVillage(): Promise<VillageScene> {
 
   k.setCamPos(k.width() / 2, GROUND_Y - 160);
 
+  const actors = new Map<string, CreatureActor>();
+  let known = new Map<string, Creature>();
+  let lookAt: number | null = null;
+
+  // A second onMouseMove consumer, alongside the drag-pan handler above —
+  // KAPLAY's event registry supports multiple listeners per event and
+  // neither one calls stopPropagation, so this composes cleanly with it
+  // (see the comment on the drag-pan block). camPos() is deprecated in the
+  // installed KAPLAY build (Task 9 hit the same thing); getCamPos() is its
+  // replacement.
+  k.onMouseMove((pos) => {
+    lookAt = pos.x + k.getCamPos().x - k.width() / 2;
+  });
+
+  k.onUpdate(() => {
+    const t = k.time();
+    for (const actor of actors.values()) actor.update(t, lookAt);
+  });
+
   return {
     k,
     setView(view) {
       counter.text = `${view.creatures.length} villagers`;
+      const spots = placeCreatures(view.creatures.map((c) => c.id));
+      const seen = new Set<string>();
+
+      for (const creature of view.creatures) {
+        seen.add(creature.id);
+        const before = known.get(creature.id);
+        // Respawn only when the look changes; stats alone (which change on
+        // every server tick) must not restart a creature's motion.
+        const changed = before && JSON.stringify(before.appearance) !== JSON.stringify(creature.appearance);
+        if (!actors.has(creature.id) || changed) {
+          actors.get(creature.id)?.destroy();
+          void spawnCreature(k, creature, spots.get(creature.id)!).then((actor) => {
+            if (!seen.has(creature.id)) { actor.destroy(); return; }
+            actors.set(creature.id, actor);
+          });
+        }
+      }
+
+      for (const [id, actor] of actors) {
+        if (!seen.has(id)) { actor.destroy(); actors.delete(id); }
+      }
+
+      known = new Map(view.creatures.map((c) => [c.id, c]));
     },
     setStatus(s) {
       status.text = s;
