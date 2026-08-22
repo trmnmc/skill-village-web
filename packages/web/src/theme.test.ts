@@ -32,6 +32,14 @@ describe('THEME', () => {
     expect(THEME.moss).toBe('#9DBA77');
   });
 
+  it('carries the contact-shadow and house colours later scene tasks need, so they never write a hex literal of their own', () => {
+    expect(THEME.shadow).toBe('#5A4628');
+    expect(THEME.wallLilac).toBe('#E8D3EE');
+    expect(THEME.roofLilac).toBe('#B39DDB');
+    expect(THEME.wallSand).toBe('#F2D8A7');
+    expect(THEME.roofClay).toBe('#D96C57');
+  });
+
   it('is all well-formed hex', () => {
     for (const [name, value] of Object.entries(THEME)) {
       expect(isHex(value), `${name} = ${value}`).toBe(true);
