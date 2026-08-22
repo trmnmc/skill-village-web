@@ -4,6 +4,7 @@ import { THEME, U } from '../theme.js';
 import { composeGrid } from '../render/compose.js';
 import { bakePixels } from '../render/bake.js';
 import { roleMap } from '../render/roles.js';
+import { displayName, fileLabel } from '../render/label.js';
 import { behaviourFor } from '../motion/behaviour.js';
 import { breathe, gaze, hopState, isBlinking, phaseFor, shadowSquash, wingAngle } from '../motion/motion.js';
 import type { Spot } from '../layout/zones.js';
@@ -43,10 +44,42 @@ function loadSprite(k: KAPLAYCtx, name: string, canvas: HTMLCanvasElement): Prom
   });
 }
 
+/** Five cream squares on an expanding ring — the punctuation on a landing. */
+function puff(k: KAPLAYCtx, x: number, y: number): void {
+  for (let i = 0; i < 5; i++) {
+    const angle = (i / 5) * Math.PI * 2;
+    const square = k.add([
+      k.rect(5, 5),
+      k.pos(x, y),
+      k.anchor('center'),
+      k.color(k.Color.fromHex(THEME.bubbleWhite)),
+      k.opacity(0.9),
+      k.z(4),
+      k.lifespan(0.45, { fade: 0.25 }),
+      k.move(k.vec2(Math.cos(angle), Math.sin(angle) * 0.5), 120),
+    ]);
+    void square;
+  }
+}
+
+/**
+ * Resolved CSS family names — `village.ts`'s `resolveWebFont` result, not the
+ * literal strings 'village'/'mono'. KAPLAY's `resolveFont` checks a font
+ * string against loaded bitmap fonts and `document.fonts.check()` and throws
+ * "Font not found" otherwise (see the long comment on `resolveWebFont` in
+ * village.ts); nothing here ever registers fonts named "village" or "mono",
+ * so passing those literals would throw the moment a frame actually draws.
+ */
+export interface CreatureFonts {
+  pixel: string;
+  mono: string;
+}
+
 export async function spawnCreature(
   k: KAPLAYCtx,
   creature: Creature,
   spot: Spot,
+  fonts: CreatureFonts,
 ): Promise<CreatureActor> {
   const map = roleMap(creature.appearance.palette);
   const behaviour = behaviourFor(creature);
@@ -153,6 +186,46 @@ export async function spawnCreature(
     return { anchor, pupil, lid, lash };
   });
 
+  const nameplate = root.add([
+    k.text(displayName(creature), { size: 13, font: fonts.pixel }),
+    k.pos(0, -bh - 26),
+    k.anchor('center'),
+    k.color(k.Color.fromHex(THEME.ink)),
+    // `update` dims this for scruffy creatures; the component must be
+    // declared here or `.opacity` isn't a settable property on the object.
+    k.opacity(1),
+    k.z(5),
+  ]);
+
+  root.add([
+    k.text(fileLabel(creature), { size: 10, font: fonts.mono }),
+    k.pos(0, -bh - 12),
+    k.anchor('center'),
+    k.color(k.Color.fromHex(THEME.ink)),
+    k.opacity(0.6),
+    k.z(5),
+  ]);
+
+  // Sleep glyphs: three z's drifting up on their own offsets.
+  const zzz = behaviour.asleep
+    ? [0, 1, 2].map((i) =>
+        root.add([
+          k.text('z', { size: 12 + i * 2, font: fonts.mono }),
+          k.pos(bw * 0.4, -bh),
+          k.anchor('center'),
+          k.color(k.Color.fromHex(THEME.ink)),
+          k.opacity(0.7),
+          k.z(5),
+          { drift: i * 0.34 },
+        ]),
+      )
+    : [];
+
+  // Timestamp of the most recently fired landing puff, so a hopper's `update`
+  // (called once per frame) fires the puff exactly once per landing rather
+  // than on every frame the hop's own `landedAt` continues to report it.
+  let lastLanding: number | null = null;
+
   return {
     update(t, lookAt) {
       // t0 = -phi * 2.6 (the hop cycle length, private to motion.ts) shifts
@@ -226,6 +299,24 @@ export async function spawnCreature(
           pupil.pos = k.vec2(x + look * 3.5 * sx, y + U * 0.125 * sy);
         }
       }
+
+      for (const glyph of zzz) {
+        const d = (glyph as unknown as { drift: number }).drift;
+        const p = (t * 0.42 + d) % 1;
+        glyph.pos = k.vec2(bw * 0.4 + p * 18, -bh - p * 40);
+        glyph.opacity = 0.7 * (1 - p);
+      }
+
+      // hop.landedAt names the instant of the most recently completed
+      // landing (see motion.ts); comparing it against lastLanding rather than
+      // firing on every frame the hop is "in a landed state" is what keeps
+      // one hop to exactly one puff.
+      if (hop && hop.landedAt !== null && hop.landedAt !== lastLanding) {
+        lastLanding = hop.landedAt;
+        puff(k, root.pos.x, root.pos.y);
+      }
+
+      nameplate.opacity = behaviour.scruffy ? 0.55 : 1;
     },
     destroy() {
       k.destroy(root);

@@ -202,7 +202,7 @@ export async function startVillage(): Promise<VillageScene> {
           actors.delete(creature.id);
           const gen = (generations.get(creature.id) ?? 0) + 1;
           generations.set(creature.id, gen);
-          void spawnCreature(k, creature, spots.get(creature.id)!)
+          void spawnCreature(k, creature, spots.get(creature.id)!, { pixel: pixelFont, mono: monoFont })
             .then((actor) => {
               if (generations.get(creature.id) !== gen) { actor.destroy(); return; }
               actors.set(creature.id, actor);
