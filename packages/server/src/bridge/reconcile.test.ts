@@ -43,9 +43,13 @@ describe('reconcile', () => {
     expect(result.events).toEqual([]);
   });
 
-  it('resyncs and reports when the source file moved', () => {
+  it('resyncs and reports when the source file moved, keeping identity stable', () => {
     const state = emptyState(0);
     const existing = makeCreature('mover', '/old/path/SKILL.md');
+    existing.appearance = { ...existing.appearance, crown: 'horns' };
+    existing.stats = { mood: 42, energy: 43, bond: 88, xp: 5000 };
+    existing.nickname = 'Mo';
+    existing.friendships = { 'skill:other': 50 };
     state.creatures[existing.id] = existing;
 
     const result = reconcile(
@@ -53,11 +57,16 @@ describe('reconcile', () => {
       { creatures: [makeCreature('mover', '/new/path/SKILL.md')], problems: [] },
       300,
     );
-    expect(result.state.creatures['skill:mover']!.sourcePath).toBe('/new/path/SKILL.md');
+    const after = result.state.creatures['skill:mover']!;
+    expect(after.sourcePath).toBe('/new/path/SKILL.md');
+    expect(after.appearance.crown).toBe('horns');
+    expect(after.stats).toEqual({ mood: 42, energy: 43, bond: 88, xp: 5000 });
+    expect(after.nickname).toBe('Mo');
+    expect(after.friendships).toEqual({ 'skill:other': 50 });
     expect(result.events.map((e) => e.type)).toEqual(['resynced']);
   });
 
-  it('keeps identity stable across a resync — appearance never regenerates', () => {
+  it('keeps identity stable on an unchanged rescan — appearance never regenerates', () => {
     const state = emptyState(0);
     const existing = makeCreature('stable');
     existing.appearance = { ...existing.appearance, crown: 'horns' };
