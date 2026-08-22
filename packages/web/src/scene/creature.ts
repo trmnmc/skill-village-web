@@ -152,7 +152,18 @@ export async function spawnCreature(
         root.add([
           k.sprite(wingKey),
           k.pos(side * (bw / 2), -restH * 0.55),
-          k.anchor(side === -1 ? 'right' : 'left'),
+          // Both wings anchor 'left', including the mirrored one. KAPLAY turns
+          // the anchor into a translate pushed *inside* the object transform
+          // (drawUVQuad: pushScale then pushTranslate(offset), where offset =
+          // anchorPt * -size/2), so the offset is multiplied by this object's
+          // own scale. A negative sx therefore flips which side of the anchor
+          // point the sprite occupies: 'right' — which reads as "extend
+          // leftwards" — put the left wing at [-21, +3] for a lanky body,
+          // lying inward across a torso spanning [-21, +21]. 'left' with the
+          // mirror puts it at [-45, -21], the exact mirror of the right wing's
+          // [+21, +45]. The negative scale is what mirrors the shape; the
+          // anchor only names the hinge, which stays on the shoulder either way.
+          k.anchor('left'),
           k.scale(U * side, U),
           k.rotate(0),
           k.z(-2),
