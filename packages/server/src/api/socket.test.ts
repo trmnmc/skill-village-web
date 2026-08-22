@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import type { FastifyInstance } from 'fastify';
 import { makeSandbox, skillFixture, type Sandbox } from '../testing/sandbox.js';
@@ -8,6 +8,10 @@ import { createApp } from './app.js';
 let sandbox: Sandbox | null = null;
 let village: Village | null = null;
 let app: FastifyInstance | null = null;
+/** Incremented by the `village.subscribe` spy every time a returned
+ *  unsubscribe function runs, so tests can observe listener cleanup
+ *  without touching production code. Reset per test in `listen()`. */
+let unsubscribeCalls = 0;
 
 afterEach(async () => {
   await app?.close();
@@ -23,6 +27,20 @@ async function listen(): Promise<string> {
   sandbox = await makeSandbox();
   await sandbox.writeSkill('watcher-bait', skillFixture('watcher-bait'));
   village = await createVillage({ paths: sandbox.paths, now: () => 1_000 });
+
+  // Wrap the village's public `subscribe` so tests can observe when the
+  // handler's unsubscribe function actually runs, without adding any
+  // testability hook to production code.
+  unsubscribeCalls = 0;
+  const original = village.subscribe;
+  vi.spyOn(village, 'subscribe').mockImplementation((listener) => {
+    const realUnsubscribe = original(listener);
+    return () => {
+      unsubscribeCalls += 1;
+      realUnsubscribe();
+    };
+  });
+
   app = await createApp(village);
   await app.listen({ port: 0, host: '127.0.0.1' });
   const address = app.server.address();
@@ -38,6 +56,15 @@ function nextMessage(socket: WebSocket, timeoutMs = 4000): Promise<Record<string
       resolve(JSON.parse(String(data)) as Record<string, unknown>);
     });
   });
+}
+
+/** Bounded poll: retries `predicate` until it is true or `timeoutMs` elapses. */
+async function waitUntil(predicate: () => boolean, timeoutMs = 4000, intervalMs = 10): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error('timed out waiting for condition');
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
 }
 
 describe('the websocket', () => {
@@ -81,8 +108,12 @@ describe('the websocket', () => {
     await new Promise((resolve) => socket.once('open', resolve));
     await initial;
 
+    const before = unsubscribeCalls;
     socket.close();
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // Proves the handler's `socket.on('close', unsubscribe)` wiring actually
+    // runs, not just that a stale listener happens to be readyState-guarded.
+    await waitUntil(() => unsubscribeCalls > before);
+    expect(unsubscribeCalls).toBe(before + 1);
 
     // Must not throw when broadcasting with no live sockets left.
     await expect(village!.care('skill:watcher-bait', 'play')).resolves.toBeUndefined();
