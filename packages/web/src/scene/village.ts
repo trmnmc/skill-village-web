@@ -209,6 +209,10 @@ export async function startVillage(): Promise<VillageScene> {
           void spawnCreature(k, creature, spots.get(creature.id)!, { pixel: pixelFont, mono: monoFont })
             .then((actor) => {
               if (generations.get(creature.id) !== gen) { actor.destroy(); return; }
+              // Stats can tick several times while 70 sprites load. `known`
+              // holds the newest view by the time this resolves, so hand the
+              // actor that rather than the snapshot the spawn started from.
+              actor.setCreature(known.get(creature.id) ?? creature);
               actors.set(creature.id, actor);
             })
             .catch(() => {
@@ -216,6 +220,12 @@ export async function startVillage(): Promise<VillageScene> {
               // the rejection creature.ts's loadSprite() produces via
               // onError(reject) would be an unhandled promise rejection.
             });
+        } else {
+          // Same look, newer stats: the actor re-derives its behaviour flags
+          // in place. Without this, mood and energy select a creature's
+          // behaviour exactly once — on the frame it was first drawn — and
+          // never again.
+          actors.get(creature.id)?.setCreature(creature);
         }
       }
 

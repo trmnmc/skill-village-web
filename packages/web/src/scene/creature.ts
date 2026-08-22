@@ -11,6 +11,11 @@ import type { Spot } from '../layout/zones.js';
 
 export interface CreatureActor {
   update(t: number, lookAt: number | null): void;
+  /**
+   * Adopt a fresh copy of this creature — same look, newer stats — without
+   * respawning it. See the implementation's note in `spawnCreature`.
+   */
+  setCreature(next: Creature): void;
   destroy(): void;
 }
 
@@ -82,7 +87,10 @@ export async function spawnCreature(
   fonts: CreatureFonts,
 ): Promise<CreatureActor> {
   const map = roleMap(creature.appearance.palette);
-  const behaviour = behaviourFor(creature);
+  // Not const: `setCreature` re-derives this whenever the server sends new
+  // stats, so mood and energy keep selecting behaviours for as long as the
+  // page is open rather than only on the frame the creature was first drawn.
+  let behaviour = behaviourFor(creature);
   const phi = phaseFor(creature.id);
 
   // Bake the resting body once. A roaming lanky agent gets a second bake with
@@ -206,20 +214,21 @@ export async function spawnCreature(
     k.z(5),
   ]);
 
-  // Sleep glyphs: three z's drifting up on their own offsets.
-  const zzz = behaviour.asleep
-    ? [0, 1, 2].map((i) =>
-        root.add([
-          k.text('z', { size: 12 + i * 2, font: fonts.mono }),
-          k.pos(bw * 0.4, -bh),
-          k.anchor('center'),
-          k.color(k.Color.fromHex(THEME.ink)),
-          k.opacity(0.7),
-          k.z(5),
-          { drift: i * 0.34 },
-        ]),
-      )
-    : [];
+  // Sleep glyphs: three z's drifting up on their own offsets. Built for every
+  // creature and shown only while it is asleep — a creature that dozes off an
+  // hour from now has to have them ready, because `behaviour` changes under
+  // this actor and nothing respawns it when it does.
+  const zzz = [0, 1, 2].map((i) =>
+    root.add([
+      k.text('z', { size: 12 + i * 2, font: fonts.mono }),
+      k.pos(bw * 0.4, -bh),
+      k.anchor('center'),
+      k.color(k.Color.fromHex(THEME.ink)),
+      k.opacity(0.7),
+      k.z(5),
+      { drift: i * 0.34 },
+    ]),
+  );
 
   // Timestamp of the most recently fired landing puff, so a hopper's `update`
   // (called once per frame) fires the puff exactly once per landing rather
@@ -253,7 +262,9 @@ export async function spawnCreature(
       shadow.width = bw * 0.78 * squash;
       shadow.pos.y = 0;
 
-      const flap = wingAngle(t, phi);
+      // A sleeping agent folds its wings; only a flying one flaps. Decided per
+      // frame because `behaviour` can change without a respawn.
+      const flap = behaviour.fly ? wingAngle(t, phi) : 0;
       wings.forEach((wing, i) => {
         wing.angle = i === 0 ? -flap : flap;
         wing.pos.y = -bh * 0.55 + hover;
@@ -301,6 +312,7 @@ export async function spawnCreature(
       }
 
       for (const glyph of zzz) {
+        glyph.hidden = !behaviour.asleep;
         const d = (glyph as unknown as { drift: number }).drift;
         const p = (t * 0.42 + d) % 1;
         glyph.pos = k.vec2(bw * 0.4 + p * 18, -bh - p * 40);
@@ -317,6 +329,21 @@ export async function spawnCreature(
       }
 
       nameplate.opacity = behaviour.scruffy ? 0.55 : 1;
+    },
+    /**
+     * Stats change on every server tick and the appearance does not, so
+     * `village.ts` respawns an actor only when the *look* changes — otherwise
+     * every creature's motion would restart several times a minute. That left
+     * `behaviour` frozen at whatever the stats happened to be on the frame the
+     * creature was first drawn, so `asleep`, `hopper`, `fly` and `scruffy`
+     * selected once and then stopped mattering, against spec §4.2. Re-deriving
+     * the flags here is the whole fix: the sprites, the phase and the motion
+     * clock are all untouched, and everything downstream of `behaviour` —
+     * sleep glyphs, nameplate dimming, wings, hop state, the roam posture
+     * swap — is already read per frame in `update`.
+     */
+    setCreature(next) {
+      behaviour = behaviourFor(next);
     },
     destroy() {
       k.destroy(root);
