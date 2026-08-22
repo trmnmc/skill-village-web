@@ -5,10 +5,16 @@ import { readEvents } from './state/events.js';
 import { makeSandbox, skillFixture, agentFixture, type Sandbox } from './testing/sandbox.js';
 import { createVillage, type Village } from './village.js';
 import { MS_PER_HOUR } from './sim/tick.js';
+import { defaultLlmState } from './llm/ledger.js';
+import { createLlmService, type LlmService } from './llm/service.js';
+import { fakeCliCommand } from './llm/testing/fake.js';
 
 let sandbox: Sandbox | null = null;
 let village: Village | null = null;
 
+// No resetFakeCli() here on purpose: this file only drives the stateless
+// 'card' behaviour, and the reset deletes a marker file that the llm tests —
+// running in a parallel worker — depend on partway through a test of their own.
 afterEach(async () => {
   await village?.close();
   village = null;
@@ -190,5 +196,157 @@ describe('tick', () => {
     village = await createVillage({ paths: sandbox.paths, now: clock(72 * MS_PER_HOUR).now });
     await village.tick();
     expect(village.getState().creatures['skill:abandoned']!.stats.mood).toBeLessThan(fresh);
+  });
+});
+
+describe('chat', () => {
+  /** A card the persona parser accepts, for tests that stub the service by hand. */
+  const CARD = JSON.stringify({
+    nickname: 'Mo', temperament: 'placid', voice: 'soft',
+    quirks: [], likes: [], dislikes: [], lines: ['mm.'],
+  });
+  /** Persona prompts and chat prompts arrive at the same door; this tells them apart. */
+  const isChat = (prompt: string) => prompt.includes('The player says to you');
+
+  it('answers in the creature voice and writes persona on first contact', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('code-review', skillFixture('code-review'));
+    let llmState = defaultLlmState(1_000);
+    const service = createLlmService({
+      command: fakeCliCommand('card'),
+      now: () => 1_000,
+      getLlm: () => llmState,
+      setLlm: async (n) => { llmState = n; },
+    });
+    await service.probe();
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000, llm: service });
+
+    const reply = await village.chat('skill:code-review', 'hello!');
+    expect(reply.source).toBe('llm');
+
+    const creature = village.getState().creatures['skill:code-review']!;
+    expect(creature.nickname).toBe('Nit');
+    expect(creature.personality?.temperament).toBe('a fastidious detective');
+    expect(creature.cannedLines?.length).toBe(20);
+    // chat is a care verb: mood +6, bond +6, xp +5 over the starting stats
+    expect(creature.stats.bond).toBe(16);
+  });
+
+  it('falls back to a canned line when the model refuses, and still applies care', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('tdd', skillFixture('tdd'));
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000 }); // no llm option: silent stub
+
+    const before = village.getState().creatures['skill:tdd']!.stats.bond;
+    const reply = await village.chat('skill:tdd', 'hello?');
+    expect(reply.source).toBe('canned');
+    expect(reply.text.length).toBeGreaterThan(0);
+    expect(village.getState().creatures['skill:tdd']!.stats.bond).toBe(before + 6);
+  });
+
+  it('throws on an unknown creature', async () => {
+    sandbox = await makeSandbox();
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000 });
+    await expect(village.chat('skill:ghost', 'hi')).rejects.toThrow('not found');
+  });
+
+  it('does not regenerate a persona that already exists', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('once', skillFixture('once'));
+    let llmState = defaultLlmState(1_000);
+    let calls = 0;
+    const counting = createLlmService({
+      command: fakeCliCommand('card'),
+      now: () => 1_000,
+      getLlm: () => llmState,
+      setLlm: async (n) => { llmState = n; calls++; },
+    });
+    await counting.probe();
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000, llm: counting });
+    await village.chat('skill:once', 'first');
+    const after = calls;
+    await village.chat('skill:once', 'second');
+    // Second chat spends exactly one more setLlm write (the chat call itself),
+    // not two (persona + chat).
+    expect(calls).toBe(after + 1);
+  });
+
+  it('keeps every token the service spent when it owns the ledger', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('ledger', skillFixture('ledger'));
+    const built: LlmService[] = [];
+    village = await createVillage({
+      paths: sandbox.paths,
+      now: () => 1_000,
+      llmFactory: (hooks) => {
+        const service = createLlmService({ command: fakeCliCommand('card'), ...hooks });
+        built.push(service);
+        return service;
+      },
+    });
+    await built[0]!.probe();
+
+    const reply = await village.chat('skill:ledger', 'hi there');
+    expect(reply.source).toBe('llm');
+    // Three model calls at the fake CLI's fixed 120/45 usage: the probe, the
+    // persona card, and the chat itself. The chat commit spreads the state as
+    // it stands *after* its own request, so the spend booked mid-request
+    // survives instead of being rolled back by a stale snapshot.
+    expect(village.getState().llm.ledger.interactiveIn).toBe(360);
+    expect(village.getState().llm.ledger.interactiveOut).toBe(135);
+  });
+
+  it('does not undo a pet that lands while the model is thinking', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('busy', skillFixture('busy'));
+
+    // A service that says when it has been asked and can be held open until the
+    // test lets go, so the pet below lands in the exact window where the chat is
+    // waiting on the model — which is where a stale copy would swallow it.
+    let thinking = () => {};
+    let letGo = () => {};
+    let stall: Promise<void> = Promise.resolve();
+    const stalling: LlmService = {
+      probe: async () => 'full',
+      mode: () => 'full',
+      async request(req) {
+        if (!isChat(req.prompt)) return { ok: true, text: CARD };
+        thinking();
+        await stall;
+        return { ok: true, text: 'mm-hmm.' };
+      },
+    };
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000, llm: stalling });
+
+    await village.chat('skill:busy', 'first'); // persona written; bond 10 + 6 = 16
+
+    const asked = new Promise<void>((resolve) => { thinking = resolve; });
+    stall = new Promise<void>((resolve) => { letGo = resolve; });
+    const talking = village.chat('skill:busy', 'second');
+    await asked; // the creature has been read; the model is now thinking
+    await village.care('skill:busy', 'pet'); // 16 + 2 = 18
+    letGo();
+    await talking; // 18 + 6 = 24, not 22 — the pet is not rolled back
+
+    expect(village.getState().creatures['skill:busy']!.stats.bond).toBe(24);
+  });
+
+  it('writes one persona when two chats reach a stranger at once', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('twin', skillFixture('twin'));
+    let cards = 0;
+    const counting: LlmService = {
+      probe: async () => 'full',
+      mode: () => 'full',
+      async request(req) {
+        if (!isChat(req.prompt)) { cards += 1; return { ok: true, text: CARD }; }
+        return { ok: true, text: 'hello yourself.' };
+      },
+    };
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000, llm: counting });
+
+    await Promise.all([village.chat('skill:twin', 'a'), village.chat('skill:twin', 'b')]);
+    expect(cards).toBe(1);
+    expect(village.getState().creatures['skill:twin']!.nickname).toBe('Mo');
   });
 });

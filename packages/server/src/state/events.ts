@@ -13,7 +13,9 @@ export type VillageEventType =
   | 'auto-released'
   | 'cared-for'
   | 'stage-changed'
-  | 'import-failed';
+  | 'import-failed'
+  | 'persona-written'
+  | 'chatted';
 
 export interface VillageEvent {
   at: number;
