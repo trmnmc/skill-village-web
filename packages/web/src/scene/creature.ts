@@ -49,11 +49,15 @@ function loadSprite(k: KAPLAYCtx, name: string, canvas: HTMLCanvasElement): Prom
   });
 }
 
-/** Five cream squares on an expanding ring — the punctuation on a landing. */
+/**
+ * Five cream squares on an expanding ring — the punctuation on a landing.
+ * Nothing holds on to them: `lifespan` fades each one out and removes it from
+ * the scene 0.45s later, so the scene graph owns them from here.
+ */
 function puff(k: KAPLAYCtx, x: number, y: number): void {
   for (let i = 0; i < 5; i++) {
     const angle = (i / 5) * Math.PI * 2;
-    const square = k.add([
+    k.add([
       k.rect(5, 5),
       k.pos(x, y),
       k.anchor('center'),
@@ -63,7 +67,6 @@ function puff(k: KAPLAYCtx, x: number, y: number): void {
       k.lifespan(0.45, { fade: 0.25 }),
       k.move(k.vec2(Math.cos(angle), Math.sin(angle) * 0.5), 120),
     ]);
-    void square;
   }
 }
 
