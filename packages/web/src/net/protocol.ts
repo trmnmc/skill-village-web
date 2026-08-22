@@ -1,4 +1,4 @@
-import type { Creature } from '@village/core';
+import { BODY_IDS, CROWN_IDS, type Creature } from '@village/core';
 
 export interface VillageView {
   /** Sorted by id, so render order never flickers between frames. */
@@ -7,15 +7,58 @@ export interface VillageView {
   startupNote: string | null;
 }
 
+const BODY_ID_SET: ReadonlySet<string> = new Set(BODY_IDS);
+const CROWN_ID_SET: ReadonlySet<string> = new Set(CROWN_IDS);
+
+function isRenderablePalette(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const p = value as Record<string, unknown>;
+  return typeof p.hue === 'string' && typeof p.lite === 'string' && typeof p.dark === 'string';
+}
+
+/**
+ * `body`/`crown` must be real ids, not merely strings: compose.ts indexes
+ * `BODIES[body]`/`CROWNS[crown]` directly and then reads `body.w`, so a
+ * stray string produces `undefined` there rather than a real grid. `restPosture`
+ * is deliberately left unchecked — it is legitimately null for most creatures,
+ * and composeGrid already falls back to 'stubs' when it is absent.
+ */
+function isRenderableAppearance(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const a = value as Record<string, unknown>;
+  return (
+    typeof a.body === 'string' && BODY_ID_SET.has(a.body) &&
+    typeof a.crown === 'string' && CROWN_ID_SET.has(a.crown) &&
+    typeof a.winged === 'boolean' &&
+    isRenderablePalette(a.palette)
+  );
+}
+
+/** behaviourFor compares both against thresholds, so both must be numbers. */
+function isRenderableStats(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const s = value as Record<string, unknown>;
+  return typeof s.mood === 'number' && typeof s.energy === 'number';
+}
+
+/**
+ * True only for the fields the renderer actually dereferences downstream:
+ * roles.ts reads palette.hue/lite, compose.ts indexes BODIES[body]/CROWNS[crown]
+ * then body.w, behaviour.ts branches on winged and compares stats.mood/energy,
+ * and displayName calls nickname.trim(). This is deliberately narrower than the
+ * full Creature shape — over-fitting to every field core exposes would reject
+ * server payloads for no reason the renderer cares about.
+ */
 function isRenderable(value: unknown): value is Creature {
   if (typeof value !== 'object' || value === null) return false;
-  const c = value as Partial<Creature>;
+  const c = value as Record<string, unknown>;
   return (
     typeof c.id === 'string' &&
     typeof c.name === 'string' &&
+    typeof c.nickname === 'string' &&
     (c.kind === 'skill' || c.kind === 'agent') &&
-    typeof c.appearance === 'object' && c.appearance !== null &&
-    typeof c.stats === 'object' && c.stats !== null
+    isRenderableAppearance(c.appearance) &&
+    isRenderableStats(c.stats)
   );
 }
 

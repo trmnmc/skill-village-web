@@ -54,6 +54,53 @@ describe('toView', () => {
     const view = toView({ creatures: { a: { id: 'a' }, 'skill:ok': creature }, problems: [] })!;
     expect(view.creatures.map((c) => c.id)).toEqual(['skill:code-review']);
   });
+
+  // Each of the following would have crashed a renderer that trusted `toView`'s
+  // output as a real Creature: roles.ts reads palette.hue/lite, compose.ts
+  // indexes BODIES[body]/CROWNS[crown] then reads body.w, behaviour.ts branches
+  // on winged, and displayName calls nickname.trim(). A well-formed creature
+  // alongside each bad one proves the guard drops selectively, not wholesale.
+
+  it('skips a creature whose appearance is present but empty', () => {
+    const bad = { ...creature, id: 'skill:bad', appearance: {} };
+    const view = toView({ creatures: { bad, ok: creature }, problems: [] })!;
+    expect(view.creatures.map((c) => c.id)).toEqual(['skill:code-review']);
+  });
+
+  it('skips a creature whose palette is missing hue', () => {
+    const bad = {
+      ...creature,
+      id: 'skill:bad',
+      appearance: { ...creature.appearance, palette: { lite: '#F0B49A', dark: '#B96A4A' } },
+    };
+    const view = toView({ creatures: { bad, ok: creature }, problems: [] })!;
+    expect(view.creatures.map((c) => c.id)).toEqual(['skill:code-review']);
+  });
+
+  it('skips a creature whose body is a string but not a real body id', () => {
+    const bad = { ...creature, id: 'skill:bad', appearance: { ...creature.appearance, body: 'dragon' } };
+    const view = toView({ creatures: { bad, ok: creature }, problems: [] })!;
+    expect(view.creatures.map((c) => c.id)).toEqual(['skill:code-review']);
+  });
+
+  it('skips a creature whose winged flag is not a boolean', () => {
+    const bad = { ...creature, id: 'skill:bad', appearance: { ...creature.appearance, winged: 'yes' } };
+    const view = toView({ creatures: { bad, ok: creature }, problems: [] })!;
+    expect(view.creatures.map((c) => c.id)).toEqual(['skill:code-review']);
+  });
+
+  it('skips a creature with no nickname', () => {
+    const bad = { ...creature, id: 'skill:bad', nickname: undefined };
+    const view = toView({ creatures: { bad, ok: creature }, problems: [] })!;
+    expect(view.creatures.map((c) => c.id)).toEqual(['skill:code-review']);
+  });
+
+  it('keeps a fully-formed creature whose restPosture is null', () => {
+    // restPosture: null is the normal case, not the exception — most creatures
+    // have it. The stricter appearance guard above must not reject this.
+    const view = toView({ creatures: { ok: creature }, problems: [] })!;
+    expect(view.creatures.map((c) => c.id)).toEqual(['skill:code-review']);
+  });
 });
 
 describe('parseServerMessage', () => {
