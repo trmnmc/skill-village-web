@@ -66,6 +66,30 @@ describe('loadState', () => {
     expect(loaded.recovered).toBe(true);
     expect(loaded.note).toMatch(/version/i);
   });
+
+  it('rejects a state file with missing problems field', async () => {
+    sandbox = await makeSandbox();
+    const state = emptyState(500);
+    const broken = { ...state, problems: undefined };
+    await writeFile(sandbox.paths.statePath, JSON.stringify(broken), 'utf8');
+
+    const loaded = await loadState(sandbox.paths, 9999);
+    expect(loaded.recovered).toBe(true);
+    expect(loaded.note).toMatch(/backup|fresh|new/i);
+    expect(loaded.state.createdAt).toBe(9999);
+  });
+
+  it('rejects a state file with problems not being an array', async () => {
+    sandbox = await makeSandbox();
+    const state = emptyState(500);
+    const broken = { ...state, problems: { 0: 'not-an-array' } };
+    await writeFile(sandbox.paths.statePath, JSON.stringify(broken), 'utf8');
+
+    const loaded = await loadState(sandbox.paths, 9999);
+    expect(loaded.recovered).toBe(true);
+    expect(loaded.note).toMatch(/backup|fresh|new/i);
+    expect(loaded.state.createdAt).toBe(9999);
+  });
 });
 
 describe('saveState', () => {

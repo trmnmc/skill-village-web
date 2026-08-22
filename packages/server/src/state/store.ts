@@ -11,21 +11,53 @@ export interface LoadResult {
   note: string | null;
 }
 
-async function readStateFile(path: string): Promise<VillageState | null> {
+type ReadStateResult =
+  | { ok: true; state: VillageState }
+  | { ok: false; reason: 'missing' | 'invalid' | 'version' };
+
+async function readStateFile(path: string): Promise<ReadStateResult> {
   let raw: string;
   try {
     raw = await readFile(path, 'utf8');
   } catch {
-    return null;
+    return { ok: false, reason: 'missing' };
   }
+
   try {
     const parsed = JSON.parse(raw) as VillageState;
-    if (typeof parsed !== 'object' || parsed === null) return null;
-    if (typeof parsed.version !== 'number' || parsed.version > STATE_VERSION) return null;
-    if (typeof parsed.creatures !== 'object' || parsed.creatures === null) return null;
-    return parsed;
+
+    // Validate full shape
+    if (typeof parsed !== 'object' || parsed === null) {
+      return { ok: false, reason: 'invalid' };
+    }
+
+    if (typeof parsed.version !== 'number') {
+      return { ok: false, reason: 'invalid' };
+    }
+
+    if (parsed.version > STATE_VERSION) {
+      return { ok: false, reason: 'version' };
+    }
+
+    if (typeof parsed.createdAt !== 'number') {
+      return { ok: false, reason: 'invalid' };
+    }
+
+    if (typeof parsed.updatedAt !== 'number') {
+      return { ok: false, reason: 'invalid' };
+    }
+
+    if (typeof parsed.creatures !== 'object' || parsed.creatures === null) {
+      return { ok: false, reason: 'invalid' };
+    }
+
+    if (!Array.isArray(parsed.problems)) {
+      return { ok: false, reason: 'invalid' };
+    }
+
+    return { ok: true, state: parsed };
   } catch {
-    return null;
+    return { ok: false, reason: 'invalid' };
   }
 }
 
@@ -35,41 +67,44 @@ async function readStateFile(path: string): Promise<VillageState | null> {
  */
 export async function loadState(paths: VillagePaths, now: number): Promise<LoadResult> {
   const main = await readStateFile(paths.statePath);
-  if (main) return { state: main, recovered: false, note: null };
-
-  // Distinguish "no save yet" from "save is unusable" so first run is silent.
-  let mainExists = true;
-  try {
-    await readFile(paths.statePath, 'utf8');
-  } catch {
-    mainExists = false;
+  if (main.ok) {
+    return { state: main.state, recovered: false, note: null };
   }
 
-  if (!mainExists) {
-    const backupOnly = await readStateFile(paths.stateBackupPath);
-    if (backupOnly) {
-      return {
-        state: backupOnly,
-        recovered: true,
-        note: 'The village save was missing, so the backup was used instead.',
-      };
+  // main.reason is 'missing', 'invalid', or 'version'
+  const backup = await readStateFile(paths.stateBackupPath);
+  if (backup.ok) {
+    let note: string;
+    if (main.reason === 'missing') {
+      note = 'The village save was missing, so the backup was used instead.';
+    } else if (main.reason === 'version') {
+      note = 'The village save is from a newer version, so the backup was used instead.';
+    } else {
+      note = 'The village save was unreadable, so the backup was used instead.';
     }
+    return {
+      state: backup.state,
+      recovered: true,
+      note,
+    };
+  }
+
+  // Both main and backup failed. If main didn't exist, this is first run with no save.
+  if (main.reason === 'missing') {
     return { state: emptyState(now), recovered: false, note: null };
   }
 
-  const backup = await readStateFile(paths.stateBackupPath);
-  if (backup) {
-    return {
-      state: backup,
-      recovered: true,
-      note: 'The village save was unreadable or from a newer version, so the backup was used instead.',
-    };
+  let note: string;
+  if (main.reason === 'version') {
+    note = 'The village save is from a newer version and the backup was unusable or missing, so a fresh village was started. Nothing in ~/.claude was touched.';
+  } else {
+    note = 'The village save and its backup were both unreadable or from a newer version, so a fresh village was started. Nothing in ~/.claude was touched.';
   }
 
   return {
     state: emptyState(now),
     recovered: true,
-    note: 'The village save and its backup were both unreadable or from a newer version, so a fresh village was started. Nothing in ~/.claude was touched.',
+    note,
   };
 }
 
