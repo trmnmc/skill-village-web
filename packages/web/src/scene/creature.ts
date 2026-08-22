@@ -101,8 +101,15 @@ export async function spawnCreature(
 
   const dangles = creature.appearance.winged && creature.appearance.body === 'lanky';
   const roamKey = `body:${creature.id}:roam`;
-  if (dangles) {
-    const roamGrid = composeGrid(creature.appearance, 'trailing');
+  // Kept, not thrown away after baking: the two grids are *different heights*.
+  // composeGrid keeps the torso and appends the posture's rows, and the
+  // postures differ in length (stubs 1, splayed 2, floating 3, trailing 4), so
+  // a roaming lanky agent wears a texture 1-3 rows (6-18px) taller than its
+  // resting one. The body sprite is anchored at its base, so the taller
+  // texture lifts the head — and every overlay measured off the top of the
+  // body has to follow it.
+  const roamGrid = dangles ? composeGrid(creature.appearance, 'trailing') : null;
+  if (roamGrid) {
     await loadSprite(k, roamKey, toCanvas(bakePixels(roamGrid, map)));
   }
 
@@ -113,7 +120,14 @@ export async function spawnCreature(
   }
 
   const bw = restGrid.w * U;
-  const bh = restGrid.h * U;
+  /** Body height at rest. Only ever the starting value — see `shown()`. */
+  const restH = restGrid.h * U;
+
+  /**
+   * The grid actually on screen this frame. Same body and the same eye
+   * anchors, but not the same height, which is the only reason this exists.
+   */
+  const shown = () => (roamGrid && behaviour.fly === 'roam' ? roamGrid : restGrid);
 
   const root = k.add([k.pos(spot.x, spot.y), k.z(spot.y)]);
 
@@ -137,7 +151,7 @@ export async function spawnCreature(
     ? [-1, 1].map((side) =>
         root.add([
           k.sprite(wingKey),
-          k.pos(side * (bw / 2), -bh * 0.55),
+          k.pos(side * (bw / 2), -restH * 0.55),
           k.anchor(side === -1 ? 'right' : 'left'),
           k.scale(U * side, U),
           k.rotate(0),
@@ -166,7 +180,7 @@ export async function spawnCreature(
   // overlays on its own — each one also carries its own `k.scale`, driven by
   // the same sx/sy every frame below, so the lid stays exactly the size of
   // the (now squashed/stretched) 2x2 white block it must fully cover.
-  const eyes = restGrid.eyes.map((anchor) => {
+  const eyes = restGrid.eyes.map(() => {
     const pupil = root.add([
       k.rect(U * 0.95, U * 1.15),
       k.pos(0, 0),
@@ -191,12 +205,12 @@ export async function spawnCreature(
       k.scale(1),
       k.z(2),
     ]);
-    return { anchor, pupil, lid, lash };
+    return { pupil, lid, lash };
   });
 
   const nameplate = root.add([
     k.text(displayName(creature), { size: 13, font: fonts.pixel }),
-    k.pos(0, -bh - 26),
+    k.pos(0, -restH - 26),
     k.anchor('center'),
     k.color(k.Color.fromHex(THEME.ink)),
     // `update` dims this for scruffy creatures; the component must be
@@ -205,9 +219,9 @@ export async function spawnCreature(
     k.z(5),
   ]);
 
-  root.add([
+  const fileTag = root.add([
     k.text(fileLabel(creature), { size: 10, font: fonts.mono }),
-    k.pos(0, -bh - 12),
+    k.pos(0, -restH - 12),
     k.anchor('center'),
     k.color(k.Color.fromHex(THEME.ink)),
     k.opacity(0.6),
@@ -221,7 +235,7 @@ export async function spawnCreature(
   const zzz = [0, 1, 2].map((i) =>
     root.add([
       k.text('z', { size: 12 + i * 2, font: fonts.mono }),
-      k.pos(bw * 0.4, -bh),
+      k.pos(bw * 0.4, -restH),
       k.anchor('center'),
       k.color(k.Color.fromHex(THEME.ink)),
       k.opacity(0.7),
@@ -250,6 +264,13 @@ export async function spawnCreature(
           : breathe(t, phi, Boolean(behaviour.fly));
 
       const hover = behaviour.fly ? Math.sin(t * 1.3 + phi * 4) * 10 : 0;
+      // Everything hung off the top of the body is measured from the grid
+      // being drawn right now, not from the resting one. Freeze this at
+      // restGrid and a roaming lanky agent's pupils, nameplate, file label and
+      // wings all stay put while the taller roam texture lifts its head out
+      // from under them.
+      const grid = shown();
+      const bh = grid.h * U;
       body.pos.y = dy + hover;
       body.scale = k.vec2(U * sx, U * sy);
 
@@ -273,12 +294,14 @@ export async function spawnCreature(
       const shut = behaviour.asleep || isBlinking(t, phi);
       const look = shut ? 0 : gaze(t, phi, lookAt ?? undefined, spot.x);
 
-      for (const { anchor, pupil, lid, lash } of eyes) {
+      grid.eyes.forEach((anchor, i) => {
+        const { pupil, lid, lash } = eyes[i]!;
         // Grid cells are measured from the top-left; the body is anchored at
         // its base. This recovers the eye-white block's centre in the same
-        // *unscaled* local space the body sprite occupies at sx=sy=1.
-        const baseX = (anchor.c - restGrid.w / 2 + 1) * U;
-        const baseY = (anchor.r - restGrid.h + 1) * U;
+        // *unscaled* local space the body sprite occupies at sx=sy=1 — off the
+        // live grid's height, so it tracks the roam texture's taller head.
+        const baseX = (anchor.c - grid.w / 2 + 1) * U;
+        const baseY = (anchor.r - grid.h + 1) * U;
         // Scaling by sx/sy here mirrors body.scale exactly: a cell offset of
         // baseX/baseY unscaled cell-units becomes baseX*sx / baseY*sy screen
         // pixels under the same (U*sx, U*sy)-per-cell transform the body
@@ -309,7 +332,10 @@ export async function spawnCreature(
           // trailer's top-left anchoring to this file's centre anchoring).
           pupil.pos = k.vec2(x + look * 3.5 * sx, y + U * 0.125 * sy);
         }
-      }
+      });
+
+      nameplate.pos.y = -bh - 26;
+      fileTag.pos.y = -bh - 12;
 
       for (const glyph of zzz) {
         glyph.hidden = !behaviour.asleep;
