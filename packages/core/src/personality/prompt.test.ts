@@ -87,6 +87,23 @@ describe('personalityCardPrompt', () => {
   });
 });
 
+describe('personalityCardPrompt — canned pool', () => {
+  const prompt = personalityCardPrompt({
+    kind: 'skill', name: 'code-review', description: 'Reviews diffs', body: '# Code Review',
+  });
+
+  it('asks for the canned-line pool in the same JSON reply', () => {
+    expect(prompt).toContain('"lines"');
+    expect(prompt).toContain('twenty');
+  });
+
+  it('still asks for every card field', () => {
+    for (const field of ['"nickname"', '"temperament"', '"voice"', '"quirks"', '"likes"', '"dislikes"']) {
+      expect(prompt).toContain(field);
+    }
+  });
+});
+
 describe('interviewSystemPrompt', () => {
   it('differs between skills and agents', () => {
     expect(interviewSystemPrompt('skill')).not.toBe(interviewSystemPrompt('agent'));

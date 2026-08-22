@@ -65,6 +65,13 @@ export interface Creature {
   stage: Stage;
   /** Null until the personality card has been generated. */
   personality: PersonalityCard | null;
+  /**
+   * ~20 short things this creature might say, written by the model alongside
+   * its personality card. These power procedural chatter and every fallback
+   * mode: budget exhausted or CLI unavailable, the creature still talks.
+   * Absent until the persona has been generated (M4).
+   */
+  cannedLines?: string[];
   /** Absolute path to the SKILL.md or agent .md this creature represents. */
   sourcePath: string;
   /** Other creature ids to affinity, 0-100. */
