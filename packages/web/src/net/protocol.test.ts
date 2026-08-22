@@ -118,3 +118,26 @@ describe('parseServerMessage', () => {
     expect(parseServerMessage('')).toBeNull();
   });
 });
+
+describe('toView — llm block', () => {
+  it('passes a well-formed llm block through', () => {
+    const view = toView({
+      creatures: {}, problems: [],
+      llm: {
+        ledger: { day: '2026-08-22', interactiveIn: 10, interactiveOut: 5, autonomousIn: 0, autonomousOut: 0 },
+        config: { interactiveCap: 500_000, autonomousCap: 100_000, autonomousEnabled: false },
+      },
+    })!;
+    expect(view.llm).toEqual({ mode: 'full', interactiveRemaining: 500_000 - 15, interactiveCap: 500_000 });
+  });
+
+  it('is null for an M3 server payload, and the view still parses', () => {
+    const view = toView({ creatures: {}, problems: [] })!;
+    expect(view.llm).toBeNull();
+  });
+
+  it('is null rather than crashing on a mangled llm block', () => {
+    const view = toView({ creatures: {}, problems: [], llm: { ledger: 'what' } })!;
+    expect(view.llm).toBeNull();
+  });
+});

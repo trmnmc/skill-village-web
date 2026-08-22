@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { phaseFor, breathe, isBlinking, gaze, hopState, wingAngle, shadowSquash } from './motion.js';
+import { phaseFor, breathe, isBlinking, gaze, hopState, wingAngle, shadowSquash, easeOutBack, bubbleScale, bubbleLifetime } from './motion.js';
 
 describe('phaseFor', () => {
   it('is stable for the same id', () => {
@@ -155,6 +155,32 @@ describe('shadowSquash', () => {
   it('shrinks as the creature rises, and never past the floor', () => {
     expect(shadowSquash(-26)).toBeCloseTo(1 - 26 / 130, 5);
     expect(shadowSquash(-1000)).toBe(0.55);
+  });
+});
+
+describe('easeOutBack / bubbleScale', () => {
+  it('easeOutBack starts at 0, ends at 1, and overshoots on the way', () => {
+    expect(easeOutBack(0)).toBeCloseTo(0, 6);
+    expect(easeOutBack(1)).toBeCloseTo(1, 6);
+    let peak = 0;
+    for (let t = 0; t <= 1; t += 0.01) peak = Math.max(peak, easeOutBack(t));
+    expect(peak).toBeGreaterThan(1.05); // the "back" overshoot is the whole point
+  });
+
+  it('bubbleScale pops in over 0.38s and shrinks out over 0.28s', () => {
+    const life = 3;
+    expect(bubbleScale(0, life)).toBeCloseTo(0, 5);
+    expect(bubbleScale(0.38, life)).toBeCloseTo(1, 1);
+    expect(bubbleScale(life / 2, life)).toBe(1);
+    expect(bubbleScale(life - 0.14, life)).toBeCloseTo(0.5, 1);
+    expect(bubbleScale(life, life)).toBe(0);
+    expect(bubbleScale(life + 1, life)).toBe(0);
+  });
+
+  it('bubbleLifetime scales with text and clamps', () => {
+    expect(bubbleLifetime('hi')).toBeCloseTo(2.5, 5);
+    expect(bubbleLifetime('x'.repeat(75))).toBeCloseTo(5, 5);
+    expect(bubbleLifetime('x'.repeat(1000))).toBe(7);
   });
 });
 

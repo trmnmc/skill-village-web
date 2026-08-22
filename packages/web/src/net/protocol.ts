@@ -1,10 +1,17 @@
 import { BODY_IDS, CROWN_IDS, type Creature } from '@village/core/visual';
 
+export interface LlmView {
+  mode: 'full' | 'silent';
+  interactiveRemaining: number;
+  interactiveCap: number;
+}
+
 export interface VillageView {
   /** Sorted by id, so render order never flickers between frames. */
   creatures: Creature[];
   problems: unknown[];
   startupNote: string | null;
+  llm: LlmView | null;
 }
 
 const BODY_ID_SET: ReadonlySet<string> = new Set(BODY_IDS);
@@ -69,17 +76,37 @@ function isRenderable(value: unknown): value is Creature {
  */
 export function toView(payload: unknown): VillageView | null {
   if (typeof payload !== 'object' || payload === null) return null;
-  const p = payload as { creatures?: unknown; problems?: unknown; startupNote?: unknown };
+  const p = payload as { creatures?: unknown; problems?: unknown; startupNote?: unknown; llm?: unknown };
   if (typeof p.creatures !== 'object' || p.creatures === null) return null;
 
   const creatures = Object.values(p.creatures as Record<string, unknown>)
     .filter(isRenderable)
     .sort((a, b) => a.id.localeCompare(b.id));
 
+  let llm: LlmView | null = null;
+  const rawLlm = p.llm;
+  if (typeof rawLlm === 'object' && rawLlm !== null) {
+    const l = rawLlm as { ledger?: Record<string, unknown>; config?: Record<string, unknown> };
+    const led = l.ledger;
+    const cfg = l.config;
+    if (
+      led && cfg &&
+      typeof led.interactiveIn === 'number' && typeof led.interactiveOut === 'number' &&
+      typeof cfg.interactiveCap === 'number'
+    ) {
+      llm = {
+        mode: 'full',
+        interactiveCap: cfg.interactiveCap,
+        interactiveRemaining: Math.max(0, cfg.interactiveCap - led.interactiveIn - led.interactiveOut),
+      };
+    }
+  }
+
   return {
     creatures,
     problems: Array.isArray(p.problems) ? p.problems : [],
     startupNote: typeof p.startupNote === 'string' ? p.startupNote : null,
+    llm,
   };
 }
 

@@ -10,6 +10,9 @@ const HOP_AIRBORNE = 0.54;
 const HOP_RECOVER = 0.23;
 const HOP_HEIGHT = 64;
 
+const BUBBLE_IN = 0.38;
+const BUBBLE_OUT = 0.28;
+
 export function clamp(value: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, value));
 }
@@ -91,4 +94,27 @@ export function wingAngle(t: number, phi: number): number {
 /** The shadow narrows as the creature rises. This is what sells the hop as real. */
 export function shadowSquash(dy: number): number {
   return clamp(1 + dy / 130, 0.55, 1);
+}
+
+/** The classic overshoot ease the trailer uses for speech bubbles. */
+export function easeOutBack(t: number): number {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  const x = clamp(t, 0, 1);
+  return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
+}
+
+/** Spec §4.2: bubbles pop in on easeOutBack over 0.38s, shrink out over 0.28s. */
+export function bubbleScale(age: number, lifetime: number): number {
+  if (age <= 0) return 0;
+  if (age >= lifetime) return 0;
+  if (age < BUBBLE_IN) return easeOutBack(age / BUBBLE_IN);
+  const untilEnd = lifetime - age;
+  if (untilEnd < BUBBLE_OUT) return clamp(untilEnd / BUBBLE_OUT, 0, 1);
+  return 1;
+}
+
+/** Reading time: quick for a quip, capped for a ramble. */
+export function bubbleLifetime(text: string): number {
+  return clamp(2 + text.length / 25, 2.5, 7);
 }
