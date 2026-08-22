@@ -65,6 +65,18 @@ describe('scanVillage', () => {
     expect(result.problems).toEqual([]);
   });
 
+  it('reports a problem when SKILL.md exists but cannot be read, unlike a missing SKILL.md', async () => {
+    sandbox = await makeSandbox();
+    // A SKILL.md that is actually a directory makes readFile fail with EISDIR
+    // on both Windows and POSIX — a reliable stand-in for "exists but unreadable".
+    await mkdir(join(sandbox.paths.userSkillsDir, 'unreadable', 'SKILL.md'), { recursive: true });
+    const result = await scanVillage(sandbox.paths, 0);
+    expect(result.creatures).toEqual([]);
+    expect(result.problems).toHaveLength(1);
+    expect(result.problems[0]!.path).toContain('unreadable');
+    expect(result.problems[0]!.errors).toEqual(['File could not be read.']);
+  });
+
   it('ignores non-markdown files in the agents directory', async () => {
     sandbox = await makeSandbox();
     await writeFile(join(sandbox.paths.userAgentsDir, 'notes.txt'), 'hello', 'utf8');

@@ -26,8 +26,14 @@ async function scanSkillsDir(dir: string, now: number, into: ScanResult): Promis
     let source: string;
     try {
       source = await readFile(file, 'utf8');
-    } catch {
-      continue; // A directory without a SKILL.md is not a skill, and not a problem.
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // A missing SKILL.md (or a path component that isn't a directory) means
+      // there is no skill here — not a problem. Anything else (e.g. EACCES,
+      // EISDIR) means the file exists but couldn't be read, which is a problem.
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      into.problems.push({ path: file, errors: ['File could not be read.'] });
+      continue;
     }
     const result = parseSkill(source, entry.name);
     if (result.ok) into.creatures.push(creatureFromSkill(result.value, file, now));
