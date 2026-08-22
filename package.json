@@ -10,6 +10,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --build --force",
     "dev:server": "tsx packages/server/src/main.ts",
+    "dev:web": "vite --config packages/web/vite.config.ts",
     "contact-sheet": "tsx packages/core/scripts/contact-sheet.ts contact-sheet.html"
   },
   "devDependencies": {
