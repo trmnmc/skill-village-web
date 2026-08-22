@@ -11,7 +11,7 @@ The shared brain. Everything that is true about the village regardless of who is
 - **File formats** — `SKILL.md` / agent `.md` parsers, serializers, and validators (name rules, required frontmatter, portability-safe field set).
 - **Personality prompt assembly** — builds the system prompts used for chat/interview/train from a creature's card.
 
-**Depends on:** nothing but Node stdlib + a hashing lib.
+**Depends on:** Node stdlib (`node:crypto` for hashing) and `yaml` for frontmatter parsing. Nothing else.
 
 **Must never import:** `server`, `web`, KAPLAY, Fastify, or anything DOM- or filesystem-specific.
 
