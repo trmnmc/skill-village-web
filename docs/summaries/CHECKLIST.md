@@ -1,12 +1,12 @@
 ## Checklist
-- [x] M3 executed, reviewed, merged, pushed
-- [x] Playtest fixes (ground/signs/text) shipped
-- [x] Public repo + Pages landing page live
-- [x] M4 plan written, self-reviewed, pushed (`c6f0dbc`)
-- [ ] Execute M4 plan via subagent-driven development (12 tasks; branch `m4-voice` off main)
-- [ ] After M4 Task 8: real-terminal smoke test (`npm run dev` from a PLAIN terminal, not inside Claude Code — chat must return `source: "llm"`)
-- [ ] Playtest M4 with the user (voice quality, bubble sizes — boxes must hug text)
-- [ ] LICENSE decision (user's call; MIT suggested if reuse/PRs wanted)
-- [ ] Optional: refresh Pages landing page after M4 (nickname signs, chat screenshot)
+- [x] Explore project context (README, types.ts, ~/.claude/projects feasibility probes)
+- [x] Ask clarifying questions (project role, agents, care loop, levers — all answered)
+- [x] Propose 2-3 approaches (A staged pivot / B big-bang / C reskin)
+- [x] Get approach approval (user chose A)
+- [ ] Present design in sections, approval after each: data model → file bridge & transcript parsing → village layout & motion → care loop & hard mode → testing
+- [ ] Write design doc to `docs/superpowers/specs/2026-08-22-projects-village-remap-design.md` and commit
+- [ ] Spec self-review (placeholders, contradictions, scope, ambiguity)
+- [ ] User reviews written spec
+- [ ] Invoke writing-plans skill (the ONLY next skill after spec approval)
 
-_Updated: 2026-08-22 — main_
+_Updated: 2026-08-22 — claude/skills-projects-agents-mechanics-36973e_
