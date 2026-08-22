@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { INK, derivePalette, HUES } from '@village/core';
+import { INK, derivePalette, HUES } from '@village/core/visual';
 import { roleMap } from './roles.js';
 
 const palette = derivePalette(HUES[0]!);

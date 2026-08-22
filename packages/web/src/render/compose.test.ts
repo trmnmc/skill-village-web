@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BODIES, CROWNS, FLIGHT_UNDERSIDE, POSTURES, derivePalette, HUES, type CreatureAppearance, type RestPostureId } from '@village/core';
+import { BODIES, CROWNS, FLIGHT_UNDERSIDE, POSTURES, derivePalette, HUES, type CreatureAppearance, type RestPostureId } from '@village/core/visual';
 import { composeGrid } from './compose.js';
 
 const palette = derivePalette(HUES[0]!);

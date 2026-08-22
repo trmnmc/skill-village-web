@@ -1,4 +1,4 @@
-import type { Creature } from '@village/core';
+import type { Creature } from '@village/core/visual';
 
 export interface Behaviour {
   /** Skills only: bounces on a 2.6s cycle. */

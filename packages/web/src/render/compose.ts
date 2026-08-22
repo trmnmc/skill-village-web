@@ -1,7 +1,7 @@
 import {
   BODIES, CROWNS, FLIGHT_UNDERSIDE, POSTURES,
   type CreatureAppearance, type EyeAnchor, type PostureId,
-} from '@village/core';
+} from '@village/core/visual';
 
 export type { EyeAnchor };
 

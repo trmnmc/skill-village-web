@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { Creature, CreatureKind } from '@village/core';
+import type { Creature, CreatureKind } from '@village/core/visual';
 import { behaviourFor } from './behaviour.js';
 
 function creature(over: { kind?: CreatureKind; mood?: number; energy?: number } = {}): Creature {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { derivePalette, HUES } from '@village/core';
+import { derivePalette, HUES } from '@village/core/visual';
 import { bakePixels, hexToRgb } from './bake.js';
 import { roleMap } from './roles.js';
 import type { ComposedGrid } from './compose.js';

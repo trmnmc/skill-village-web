@@ -1,4 +1,4 @@
-import { BODY_IDS, CROWN_IDS, type Creature } from '@village/core';
+import { BODY_IDS, CROWN_IDS, type Creature } from '@village/core/visual';
 
 export interface VillageView {
   /** Sorted by id, so render order never flickers between frames. */

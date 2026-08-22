@@ -1,4 +1,4 @@
-import { INK, type Palette } from '@village/core';
+import { INK, type Palette } from '@village/core/visual';
 
 /** Role character to colour, or null for "draw nothing". */
 export type RoleMap = Record<string, string | null>;
