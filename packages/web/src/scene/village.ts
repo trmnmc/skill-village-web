@@ -98,19 +98,38 @@ export async function startVillage(): Promise<VillageScene> {
   house(k, homes.x + 1700, GROUND_Y - 30, THEME.wallSand, THEME.roofClay);
   for (const dx of [60, 620, 1240, 2050, 2420]) tree(k, homes.x + dx, GROUND_Y - 20);
 
-  // Drag to pan along the strip.
+  // Drag to pan along the strip. KAPLAY binds mousedown/mousemove/mouseup
+  // on the canvas element itself (e.canvas.addEventListener, see
+  // kaplay.mjs) and native mouse events do not implicitly capture the
+  // pointer, so releasing outside the canvas — or outside the browser
+  // window entirely, an ordinary drag-past-the-edge gesture — never
+  // reaches k.onMouseRelease (same canvas-scoped listener, same gap).
+  // `panning` would stick at true and the camera would lurch on the next
+  // bare mouse move. window-level listeners see the release wherever it
+  // lands: 'mouseup' bubbles up from the canvas for any release still
+  // inside the window (KAPLAY's own handler never calls
+  // stopPropagation, so this also covers the ordinary in-canvas release —
+  // k.onMouseRelease is redundant once this is here), 'pointercancel'
+  // covers a cancelled gesture, and 'blur' covers the button being
+  // released after focus has already left the window. Only k.onMouseMove
+  // touches the camera, so this stays self-contained and composes cleanly
+  // with any other mouse-move consumer registered on the same event (e.g.
+  // a future gaze handler).
   let panning = false;
+  const stopPanning = () => {
+    panning = false;
+  };
   k.onMouseDown('left', () => {
     panning = true;
-  });
-  k.onMouseRelease(() => {
-    panning = false;
   });
   k.onMouseMove((_pos, delta) => {
     if (!panning) return;
     const next = k.getCamPos().x - delta.x;
     k.setCamPos(k.clamp(next, k.width() / 2, WORLD_W - k.width() / 2), k.getCamPos().y);
   });
+  window.addEventListener('mouseup', stopPanning);
+  window.addEventListener('pointercancel', stopPanning);
+  window.addEventListener('blur', stopPanning);
 
   const status = k.add([
     k.text('connecting…', { size: 14, font: monoFont }),
