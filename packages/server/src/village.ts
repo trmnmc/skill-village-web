@@ -58,8 +58,13 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
     const scan = await scanVillage(paths, at);
     const result = reconcile(state, scan, at);
 
-    // Mirror every present file before anything can delete it, then promote the
-    // mirrors of the departed. Order matters: archiving reads what mirroring wrote.
+    // Every present creature is re-mirrored on every refresh, so the shadow copy
+    // never goes stale — it always holds the file's latest content, not just what
+    // it looked like when first imported. Departed creatures' mirrors are then
+    // promoted to the archive. The guarantee comes from mirroring being
+    // unconditional and repeated on every call, not from the order of these two
+    // loops: reconcile() guarantees a creature id is either present (mirrored) or
+    // departed (released), never both, so the loops never touch the same file.
     for (const creature of Object.values(result.state.creatures)) {
       await updateShadow(paths, creature);
     }

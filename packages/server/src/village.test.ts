@@ -112,6 +112,22 @@ describe('refresh', () => {
     await village.refresh();
     expect(notified).toBeGreaterThan(0);
   });
+
+  it('archives the file\'s final content, not the content it had when first imported', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('evolving', skillFixture('evolving', 'FIRST VERSION'));
+    village = await createVillage({ paths: sandbox.paths, now: clock().now });
+
+    const file = await sandbox.writeSkill('evolving', skillFixture('evolving', 'SECOND VERSION'));
+    await village.refresh();
+
+    await rm(file, { recursive: true });
+    await village.refresh();
+
+    const archived = await readArchived(sandbox.paths, 'skill', 'evolving');
+    expect(archived).toContain('SECOND VERSION');
+    expect(archived).not.toContain('FIRST VERSION');
+  });
 });
 
 describe('care', () => {
