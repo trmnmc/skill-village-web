@@ -152,6 +152,15 @@ export async function startVillage(): Promise<VillageScene> {
   k.setCamPos(k.width() / 2, GROUND_Y - 160);
 
   const actors = new Map<string, CreatureActor>();
+  // Bumped every time setView decides to (re)spawn a given id. A spawn's own
+  // `.then` compares the generation it captured at decision time against the
+  // current value; a mismatch means a later setView call already decided to
+  // respawn that same id again, so this resolution lost the race and must
+  // not touch `actors` — otherwise two overlapping spawns for one id (e.g.
+  // two view updates racing 70 in-flight sprite loads at startup) both
+  // resolve, both call actors.set, and the loser's root is orphaned:
+  // untracked, never destroyed, never updated, a permanent frozen creature.
+  const generations = new Map<string, number>();
   let known = new Map<string, Creature>();
   let lookAt: number | null = null;
 
@@ -185,10 +194,24 @@ export async function startVillage(): Promise<VillageScene> {
         const changed = before && JSON.stringify(before.appearance) !== JSON.stringify(creature.appearance);
         if (!actors.has(creature.id) || changed) {
           actors.get(creature.id)?.destroy();
-          void spawnCreature(k, creature, spots.get(creature.id)!).then((actor) => {
-            if (!seen.has(creature.id)) { actor.destroy(); return; }
-            actors.set(creature.id, actor);
-          });
+          // Delete immediately, not just on the eventual respawn: otherwise
+          // the dead actor stays in `actors` and keeps getting `update()`d
+          // every frame until the new one resolves — including, for a
+          // dangling lanky, `body.use(...)` called on an already-destroyed
+          // game object.
+          actors.delete(creature.id);
+          const gen = (generations.get(creature.id) ?? 0) + 1;
+          generations.set(creature.id, gen);
+          void spawnCreature(k, creature, spots.get(creature.id)!)
+            .then((actor) => {
+              if (generations.get(creature.id) !== gen) { actor.destroy(); return; }
+              actors.set(creature.id, actor);
+            })
+            .catch(() => {
+              // A failed sprite load leaves nothing to add. Without this,
+              // the rejection creature.ts's loadSprite() produces via
+              // onError(reject) would be an unhandled promise rejection.
+            });
         }
       }
 

@@ -120,12 +120,18 @@ export async function spawnCreature(
   // Visibility swaps via `.hidden` rather than swapping colour/role on one
   // rect, so the lid and lash can differ in both size and colour from the
   // pupil without one shape having to serve every state.
+  // Eyes are siblings of `body`, not children, so `body.scale = vec2(U*sx,
+  // U*sy)` deforming the baked eye-white block does nothing to these
+  // overlays on its own — each one also carries its own `k.scale`, driven by
+  // the same sx/sy every frame below, so the lid stays exactly the size of
+  // the (now squashed/stretched) 2x2 white block it must fully cover.
   const eyes = restGrid.eyes.map((anchor) => {
     const pupil = root.add([
       k.rect(U * 0.95, U * 1.15),
       k.pos(0, 0),
       k.anchor('center'),
       k.color(pupilColour),
+      k.scale(1),
       k.z(1),
     ]);
     const lid = root.add([
@@ -133,6 +139,7 @@ export async function spawnCreature(
       k.pos(0, 0),
       k.anchor('center'),
       k.color(lidColour),
+      k.scale(1),
       k.z(1),
     ]);
     const lash = root.add([
@@ -140,6 +147,7 @@ export async function spawnCreature(
       k.pos(0, 0),
       k.anchor('center'),
       k.color(pupilColour),
+      k.scale(1),
       k.z(2),
     ]);
     return { anchor, pupil, lid, lash };
@@ -147,7 +155,11 @@ export async function spawnCreature(
 
   return {
     update(t, lookAt) {
-      const hop = behaviour.hopper ? hopState(t, 0) : null;
+      // t0 = -phi * 2.6 (the hop cycle length, private to motion.ts) shifts
+      // each hopper's cycle start by its own phase, the same way breathe/
+      // isBlinking/gaze/wingAngle/hover already do — without it every hopper
+      // lands in lockstep, which is exactly what phaseFor exists to prevent.
+      const hop = behaviour.hopper ? hopState(t, -phi * 2.6) : null;
       const dy = hop ? hop.dy : 0;
       const { sx, sy } = behaviour.asleep
         ? { sx: 1, sy: 1 }
@@ -180,21 +192,38 @@ export async function spawnCreature(
       for (const { anchor, pupil, lid, lash } of eyes) {
         // Grid cells are measured from the top-left; the body is anchored at
         // its base. This recovers the eye-white block's centre in the same
-        // local space the body sprite occupies.
+        // *unscaled* local space the body sprite occupies at sx=sy=1.
         const baseX = (anchor.c - restGrid.w / 2 + 1) * U;
-        const baseY = (anchor.r - restGrid.h + 1) * U + dy + hover;
+        const baseY = (anchor.r - restGrid.h + 1) * U;
+        // Scaling by sx/sy here mirrors body.scale exactly: a cell offset of
+        // baseX/baseY unscaled cell-units becomes baseX*sx / baseY*sy screen
+        // pixels under the same (U*sx, U*sy)-per-cell transform the body
+        // sprite uses, so the eye overlays deform in lockstep with the baked
+        // eye-white block instead of staying fixed while it moves under them.
+        // dy/hover are body's own translation (hop/hover), not part of the
+        // scale, so they're added after scaling, same as body.pos.y.
+        const x = baseX * sx;
+        const y = baseY * sy + dy + hover;
 
         pupil.hidden = shut;
         lid.hidden = !shut;
         lash.hidden = !shut;
+        pupil.scale = k.vec2(sx, sy);
+        lid.scale = k.vec2(sx, sy);
+        lash.scale = k.vec2(sx, sy);
 
         if (shut) {
-          lid.pos = k.vec2(baseX, baseY);
+          lid.pos = k.vec2(x, y);
           // The lash sits just above the lid's own centre — the row
           // boundary inside the 2-row eye-white block it is covering.
-          lash.pos = k.vec2(baseX, baseY - 0.25);
+          lash.pos = k.vec2(x, y - 0.25 * sy);
         } else {
-          pupil.pos = k.vec2(baseX + look * 3.5, baseY + U * 0.55);
+          // U*0.125: the trailer's pupil is `top: e.r*U + U*0.55` in
+          // top-left coordinates with height U*1.15, so its centre sits at
+          // e.r*U + U*1.125 — the eye-white block's own centre (baseY) plus
+          // U*0.125, not U*0.55 (that arithmetic slipped converting the
+          // trailer's top-left anchoring to this file's centre anchoring).
+          pupil.pos = k.vec2(x + look * 3.5 * sx, y + U * 0.125 * sy);
         }
       }
     },
