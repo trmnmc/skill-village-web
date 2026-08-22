@@ -414,4 +414,40 @@ describe('chat', () => {
     expect(cards).toBe(1);
     expect(village.getState().creatures['skill:twin']!.nickname).toBe('Mo');
   });
+
+  it('rejects with "not found" when a creature departs mid-flight on its first, card-writing chat', async () => {
+    sandbox = await makeSandbox();
+    const file = await sandbox.writeSkill('vanishing', skillFixture('vanishing'));
+
+    // Holds the *persona* call open (not the chat call) so the test can delete
+    // the creature's file and refresh while ensurePersona is still in flight —
+    // the exact window where `chat()` used to read state.creatures[id]! and
+    // crash on undefined instead of surfacing the documented 'not found'.
+    let thinking = () => {};
+    let letGo = () => {};
+    let stall: Promise<void> = Promise.resolve();
+    const stalling: LlmService = {
+      probe: async () => 'full',
+      mode: () => 'full',
+      async request(req) {
+        if (isChat(req.prompt)) return { ok: true, text: 'should not be reached.' };
+        thinking();
+        await stall;
+        return { ok: true, text: CARD };
+      },
+    };
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000, llm: stalling });
+
+    const asked = new Promise<void>((resolve) => { thinking = resolve; });
+    stall = new Promise<void>((resolve) => { letGo = resolve; });
+    const talking = village.chat('skill:vanishing', 'hello?');
+    await asked; // the persona card request is in flight
+
+    await rm(file, { recursive: true });
+    await village.refresh(); // the creature is released while the persona flight is held open
+
+    letGo(); // the card resolves; ensurePersona sees the creature is gone and skips its write
+
+    await expect(talking).rejects.toThrow('not found');
+  });
 });

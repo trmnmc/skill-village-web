@@ -71,7 +71,18 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
       if (!village.getState().creatures[request.params.id]) {
         return reply.code(404).send({ error: `Creature not found: ${request.params.id}` });
       }
-      const answer = await village.chat(request.params.id, message);
+      let answer;
+      try {
+        answer = await village.chat(request.params.id, message);
+      } catch (error) {
+        // The pre-check above found the creature, but the persona flight it
+        // triggers can outlast a concurrent refresh that releases it — an
+        // honest 404, not a 500, is still the truth in that case.
+        if ((error as Error).message.includes('not found')) {
+          return reply.code(404).send({ error: `Creature not found: ${request.params.id}` });
+        }
+        throw error;
+      }
       return { reply: answer, creature: village.getState().creatures[request.params.id] };
     },
   );

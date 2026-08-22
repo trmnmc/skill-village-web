@@ -281,8 +281,11 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
 
       await ensurePersona(creatureId);
       // Whatever the persona flight committed is in `state` now, so the prompt
-      // is built from the creature as it stands, card and all.
-      const fresh = state.creatures[creatureId]!;
+      // is built from the creature as it stands, card and all — but the flight
+      // took real time, and a concurrent refresh may have released the creature
+      // while it ran, so this is not guaranteed to still exist.
+      const fresh = state.creatures[creatureId];
+      if (!fresh) throw new Error(`Creature not found: ${creatureId}`);
 
       const prompt = [
         chatSystemPrompt(fresh),
