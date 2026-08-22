@@ -40,7 +40,12 @@ describe('the whole voice path', () => {
 
     const llm1 = (await app.inject({ method: 'GET', url: '/api/llm' })).json();
     expect(llm1.mode).toBe('full');
-    expect(llm1.remaining.interactive).toBeLessThan(500_000);
+    // Date-independent stand-in for "the ledger moved": remaining() is a
+    // function of Date.now() at the API edge, so on any UTC date after the
+    // frozen village clock the day rolls over and remaining() reports a
+    // fresh full budget, making a remaining-based assert flaky by wall
+    // clock. The ledger fields the frozen clock actually wrote are not.
+    expect(llm1.ledger.interactiveIn).toBeGreaterThan(0);
 
     // 2. Nickname reaches the state payload the browser renders from.
     const state = (await app.inject({ method: 'GET', url: '/api/state' })).json();

@@ -114,13 +114,13 @@ describe('POST /api/creatures/:id/care', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('409s on a verb that exists but needs the language model', async () => {
+  it('409s on a verb that exists but care does not handle itself', async () => {
     const app = await boot(['x']);
     const res = await app.inject({
       method: 'POST', url: '/api/creatures/skill:x/care', payload: { verb: 'chat' },
     });
     expect(res.statusCode).toBe(409);
-    expect(res.json().error).toMatch(/not available|language/i);
+    expect(res.json().error).toMatch(/not available/i);
   });
 
   it('404s for an unknown creature', async () => {

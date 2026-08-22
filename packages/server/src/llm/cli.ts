@@ -139,6 +139,12 @@ export function runCli(command: readonly string[], call: CliCall): Promise<CliRe
       });
     });
 
+    // A child that dies before stdin drains (a real claude failing at
+    // startup, or our own timeout kill racing a buffered write) turns the
+    // write below into an EPIPE 'error' event; the 'close' handler already
+    // classifies the failure, so this must swallow it rather than let it
+    // become an uncaught exception that takes the whole server down.
+    child.stdin.on('error', () => {});
     child.stdin.write(call.prompt);
     child.stdin.end();
   });

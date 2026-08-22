@@ -155,12 +155,13 @@ describe('care', () => {
     await expect(village.care('skill:ghost', 'pet')).rejects.toThrow(/not found|unknown/i);
   });
 
-  it('refuses verbs that need the language model, which arrives in M4', async () => {
+  it('refuses verbs that care does not handle itself', async () => {
     sandbox = await makeSandbox();
     await sandbox.writeSkill('x', skillFixture('x'));
     village = await createVillage({ paths: sandbox.paths, now: clock().now });
-    // 'chat' is a real CareVerb — the type system allows it and the runtime refuses it.
-    await expect(village.care('skill:x', 'chat')).rejects.toThrow(/not available|M4|language/i);
+    // 'chat' is a real CareVerb — the type system allows it and the runtime refuses
+    // it, since chatting goes through chat() (its own endpoint), not care().
+    await expect(village.care('skill:x', 'chat')).rejects.toThrow(/not available/i);
   });
 
   it('logs a cared-for event', async () => {

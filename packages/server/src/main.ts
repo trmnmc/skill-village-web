@@ -35,6 +35,11 @@ async function main(): Promise<void> {
         now: hooks.now,
         getLlm: hooks.getLlm,
         setLlm: hooks.setLlm,
+        // Chat quips are short and persona cards fit comfortably; a wedged
+        // CLI frees the concurrency-2 queue in 30s instead of riding the
+        // service's 90s default, which two stuck calls could otherwise
+        // saturate and freeze the panel on.
+        timeoutMs: 30_000,
       }),
   });
   if (village.startupNote) console.log(village.startupNote);

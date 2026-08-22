@@ -262,7 +262,7 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
       const creature = state.creatures[creatureId];
       if (!creature) throw new Error(`Creature not found: ${creatureId}`);
       if (!OFFLINE_VERBS.includes(verb)) {
-        throw new Error(`The "${verb}" verb is not available yet; it needs the language model (M4).`);
+        throw new Error(`The "${verb}" verb is not available through care; chat happens through the chat endpoint (and the panel that calls it), and training is still to come.`);
       }
 
       const at = now();
