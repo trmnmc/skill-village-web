@@ -324,6 +324,10 @@ Rules: preserve upstream LICENSE/attribution in the catalog metadata and install
 
 ## 14. Milestones (one plan, ordered)
 
+> **Superseded from M4 onward** by `2026-08-22-roadmap-reconciliation-design.md`
+> (projects become the villagers; helpers are their powers). M1-M3 below shipped
+> as written.
+
 1. **M1 Core** — `@village/core`: types, DNA→appearance, authoring the 6 bodies, 5 crowns, tapered undersides and `lanky` postures, sim rules, file-format parsers/validators. Pure logic, fully unit-tested, no server or client yet.
 2. **M2 Server** — state store, file bridge + first-run import, sim ticking, REST + WebSocket API. Verified with API calls only.
 3. **M3 Web village** — KAPLAY scene, grid renderer, the §4.2 motion vocabulary, four zones, founding villagers visibly alive. *The bar for this milestone is the trailer: if the village doesn't feel like `reference/animation-trailer/`, it isn't done.*
