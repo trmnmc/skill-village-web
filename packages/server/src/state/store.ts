@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile, copyFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { VillagePaths } from '../config/paths.js';
-import { STATE_VERSION, emptyState, type VillageState } from './schema.js';
+import { STATE_VERSION, emptyState, migrateState, type VillageState } from './schema.js';
 
 export interface LoadResult {
   state: VillageState;
@@ -55,10 +55,23 @@ async function readStateFile(path: string): Promise<ReadStateResult> {
       return { ok: false, reason: 'invalid' };
     }
 
+    // A file already at the current version must carry its llm block; older
+    // versions are missing it by definition and pick up defaults on migration.
+    if (parsed.version === STATE_VERSION) {
+      if (typeof parsed.llm !== 'object' || parsed.llm === null) {
+        return { ok: false, reason: 'invalid' };
+      }
+    }
+
     return { ok: true, state: parsed };
   } catch {
     return { ok: false, reason: 'invalid' };
   }
+}
+
+/** A validated on-disk state, upgraded in memory to the current version if needed. */
+function migrated(state: VillageState, now: number): VillageState {
+  return state.version < STATE_VERSION ? migrateState(state, now) : state;
 }
 
 /**
@@ -68,7 +81,7 @@ async function readStateFile(path: string): Promise<ReadStateResult> {
 export async function loadState(paths: VillagePaths, now: number): Promise<LoadResult> {
   const main = await readStateFile(paths.statePath);
   if (main.ok) {
-    return { state: main.state, recovered: false, note: null };
+    return { state: migrated(main.state, now), recovered: false, note: null };
   }
 
   // main.reason is 'missing', 'invalid', or 'version'
@@ -83,7 +96,7 @@ export async function loadState(paths: VillagePaths, now: number): Promise<LoadR
       note = 'The village save was unreadable, so the backup was used instead.';
     }
     return {
-      state: backup.state,
+      state: migrated(backup.state, now),
       recovered: true,
       note,
     };
