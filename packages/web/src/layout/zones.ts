@@ -1,3 +1,6 @@
+import { BODIES } from '@village/core/visual';
+import { U } from '../theme.js';
+
 export type ZoneId = 'hatchery' | 'homes' | 'adoption' | 'notice';
 
 export interface Zone {
@@ -51,6 +54,17 @@ const HORIZON_MARGIN = 24;
  */
 export const GROUND_TOP = GROUND_Y - DEPTH_REACH - HORIZON_MARGIN;
 
+/** The widest body in the catalogue, in screen pixels. `mound` at 12 cells. */
+const WIDEST_BODY = Math.max(...Object.values(BODIES).map((b) => b.w)) * U;
+
+/**
+ * How far apart two villagers in the same depth row must stand. Two of the
+ * widest bodies need WIDEST_BODY between their centres just to stop touching,
+ * so this is that plus the air that keeps them reading as two creatures.
+ * Derived from the catalogue: add a wider body and the village spreads to suit.
+ */
+export const MIN_SEPARATION = WIDEST_BODY + 6;
+
 /** Same hash as the motion phase: stable, cheap, and no dependency. */
 function hash(id: string): number {
   let h = 2166136261;
@@ -66,25 +80,74 @@ export interface Spot {
   y: number;
 }
 
+function clears(x: number, taken: readonly number[]): boolean {
+  return taken.every((other) => Math.abs(x - other) >= MIN_SEPARATION);
+}
+
 /**
- * Deterministic placement inside Homes. A creature's spot depends only on its
- * own id, so the village has a stable geography: your villagers are where you
- * left them, and a newcomer never shuffles everyone else along.
+ * The spot nearest `wanted` that lies inside [lo, hi] and keeps
+ * MIN_SEPARATION from everyone already standing in this row.
+ *
+ * Only the creature being placed ever moves; the ones already there keep
+ * their x. That is what makes a newcomer harmless — it steps aside rather
+ * than shoving the village along.
+ *
+ * The only positions worth trying are `wanted` itself, the two edges of each
+ * occupied creature's exclusion zone, and the row's own ends: any other clear
+ * position has one of those between it and `wanted`, so it is never the
+ * nearest. If the row is so crowded that nothing clears (over ~32 villagers
+ * in one row of Homes), the creature takes the spot it asked for and overlaps
+ * rather than going missing.
+ */
+function nearestClearSpot(wanted: number, taken: readonly number[], lo: number, hi: number): number {
+  const candidates = [wanted, lo, hi];
+  for (const other of taken) candidates.push(other - MIN_SEPARATION, other + MIN_SEPARATION);
+
+  let best: number | null = null;
+  for (const candidate of candidates) {
+    if (candidate < lo || candidate > hi) continue;
+    if (!clears(candidate, taken)) continue;
+    if (best === null) { best = candidate; continue; }
+    const gap = Math.abs(candidate - wanted);
+    const bestGap = Math.abs(best - wanted);
+    // Ties go to the smaller x, so the result never depends on candidate order.
+    if (gap < bestGap || (gap === bestGap && candidate < best)) best = candidate;
+  }
+  return best ?? wanted;
+}
+
+/**
+ * Deterministic placement inside Homes. A creature asks for the row and the
+ * offset its own id hashes to, and gets exactly that unless somebody is
+ * already standing there — the village has a stable geography: your villagers
+ * are where you left them, and a newcomer never shuffles everyone else along.
+ *
+ * The one thing a creature's spot depends on besides its own id is who was
+ * placed before it, and only when their hashes collide. `ids` arrives sorted
+ * by id (protocol.ts sorts every view), so that order is itself stable and
+ * the village renders identically on every load.
  */
 export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
   const homes = ZONES.find((z) => z.id === 'homes')!;
-  const usable = homes.w - MARGIN * 2;
+  const lo = homes.x + MARGIN;
+  const hi = homes.x + homes.w - MARGIN;
   const spots = new Map<string, Spot>();
+  /** x values already handed out, per row. */
+  const occupied = new Map<number, number[]>();
 
   for (const id of ids) {
     const h = hash(id);
     const row = h % ROWS;
     // Two independent draws from the hash: one for the row, one for the offset.
     const along = ((h >>> 8) % 10000) / 10000;
-    spots.set(id, {
-      x: Math.round(homes.x + MARGIN + along * usable),
-      y: GROUND_Y - row * ROW_DEPTH,
-    });
+    const wanted = Math.round(lo + along * (hi - lo));
+
+    const taken = occupied.get(row) ?? [];
+    const x = nearestClearSpot(wanted, taken, lo, hi);
+    taken.push(x);
+    occupied.set(row, taken);
+
+    spots.set(id, { x, y: GROUND_Y - row * ROW_DEPTH });
   }
 
   return spots;

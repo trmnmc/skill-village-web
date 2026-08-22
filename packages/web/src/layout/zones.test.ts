@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, placeCreatures } from './zones.js';
+import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, MIN_SEPARATION, placeCreatures } from './zones.js';
 
 const ids = Array.from({ length: 70 }, (_, i) => `skill:s${i}`);
 
@@ -54,9 +54,23 @@ describe('placeCreatures', () => {
     }
   });
 
-  it('spreads them out rather than stacking them', () => {
-    const xs = [...placeCreatures(ids).values()].map((s) => s.x);
-    expect(new Set(xs).size).toBeGreaterThan(ids.length / 2);
+  it('never stands two villagers in one row closer than a body width', () => {
+    // Counting distinct x values is not this property: two creatures 8px
+    // apart are distinct and still overlap. What matters is the gap between
+    // same-row neighbours, so measure that.
+    const rows = new Map<number, number[]>();
+    for (const { x, y } of placeCreatures(ids).values()) {
+      const row = rows.get(y) ?? [];
+      row.push(x);
+      rows.set(y, row);
+    }
+    expect(rows.size).toBeGreaterThan(1);
+    for (const xs of rows.values()) {
+      xs.sort((a, b) => a - b);
+      for (let i = 1; i < xs.length; i++) {
+        expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(MIN_SEPARATION);
+      }
+    }
   });
 
   it('stands every villager on painted ground, shadow included', () => {
@@ -78,5 +92,19 @@ describe('placeCreatures', () => {
 
   it('handles an empty village', () => {
     expect(placeCreatures([]).size).toBe(0);
+  });
+
+  it('still seats everyone when a row holds more than it can space out', () => {
+    // Homes fits ~32 spaced villagers per row. Well past that, spacing has to
+    // give — but nobody may go missing or get pushed out of the zone, which is
+    // what the fall-back in nearestClearSpot is for.
+    const crowd = Array.from({ length: 300 }, (_, i) => `skill:crowd${i}`);
+    const spots = placeCreatures(crowd);
+    expect(spots.size).toBe(crowd.length);
+    const homes = ZONES.find((z) => z.id === 'homes')!;
+    for (const { x } of spots.values()) {
+      expect(x).toBeGreaterThanOrEqual(homes.x);
+      expect(x).toBeLessThanOrEqual(homes.x + homes.w);
+    }
   });
 });
