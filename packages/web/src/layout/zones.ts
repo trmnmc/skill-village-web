@@ -28,6 +28,29 @@ const ROWS = 4;
 const ROW_DEPTH = 46;
 const MARGIN = 90;
 
+/**
+ * How far the furthest depth row reaches above the baseline. Row 0 stands on
+ * GROUND_Y and every row behind it is one ROW_DEPTH further up the screen.
+ */
+const DEPTH_REACH = (ROWS - 1) * ROW_DEPTH;
+
+/**
+ * Clearance between the furthest row and the horizon. A creature's contact
+ * shadow is centred on its feet, so it reaches ~5px above them; the rest is so
+ * the back row reads as standing *in* the field rather than balanced on its
+ * far edge.
+ */
+const HORIZON_MARGIN = 24;
+
+/**
+ * Top edge of the painted ground: derived from the depth rows, never typed in.
+ * The drawn ground has to contain every row, and hardcoding its height is
+ * exactly how the far band came to be 40px tall while the rows reached
+ * DEPTH_REACH (138px) above the baseline — three quarters of the village
+ * standing on sky. Change ROWS or ROW_DEPTH and the horizon follows.
+ */
+export const GROUND_TOP = GROUND_Y - DEPTH_REACH - HORIZON_MARGIN;
+
 /** Same hash as the motion phase: stable, cheap, and no dependency. */
 function hash(id: string): number {
   let h = 2166136261;

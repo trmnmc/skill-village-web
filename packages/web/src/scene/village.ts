@@ -1,7 +1,7 @@
 import kaplay, { type KAPLAYCtx } from 'kaplay';
 import type { Creature } from '@village/core/visual';
 import { THEME } from '../theme.js';
-import { ZONES, WORLD_W, GROUND_Y, placeCreatures } from '../layout/zones.js';
+import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, placeCreatures } from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
 
@@ -86,8 +86,12 @@ export async function startVillage(): Promise<VillageScene> {
     global: false,
   });
 
-  // Ground: a near band and a far band, so the field reads as having depth.
-  block(k, 0, GROUND_Y - 40, WORLD_W, 40, THEME.groundDark, 0);
+  // Ground: a far band and a near band, so the field reads as having depth.
+  // The far band starts at GROUND_TOP, which zones.ts derives from the depth
+  // rows themselves, so the painted ground reaches back past the furthest row
+  // instead of stopping 98px short of it and leaving most of the village
+  // standing on sky.
+  block(k, 0, GROUND_TOP, WORLD_W, GROUND_Y - GROUND_TOP, THEME.groundDark, 0);
   block(k, 0, GROUND_Y, WORLD_W, k.height() * 2, THEME.ground, 0);
 
   for (const zone of ZONES) {
