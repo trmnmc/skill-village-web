@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill Village</title>
+<meta name="description" content="A Tamagotchi-style village where every Claude Code skill and agent is a living pixel creature.">
+<meta property="og:title" content="Skill Village">
+<meta property="og:description" content="Your skills folder… is alive. Every Claude Code skill and agent on your machine becomes a living pixel creature.">
+<meta property="og:image" content="https://trmnmc.github.io/skill-village-web/preview.webp">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --night: #171310; --ink: #3A2E22; --cream: #F4EDDF; --card: #FFFDF4;
+    --clay: #D97757; --wood: #8A6B4A; --moss: #9DBA77;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--cream); color: var(--ink);
+    font: 16px/1.65 'IBM Plex Mono', monospace;
+  }
+  main { max-width: 880px; margin: 0 auto; padding: 0 20px 80px; }
+  h1, h2 { font-family: 'Pixelify Sans', sans-serif; line-height: 1.15; }
+  h1 { font-size: clamp(3rem, 9vw, 5rem); margin-top: 64px; }
+  h2 { font-size: 1.9rem; margin: 64px 0 16px; }
+  .tagline { color: var(--clay); font-style: italic; font-size: 1.15rem; margin: 8px 0 32px; }
+  p { margin: 0 0 16px; max-width: 68ch; }
+  img { max-width: 100%; height: auto; display: block; }
+  .hero {
+    border: 3px solid var(--ink); border-radius: 10px; overflow: hidden;
+    box-shadow: 6px 6px 0 rgba(58,46,34,.22); image-rendering: pixelated;
+  }
+  .hero img { width: 100%; }
+  .sheet { background: var(--card); border: 3px solid var(--ink); border-radius: 10px; padding: 8px; box-shadow: 6px 6px 0 rgba(58,46,34,.22); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin: 24px 0; }
+  .card { background: var(--card); border: 2.5px solid var(--ink); border-radius: 10px; padding: 18px; }
+  .card h3 { font-family: 'Pixelify Sans', sans-serif; font-size: 1.2rem; margin-bottom: 8px; }
+  .card p { font-size: .88rem; margin: 0; }
+  pre {
+    background: var(--night); color: #E8E0D0; border-radius: 10px;
+    padding: 18px 22px; overflow-x: auto; font: 500 .95rem/1.7 'IBM Plex Mono', monospace;
+  }
+  pre .c { color: #9DBA77; }
+  a { color: var(--clay); text-underline-offset: 3px; }
+  .status { border-left: 5px solid var(--moss); background: var(--card); padding: 14px 18px; border-radius: 0 10px 10px 0; font-size: .92rem; }
+  footer { margin-top: 72px; padding-top: 20px; border-top: 2px solid rgba(58,46,34,.2); font-size: .85rem; opacity: .85; }
+  .pill { display: inline-block; background: var(--ink); color: var(--cream); border-radius: 999px; padding: 2px 12px; font-size: .8rem; margin-right: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Skill Village</h1>
+  <p class="tagline">your skills folder… is alive.</p>
+
+  <div class="hero"><img src="preview.webp" alt="Pixel-art village scene from the Skill Village animation trailer: small creatures with signs standing on a green field at dusk" width="1280"></div>
+
+  <h2>What is this?</h2>
+  <p>A Tamagotchi-style game where every <a href="https://claude.com/claude-code">Claude Code</a> skill and agent on your machine is a living pixel creature in a shared village. Your <code>~/.claude</code> folder becomes a neighbourhood: each <code>SKILL.md</code> is a grounded little critter, each agent file gets wings, and they breathe, blink, and drift around while you work.</p>
+  <p>It's also a builder, not just a toy — the roadmap grows creatures you can <em>hatch</em> through an in-character interview, and what hatches is a real, installable Claude Code skill.</p>
+
+  <h2>The villagers</h2>
+  <p>Every creature is generated deterministically from its filename — same name, same creature, on any machine. Six hand-authored pixel bodies × five crowns, warm-pastel palettes, wings and dangling legs for agents. These are real outputs of the game's pipeline:</p>
+  <div class="sheet"><img src="cast.svg" alt="Contact sheet of 18 generated pixel creatures, each labelled with an example skill or agent filename" width="1572"></div>
+
+  <h2>How it works</h2>
+  <div class="cards">
+    <div class="card"><h3>Pixel grids, not assets</h3><p>A creature is ~10 strings of colour roles and two hex colours. No sprite packs, no downloads, no art pipeline — and a generated creature can't come out anatomically wrong.</p></div>
+    <div class="card"><h3>Deterministic DNA</h3><p><code>SHA-256(kind + name)</code> seeds body, crown, and palette. The village has a stable geography: your villagers are where you left them, every load.</p></div>
+    <div class="card"><h3>Your config is safe</h3><p>The game reads <code>~/.claude</code> and never writes to it. All state lives in <code>~/.skill-village</code>. Nothing installs without an explicit confirm.</p></div>
+  </div>
+
+  <h2>Run it locally</h2>
+  <p>The village runs on your machine — it needs to see your real skills folder. Requires Node 20+.</p>
+  <pre><span class="c"># clone, install, play</span>
+git clone https://github.com/trmnmc/skill-village-web.git
+cd skill-village-web
+npm install
+npm run dev
+<span class="c"># then open http://localhost:5173</span></pre>
+
+  <h2>Status</h2>
+  <p class="status"><span class="pill">M3</span> The village is alive: your real skills and agents render as villagers with breathing, blinking, gaze-tracking, and flight — 449 tests across three packages. Next up: <strong>M4</strong> gives every creature a voice through your existing Claude Code login, then adoption, hatching, and breeding. Full design docs and the complete execution record live <a href="https://github.com/trmnmc/skill-village-web/tree/main/docs/superpowers">in the repo</a>.</p>
+
+  <footer>
+    <a href="https://github.com/trmnmc/skill-village-web">github.com/trmnmc/skill-village-web</a> · built with <a href="https://claude.com/claude-code">Claude Code</a> · rendered with <a href="https://github.com/kaplayjs/kaplay">KAPLAY</a> · type: Pixelify Sans &amp; IBM Plex Mono
+  </footer>
+</main>
+</body>
+</html>
