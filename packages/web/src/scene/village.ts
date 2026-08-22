@@ -1,7 +1,7 @@
 import kaplay, { type KAPLAYCtx } from 'kaplay';
 import type { Creature } from '@village/core/visual';
 import { THEME } from '../theme.js';
-import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, placeCreatures } from '../layout/zones.js';
+import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, placeCreatures, type Spot } from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
 
@@ -166,6 +166,10 @@ export async function startVillage(): Promise<VillageScene> {
   // untracked, never destroyed, never updated, a permanent frozen creature.
   const generations = new Map<string, number>();
   let known = new Map<string, Creature>();
+  // The placement from the most recent view. Held so a spawn that is still
+  // loading sprites can adopt the newest spot when it resolves, the same way
+  // it adopts the newest stats from `known`.
+  let placements = new Map<string, Spot>();
   let lookAt: number | null = null;
 
   // A second onMouseMove consumer, alongside the drag-pan handler above —
@@ -188,10 +192,12 @@ export async function startVillage(): Promise<VillageScene> {
     setView(view) {
       counter.text = `${view.creatures.length} villagers`;
       const spots = placeCreatures(view.creatures.map((c) => c.id));
+      placements = spots;
       const seen = new Set<string>();
 
       for (const creature of view.creatures) {
         seen.add(creature.id);
+        const spot = spots.get(creature.id)!;
         const before = known.get(creature.id);
         // Respawn only when the look changes; stats alone (which change on
         // every server tick) must not restart a creature's motion.
@@ -206,12 +212,15 @@ export async function startVillage(): Promise<VillageScene> {
           actors.delete(creature.id);
           const gen = (generations.get(creature.id) ?? 0) + 1;
           generations.set(creature.id, gen);
-          void spawnCreature(k, creature, spots.get(creature.id)!, { pixel: pixelFont, mono: monoFont })
+          void spawnCreature(k, creature, spot, { pixel: pixelFont, mono: monoFont })
             .then((actor) => {
               if (generations.get(creature.id) !== gen) { actor.destroy(); return; }
-              // Stats can tick several times while 70 sprites load. `known`
-              // holds the newest view by the time this resolves, so hand the
-              // actor that rather than the snapshot the spawn started from.
+              // Stats can tick several times while 70 sprites load, and a
+              // villager arriving in that window can move this one along its
+              // row. `known` and `placements` hold the newest view by the time
+              // this resolves, so hand the actor those rather than the
+              // snapshot the spawn started from.
+              actor.setSpot(placements.get(creature.id) ?? spot);
               actor.setCreature(known.get(creature.id) ?? creature);
               actors.set(creature.id, actor);
             })
@@ -221,11 +230,19 @@ export async function startVillage(): Promise<VillageScene> {
               // onError(reject) would be an unhandled promise rejection.
             });
         } else {
+          const actor = actors.get(creature.id)!;
+          // A villager can be pushed along its row when a newcomer's hash
+          // lands on its spot (see zones.ts). The actor owns its root
+          // position, so without this it carries on drawing where it used to
+          // stand while somebody else occupies that ground — the static
+          // overlap traded for a moving one. Repositioning is not a respawn:
+          // the motion clock, the phase and every baked sprite survive it.
+          actor.setSpot(spot);
           // Same look, newer stats: the actor re-derives its behaviour flags
           // in place. Without this, mood and energy select a creature's
           // behaviour exactly once — on the frame it was first drawn — and
           // never again.
-          actors.get(creature.id)?.setCreature(creature);
+          actor.setCreature(creature);
         }
       }
 

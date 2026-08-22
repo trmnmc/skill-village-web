@@ -38,11 +38,54 @@ describe('placeCreatures', () => {
     expect([...placeCreatures(ids)]).toEqual([...placeCreatures(ids)]);
   });
 
-  it('keeps a creature in place when others arrive', () => {
+  it('depends on the set of villagers, not the order they are handed over', () => {
+    // placeCreatures seats in its own fixed order, so a caller reordering its
+    // list cannot rearrange the village. Without that, the layout silently
+    // depends on how protocol.ts happens to sort, and every villager moves the
+    // day that changes.
+    const shuffled = [...ids].reverse();
+    const interleaved = [...ids].sort((a, b) => a.length - b.length || (a < b ? -1 : 1));
+    expect([...placeCreatures(shuffled)].sort()).toEqual([...placeCreatures(ids)].sort());
+    expect([...placeCreatures(interleaved)].sort()).toEqual([...placeCreatures(ids)].sort());
+  });
+
+  it('nudges only same-row neighbours, and only within reach, when a villager arrives', () => {
+    // Guaranteed spacing and per-id-only placement cannot both hold: with a
+    // finite number of non-overlapping spots, a newcomer landing on an
+    // occupied one has to move somebody. So this does not assert that nobody
+    // moves — that is false. It asserts the disruption stays local, stays
+    // bounded, and is the same disruption every time.
+    //
+    // The newcomer is inserted in *sorted* position, mirroring the order
+    // protocol.ts hands over. Appending to the end instead — as this test used
+    // to — exercises the one position where the arrival is seated last and can
+    // never displace anyone, which is no test at all.
     const before = placeCreatures(ids);
-    const after = placeCreatures([...ids, 'agent:newcomer']);
-    for (const id of ids) {
-      expect(after.get(id)).toEqual(before.get(id));
+
+    for (let i = 0; i < 200; i++) {
+      const newcomer = `skill:arrival-${i}`;
+      const list = [...ids, newcomer].sort((a, b) => a.localeCompare(b));
+      const after = placeCreatures(list);
+      expect(after.size).toBe(ids.length + 1);
+
+      const arrivalRow = after.get(newcomer)!.y;
+      const rowSize = [...after.values()].filter((s) => s.y === arrivalRow).length;
+
+      for (const id of ids) {
+        const was = before.get(id)!;
+        const now = after.get(id)!;
+        // Depth comes straight from the id's own hash, so nobody ever changes
+        // row — an arrival cannot ripple into a different band of the field.
+        expect(now.y).toBe(was.y);
+        if (now.x === was.x) continue;
+        expect(now.y).toBe(arrivalRow);
+        // A displaced villager steps clear of the cluster it was standing in.
+        // It can never travel further than that row could pack end to end.
+        expect(Math.abs(now.x - was.x)).toBeLessThanOrEqual(rowSize * MIN_SEPARATION);
+      }
+
+      // Same membership, same layout: the whole "stable geography" promise.
+      expect([...placeCreatures(list)]).toEqual([...after]);
     }
   });
 

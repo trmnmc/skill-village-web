@@ -119,13 +119,19 @@ function nearestClearSpot(wanted: number, taken: readonly number[], lo: number, 
 /**
  * Deterministic placement inside Homes. A creature asks for the row and the
  * offset its own id hashes to, and gets exactly that unless somebody is
- * already standing there — the village has a stable geography: your villagers
- * are where you left them, and a newcomer never shuffles everyone else along.
+ * already standing there; when somebody is, only the arriving creature moves.
  *
- * The one thing a creature's spot depends on besides its own id is who was
- * placed before it, and only when their hashes collide. `ids` arrives sorted
- * by id (protocol.ts sorts every view), so that order is itself stable and
- * the village renders identically on every load.
+ * Guaranteed spacing and placement-from-the-id-alone cannot both hold: with a
+ * finite number of non-overlapping spots, two ids that hash together mean one
+ * of them has to stand somewhere else. So a spot depends on the id *and* on
+ * who was seated before it. Seating order is fixed here rather than inherited
+ * from the caller — by code unit, which is locale-independent, unlike the
+ * `localeCompare` protocol.ts sorts views with — so the layout is a pure
+ * function of the *set* of ids. That is the stable-geography promise in the
+ * form it can actually keep: the same villagers always produce the same
+ * village, however the caller ordered them, on every reload. Membership
+ * changes are the exception, and a villager can be nudged along its row to
+ * make room; `village.ts` moves the actor to match.
  */
 export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
   const homes = ZONES.find((z) => z.id === 'homes')!;
@@ -135,7 +141,9 @@ export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
   /** x values already handed out, per row. */
   const occupied = new Map<number, number[]>();
 
-  for (const id of ids) {
+  const seating = [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+  for (const id of seating) {
     const h = hash(id);
     const row = h % ROWS;
     // Two independent draws from the hash: one for the row, one for the offset.

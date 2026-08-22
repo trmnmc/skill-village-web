@@ -16,6 +16,12 @@ export interface CreatureActor {
    * respawning it. See the implementation's note in `spawnCreature`.
    */
   setCreature(next: Creature): void;
+  /**
+   * Move to a new placement without respawning. `placeCreatures` can shift a
+   * villager sideways when a newcomer's hash lands on its spot; the actor owns
+   * its root position, so it has to be told.
+   */
+  setSpot(next: Spot): void;
   destroy(): void;
 }
 
@@ -132,7 +138,13 @@ export async function spawnCreature(
    */
   const shown = () => (roamGrid && behaviour.fly === 'roam' ? roamGrid : restGrid);
 
-  const root = k.add([k.pos(spot.x, spot.y), k.z(spot.y)]);
+  // Where this creature is standing right now. Not the `spot` parameter for
+  // the life of the actor: the layout can move a villager along its row when a
+  // newcomer's hash lands on its x (see zones.ts), and `setSpot` has to move
+  // the gaze origin with the sprite.
+  let at: Spot = spot;
+
+  const root = k.add([k.pos(at.x, at.y), k.z(at.y)]);
 
   const shadow = root.add([
     k.rect(bw * 0.78, 10, { radius: 5 }),
@@ -307,7 +319,7 @@ export async function spawnCreature(
       });
 
       const shut = behaviour.asleep || isBlinking(t, phi);
-      const look = shut ? 0 : gaze(t, phi, lookAt ?? undefined, spot.x);
+      const look = shut ? 0 : gaze(t, phi, lookAt ?? undefined, at.x);
 
       grid.eyes.forEach((anchor, i) => {
         const { pupil, lid, lash } = eyes[i]!;
@@ -394,6 +406,21 @@ export async function spawnCreature(
      */
     setCreature(next) {
       behaviour = behaviourFor(next);
+    },
+    /**
+     * Guaranteed spacing and per-id-only placement cannot both hold — with a
+     * finite number of non-overlapping spots, a newcomer landing on an
+     * occupied one has to move somebody — so a villager's x can change while
+     * it is on screen. Moving it here rather than respawning keeps the motion
+     * clock, the phase and every baked sprite exactly as they were; the jump
+     * is instant, which reads as the village making room. `z` follows `y`
+     * because depth sorting is keyed on it.
+     */
+    setSpot(next) {
+      at = next;
+      root.pos.x = next.x;
+      root.pos.y = next.y;
+      root.z = next.y;
     },
     destroy() {
       k.destroy(root);
