@@ -4,3 +4,4 @@ dist/
 *.log
 *.tsbuildinfo
 contact-sheet.html
+.claude/
