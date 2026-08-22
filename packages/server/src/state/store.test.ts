@@ -92,6 +92,34 @@ describe('loadState', () => {
   });
 });
 
+describe('state v1 -> v2 migration', () => {
+  it('loads a v1 file and gains llm defaults without touching creatures', async () => {
+    sandbox = await makeSandbox();
+    const v1 = {
+      version: 1,
+      createdAt: 5,
+      updatedAt: 9,
+      creatures: {},
+      problems: [],
+    };
+    await writeFile(sandbox.paths.statePath, JSON.stringify(v1), 'utf8');
+    const loaded = await loadState(sandbox.paths, 1_000);
+    expect(loaded.state.version).toBe(2);
+    expect(loaded.state.createdAt).toBe(5);
+    expect(loaded.state.llm.config.interactiveCap).toBe(500_000);
+    expect(loaded.state.llm.config.autonomousEnabled).toBe(false);
+  });
+
+  it('still refuses a newer version than it knows', async () => {
+    sandbox = await makeSandbox();
+    await writeFile(sandbox.paths.statePath, JSON.stringify({ version: 99 }), 'utf8');
+    const loaded = await loadState(sandbox.paths, 1_000);
+    // Falls back to a fresh village with the explanatory note, as v1 did.
+    expect(loaded.state.version).toBe(2);
+    expect(loaded.note).toContain('newer version');
+  });
+});
+
 describe('saveState', () => {
   it('creates the data directory if it does not exist', async () => {
     sandbox = await makeSandbox();

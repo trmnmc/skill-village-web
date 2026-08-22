@@ -7,6 +7,7 @@ import { createApp } from './api/app.js';
 import { DEFAULT_PORT, resolvePaths } from './config/paths.js';
 import { createWatcher } from './bridge/watcher.js';
 import { clearInstance, isVillageServing, readInstance, writeInstance } from './instance.js';
+import { createLlmService } from './llm/service.js';
 import { createVillage } from './village.js';
 
 /** Faster while someone is watching, slower when the village is on its own. */
@@ -27,12 +28,33 @@ async function main(): Promise<void> {
   // and carry on rather than making the player hunt down a file to delete.
   if (running) await clearInstance(paths);
 
-  const village = await createVillage({ paths });
+  const village = await createVillage({
+    paths,
+    llmFactory: (hooks) =>
+      createLlmService({
+        now: hooks.now,
+        getLlm: hooks.getLlm,
+        setLlm: hooks.setLlm,
+        // Chat quips are short and persona cards fit comfortably; a wedged
+        // CLI frees the concurrency-2 queue in 30s instead of riding the
+        // service's 90s default, which two stuck calls could otherwise
+        // saturate and freeze the panel on.
+        timeoutMs: 30_000,
+      }),
+  });
   if (village.startupNote) console.log(village.startupNote);
 
   const app = await createApp(village);
   await app.listen({ port, host: '127.0.0.1' });
   await writeInstance(paths, { pid: process.pid, port });
+
+  void village.probeLlm().then((mode) => {
+    console.log(
+      mode === 'full'
+        ? 'The village found its voice (claude CLI reachable).'
+        : 'Silent-movie mode: no reachable claude CLI. (A server started from inside a Claude Code session always lands here — run it from a plain terminal to chat.)',
+    );
+  }).catch((error) => console.error('LLM probe failed:', error));
 
   const watcher = createWatcher({
     paths,

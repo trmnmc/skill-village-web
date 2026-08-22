@@ -13,3 +13,7 @@ export * from './sim/tick.js';
 export * from './village.js';
 export * from './api/app.js';
 export * from './instance.js';
+export * from './llm/cli.js';
+export * from './llm/ledger.js';
+export * from './llm/service.js';
+export * from './llm/persona.js';

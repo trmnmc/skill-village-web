@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import type { CareVerb } from '@village/core';
+import { remaining, type LlmConfig } from '../llm/ledger.js';
 import { readEvents } from '../state/events.js';
 import type { Village } from '../village.js';
 
@@ -59,6 +60,68 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
       return village.getState().creatures[request.params.id];
     },
   );
+
+  app.post<{ Params: { id: string }; Body: { message?: unknown } }>(
+    '/api/creatures/:id/chat',
+    async (request, reply) => {
+      const { message } = request.body ?? {};
+      if (typeof message !== 'string' || message.trim() === '' || message.length > 4_000) {
+        return reply.code(400).send({ error: 'message must be a non-empty string of at most 4000 characters' });
+      }
+      if (!village.getState().creatures[request.params.id]) {
+        return reply.code(404).send({ error: `Creature not found: ${request.params.id}` });
+      }
+      let answer;
+      try {
+        answer = await village.chat(request.params.id, message);
+      } catch (error) {
+        // The pre-check above found the creature, but the persona flight it
+        // triggers can outlast a concurrent refresh that releases it — an
+        // honest 404, not a 500, is still the truth in that case.
+        if ((error as Error).message.includes('not found')) {
+          return reply.code(404).send({ error: `Creature not found: ${request.params.id}` });
+        }
+        throw error;
+      }
+      return { reply: answer, creature: village.getState().creatures[request.params.id] };
+    },
+  );
+
+  const llmSnapshot = () => {
+    const s = village.getState();
+    const at = Date.now();
+    return {
+      mode: village.llmMode(),
+      ledger: s.llm.ledger,
+      config: s.llm.config,
+      remaining: {
+        interactive: remaining(s.llm, 'interactive', at),
+        autonomous: remaining(s.llm, 'autonomous', at),
+      },
+    };
+  };
+
+  app.get('/api/llm', async () => llmSnapshot());
+
+  app.patch<{ Body: Record<string, unknown> }>('/api/llm/config', async (request, reply) => {
+    const body = request.body ?? {};
+    const patch: Partial<LlmConfig> = {};
+    for (const [key, value] of Object.entries(body)) {
+      if (key === 'interactiveCap' || key === 'autonomousCap') {
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+          return reply.code(400).send({ error: `${key} must be a non-negative integer` });
+        }
+        patch[key] = value;
+      } else if (key === 'autonomousEnabled') {
+        if (typeof value !== 'boolean') return reply.code(400).send({ error: 'autonomousEnabled must be a boolean' });
+        patch.autonomousEnabled = value;
+      } else {
+        return reply.code(400).send({ error: `Unknown config key: ${key}` });
+      }
+    }
+    await village.setLlmConfig(patch);
+    return llmSnapshot();
+  });
 
   app.post('/api/refresh', async () => {
     await village.refresh();
