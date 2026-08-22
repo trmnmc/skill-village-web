@@ -49,7 +49,7 @@ async function main(): Promise<void> {
         ? 'The village found its voice (claude CLI reachable).'
         : 'Silent-movie mode: no reachable claude CLI. (A server started from inside a Claude Code session always lands here — run it from a plain terminal to chat.)',
     );
-  });
+  }).catch((error) => console.error('LLM probe failed:', error));
 
   const watcher = createWatcher({
     paths,
