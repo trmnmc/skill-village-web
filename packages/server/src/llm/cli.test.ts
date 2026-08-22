@@ -34,6 +34,16 @@ describe('runCli', () => {
     expect(result).toMatchObject({ ok: false, reason: 'missing' });
   });
 
+  it('resolves rather than throwing for a nonexistent .cmd/.bat shim path', async () => {
+    // On win32 this path takes the shell:true branch (shell reports a
+    // nonzero exit, mapped to 'error'); elsewhere it takes the non-shell
+    // branch (spawn emits 'error', mapped to 'missing'). Either way it must
+    // resolve to a typed CliResult, never reject the promise — that was the
+    // bug: spawning a .cmd without shell:true throws EINVAL synchronously.
+    const result = await runCli(['C:/definitely/not/here/claude-shim.cmd'], { prompt: 'hi' });
+    expect(result.ok).toBe(false);
+  });
+
   it('maps non-JSON stdout to malformed', async () => {
     const result = await runCli(fakeCliCommand('garbage'), { prompt: 'hi' });
     expect(result).toMatchObject({ ok: false, reason: 'malformed' });

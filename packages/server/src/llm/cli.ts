@@ -46,13 +46,30 @@ export function runCli(command: readonly string[], call: CliCall): Promise<CliRe
       ...(call.model ? ['--model', call.model] : []),
     ];
 
-    // shell:true only for the bare `claude` name: on Windows that resolves
-    // claude.cmd, which plain spawn cannot execute. Args carry no user
-    // content (the prompt is on stdin), so the shell sees only fixed flags.
-    const child = spawn(command[0]!, args, {
-      shell: process.platform === 'win32' && command[0] === 'claude',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    // shell:true for the bare `claude` name, and for any .cmd/.bat shim: on
+    // Windows those resolve through cmd.exe, which plain spawn cannot
+    // execute — and since Node's CVE-2024-27980 fix, spawning a .cmd/.bat
+    // directly without shell:true throws EINVAL *synchronously*, before any
+    // event fires. Args carry no user content (the prompt is on stdin), so
+    // the shell sees only fixed flags.
+    const useShell =
+      process.platform === 'win32' &&
+      (command[0] === 'claude' || /\.(cmd|bat)$/i.test(command[0] ?? ''));
+
+    let child;
+    try {
+      child = spawn(command[0]!, args, {
+        shell: useShell,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      // A synchronous throw (e.g. EINVAL spawning a .cmd/.bat without
+      // shell:true) never fires an 'error' event, so it must be caught here
+      // — otherwise it would reject the promise instead of yielding a typed
+      // CliResult. No timer exists yet, so there's nothing to clear.
+      resolve({ ok: false, reason: 'missing', detail: String(error) });
+      return;
+    }
 
     let out = '';
     let err = '';
