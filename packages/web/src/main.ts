@@ -3,10 +3,12 @@ import { connect } from './net/client.js';
 import { createChatPanel } from './chat/panel.js';
 import { displayName } from './render/label.js';
 import { initTheme } from './theme/index.js';
+import { mountWeatherMenu } from './ui/weather-menu.js';
 
 // Boot the theme store first: it applies --sv-* CSS vars to the document root,
 // and everything painted after this (chat panel, scene chrome) should see them.
-initTheme();
+const themeStore = initTheme();
+mountWeatherMenu(themeStore, document.body);
 
 // The panel is built before the scene and the scene is told about the panel:
 // each one's reference to the other lives inside an arrow function, which only

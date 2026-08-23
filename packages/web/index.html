@@ -60,6 +60,34 @@
         position: absolute; right: 8px; top: 4px; border: 0; background: none;
         font-size: 18px; cursor: pointer; color: var(--sv-ink, #3A2E22);
       }
+      /* Above the canvas, below #chat-panel (11): the gear sits bottom-left,
+         well clear of the panel's own footprint on the right. */
+      #weather-menu { position: fixed; left: 14px; bottom: 14px; z-index: 9; }
+      #weather-menu-button {
+        width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
+        background: var(--sv-panel-bg, #FFFDF4); border: 2px solid var(--sv-ink, #3A2E22);
+        color: var(--sv-panel-fg, #3A2E22); font-size: 18px; line-height: 1;
+      }
+      #weather-menu-popover {
+        position: absolute; left: 0; bottom: 44px; min-width: 160px;
+        background: var(--sv-panel-bg, #FFFDF4); border: 2px solid var(--sv-ink, #3A2E22);
+        border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 2px;
+        font: 13px/1.4 'IBM Plex Mono', monospace; color: var(--sv-panel-fg, #3A2E22);
+      }
+      #weather-menu-popover[hidden] { display: none; }
+      .weather-menu-row {
+        text-align: left; padding: 6px 8px; border: 0; border-radius: 5px;
+        background: none; color: inherit; font: inherit; cursor: pointer;
+      }
+      .weather-menu-row.active { background: var(--sv-cream, #F2E5C4); color: var(--sv-ink, #3A2E22); }
+      #weather-menu-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 4px 2px; }
+      .weather-menu-chip {
+        padding: 4px 7px; border: 1.5px solid var(--sv-ink, #3A2E22); border-radius: 5px;
+        background: none; color: inherit; font: inherit; cursor: pointer;
+      }
+      .weather-menu-chip.active { background: var(--sv-cream, #F2E5C4); color: var(--sv-ink, #3A2E22); }
+      #weather-menu-journey-label { padding: 4px 8px; opacity: 0.8; }
+      #weather-menu-note { padding: 4px 8px; opacity: 0.8; font-style: italic; }
     </style>
   </head>
   <body>

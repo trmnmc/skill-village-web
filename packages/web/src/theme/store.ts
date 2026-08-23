@@ -29,6 +29,7 @@ export interface ThemeStore {
   subscribe(fn: (t: ResolvedTheme) => void): () => void;
   mode(): WeatherMode; setMode(m: WeatherMode): void;
   picked(): WeatherKind; setPicked(k: WeatherKind): void;
+  setRealSource(src: RealWeatherSource | null): void;
   tick(): void; start(): void; stop(): void;
 }
 
@@ -135,7 +136,10 @@ export function createThemeStore(deps?: {
   const now = deps?.now ?? (() => new Date());
   const storage = deps?.storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
   const search = deps?.search ?? (typeof window !== 'undefined' ? window.location.search : '');
-  const real = deps?.real ?? null;
+  // Mutable: setRealSource() overrides this at runtime (the gear menu's Real
+  // mode wires up a live createRealWeatherSource here); deps.real is only the
+  // initial value.
+  let real: RealWeatherSource | null = deps?.real ?? null;
 
   const safeGet = (k: string): string | null => (storage ? storage.getItem(k) : null);
   const safeSet = (k: string, v: string): void => { storage?.setItem(k, v); };
@@ -306,6 +310,7 @@ export function createThemeStore(deps?: {
     setMode(m: WeatherMode): void { modeState = m; safeSet(MODE_KEY, m); },
     picked(): WeatherKind { return pickedState; },
     setPicked(k: WeatherKind): void { pickedState = k; safeSet(PICK_KEY, k); },
+    setRealSource(src: RealWeatherSource | null): void { real = src; },
     tick,
     start(): void {
       tick();

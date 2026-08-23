@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createThemeStore, cssVars } from './store.js';
 import { PALETTES, mix } from './palettes.js';
+import type { RealWeatherSource } from './weather/real.js';
 
 const at = (iso: string) => () => new Date(iso);
 const mem = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) }; };
@@ -80,6 +81,23 @@ describe('modes', () => {
     const off = createThemeStore({ now: () => new Date(nowMs), storage: mem() });
     off.tick();
     expect(off.current().sun.visible).toBe(true);
+  });
+});
+
+describe('setRealSource', () => {
+  it('overrides the injected real source at runtime; null reverts real mode to clear', () => {
+    const src: RealWeatherSource = {
+      latest: () => ({ kind: 'rain', sunriseMin: 360, sunsetMin: 1200, atMs: new Date('2026-08-19T12:00:00').getTime() }),
+      refresh: async () => {},
+    };
+    const s = createThemeStore({ now: at('2026-08-19T12:00:00'), storage: mem(), real: src });
+    s.setMode('real');
+    s.tick();
+    expect(s.current().weather.kind).toBe('rain');
+
+    s.setRealSource(null);
+    s.tick();
+    expect(s.current().weather.kind).toBe('clear');
   });
 });
 
