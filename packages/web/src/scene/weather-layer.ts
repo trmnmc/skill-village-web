@@ -345,24 +345,187 @@ function rect(k: KAPLAYCtx, x: number, y: number, w: number, h: number, colorHex
 }
 
 // ---------------------------------------------------------------------------
-// Storm timing — shared between the in-scene bolt and the front-of-screen flash.
+// Storm lightning — a seeded strike about every 30s (not the old 4.5s
+// metronome), a detailed forked bolt, and no strobe: the flash and glow ramp
+// rather than snap on/off. Shared by the in-scene bolt (`drawLightning`,
+// beside the other per-weather draws below) and the front-of-screen flash
+// object (`flash.onDraw` in `mountWeather`).
 // ---------------------------------------------------------------------------
 
-function stormPhase(tSec: number): number {
-  return tSec % 4.5;
+/** Strike slots: one candidate strike per 32s slot, average cadence ≈ 30s. */
+const STRIKE_SLOT_S = 32;
+/** A strike starts 2..26s into its slot (`STRIKE_WINDOW_MIN_S + hash*STRIKE_WINDOW_SPAN_S`). */
+const STRIKE_WINDOW_MIN_S = 2;
+const STRIKE_WINDOW_SPAN_S = 24;
+const STRIKE_DURATION_S = 0.7;
+/** Dim in-cloud flickers between strikes: one candidate per 9s slot. */
+const FLICKER_SLOT_S = 9;
+const FLICKER_WINDOW_SPAN_S = 8.5;
+const FLICKER_DURATION_S = 0.18;
+
+/** Trunk/fork/glow segment counts for `boltSegments` — see its own comment. */
+const BOLT_TRUNK_SEGMENTS = 11;
+const BOLT_FORK_SEGMENTS = 3;
+const BOLT_FORK_BRANCH_INDEX = 5;
+
+/**
+ * Seeded hash into [0, 1) — the sky.ts shooting-star idiom
+ * (`frac(sin(n * 12.9898) * 43758.5453)`), generalized with a `salt` so
+ * multiple independent draws (a strike's anchor, its variant, a bolt
+ * segment's dy vs. its dx) can share the same index `n` without
+ * correlating. No `Date.now`/`performance.now` inside — callers pass
+ * `tSec`-derived slot indices, so results replay deterministically.
+ */
+export function hash(n: number, salt: number): number {
+  return frac(Math.sin((n + salt * 77.7) * 12.9898) * 43758.5453);
 }
 
-/** The brief white full-screen flash: a short beat near the top of the cycle. */
-function isFlashNow(tSec: number, reduced: boolean): boolean {
-  return !reduced && stormPhase(tSec) < 0.14;
+export interface StrikeParams {
+  /** Strike anchor, 0..1 across the viewport width (0.15..0.85 — kept off the screen edges). */
+  x01: number;
+  /** Bolt shape variant, 0..2 — see `boltSegments`. */
+  variant: number;
 }
 
-/** The bolt graphic itself: on during the flash, plus a longer afterglow window. */
-function isBoltOn(tSec: number, reduced: boolean): boolean {
-  if (reduced) return true;
-  const ph = stormPhase(tSec);
-  return isFlashNow(tSec, reduced) || (ph > 0.22 && ph < 0.3);
+/** The strike anchor/variant for slot `slot` — stable for the whole slot, so re-deriving it mid-strike (every draw frame) is stable too. */
+export function strikeParams(slot: number): StrikeParams {
+  return {
+    x01: 0.15 + hash(slot, 1) * 0.7,
+    variant: Math.floor(hash(slot, 2) * 3),
+  };
 }
+
+export interface ActiveStrike {
+  /** Seconds since this strike started; always in [0, STRIKE_DURATION_S). */
+  dt: number;
+  x01: number;
+  variant: number;
+}
+
+/**
+ * The strike active at `tSec`, or `null` if no strike is currently firing.
+ * One strike is scheduled per 32s slot, starting 2..26s in and lasting 0.7s
+ * — comfortably shorter than the gap to the next slot's earliest possible
+ * start, so slots never need to look at their neighbors.
+ */
+export function activeStrike(tSec: number): ActiveStrike | null {
+  const slot = Math.floor(tSec / STRIKE_SLOT_S);
+  const start = slot * STRIKE_SLOT_S + STRIKE_WINDOW_MIN_S + hash(slot, 0) * STRIKE_WINDOW_SPAN_S;
+  const dt = tSec - start;
+  if (dt < 0 || dt >= STRIKE_DURATION_S) return null;
+  const { x01, variant } = strikeParams(slot);
+  return { dt, x01, variant };
+}
+
+export interface StrikeEnvelope {
+  /** Bolt + in-cloud glow rect brightness, 0..1. */
+  bolt: number;
+  /** Full-screen flash brightness, 0..1. */
+  flash: number;
+  /** In-cloud glow rect brightness (independent of `bolt` during the pre-flicker beat), 0..1. */
+  glow: number;
+}
+
+/**
+ * The strike's brightness envelope `dt` seconds after it started: a dim
+ * pre-flicker, a dark beat, a bright forked bolt with a flash that ramps
+ * down (not snaps off — the anti-strobe fix), then a decaying afterglow.
+ * Continuous at the 0.38s main→afterglow boundary (`bolt` is 1 on both
+ * sides) and at 0.70s the flash has already reached exactly 0.
+ */
+export function strikeEnvelope(dt: number): StrikeEnvelope {
+  if (dt < 0 || dt >= 0.7) return { bolt: 0, flash: 0, glow: 0 };
+  if (dt < 0.08) return { bolt: 0.35, flash: 0, glow: 0.5 };
+  if (dt < 0.14) return { bolt: 0, flash: 0, glow: 0 };
+  if (dt < 0.38) return { bolt: 1, flash: 1 - (dt - 0.14) / 0.24, glow: 1 };
+  const bolt = 1 - (dt - 0.38) / 0.32;
+  return { bolt, flash: 0, glow: bolt };
+}
+
+/**
+ * Whether a dim standalone in-cloud flicker (not a full strike) fires at
+ * `tSec`: one candidate per 9s slot, `hash*8.5`s in, lasting 0.18s —
+ * suppressed whenever a strike is currently active, since the strike owns
+ * the sky for its 0.7s window.
+ */
+export function flickerActive(tSec: number): boolean {
+  if (activeStrike(tSec)) return false;
+  const slot9 = Math.floor(tSec / FLICKER_SLOT_S);
+  const start = slot9 * FLICKER_SLOT_S + hash(slot9, 3) * FLICKER_WINDOW_SPAN_S;
+  const dt = tSec - start;
+  return dt >= 0 && dt < FLICKER_DURATION_S;
+}
+
+export interface BoltSegment {
+  /** Reference-space x, offset from the strike's screen anchor (`x01 * width`). */
+  x: number;
+  /** Reference-space y, absolute — the anchor sits at ref y 38, same axis mapY uses. */
+  y: number;
+  w: number;
+  h: number;
+  color: string;
+  kind: 'trunk' | 'fork' | 'glow';
+}
+
+/**
+ * Deterministic bolt geometry for shape `variant` (0..2), in reference space
+ * relative to the strike anchor. The anchor's screen x (`x01 * width`)
+ * doesn't change this shape at all — only where it's drawn — so this pure
+ * function takes just `variant`; the draw site anchors and scales it (see
+ * `drawBolt`).
+ *
+ * Trunk: 11 segments zigzagging down from ref (0, 38); segment `i`'s height
+ * is `dy+1` (the `+1` keeps consecutive segments visually connected) and its
+ * lateral step `dx` (sign alternating by parity) is applied *after* it's
+ * drawn, so segment `i+1` starts exactly where segment `i` ended. The first
+ * two segments are the brighter `#FFF6C8`, the rest `#FFE896`.
+ *
+ * Fork: 3 segments branching from trunk segment 5's origin, alternating the
+ * *opposite* lateral direction from the trunk's own parity-based pattern,
+ * narrower than the trunk (width 2 vs. 3).
+ *
+ * Glow: one soft `#FFEFA0` rect per trunk segment, centered on it
+ * (`x-3, y, 9, dy+1`) — drawn first (returned first) so the sharp trunk/fork
+ * lines render on top of it.
+ */
+export function boltSegments(variant: number): BoltSegment[] {
+  const trunk: BoltSegment[] = [];
+  const origins: { x: number; y: number }[] = [];
+  let x = 0;
+  let y = 38;
+  for (let i = 0; i < BOLT_TRUNK_SEGMENTS; i++) {
+    origins.push({ x, y });
+    const dy = 9 + hash(variant * 31 + i, 4) * 4;
+    const dx = (i % 2 === 0 ? 1 : -1) * (2 + hash(variant * 31 + i, 5) * 5);
+    trunk.push({ x, y, w: 3, h: dy + 1, color: i < 2 ? '#FFF6C8' : '#FFE896', kind: 'trunk' });
+    x += dx;
+    y += dy;
+  }
+
+  const fork: BoltSegment[] = [];
+  const branch = origins[BOLT_FORK_BRANCH_INDEX]!;
+  let bx = branch.x;
+  let by = branch.y;
+  for (let j = 0; j < BOLT_FORK_SEGMENTS; j++) {
+    const dy = 7 + hash(variant * 31 + j, 6) * 2;
+    const dx = (j % 2 === 0 ? -1 : 1) * (2 + hash(variant * 31 + j, 5) * 5);
+    fork.push({ x: bx, y: by, w: 2, h: dy + 1, color: '#FFE896', kind: 'fork' });
+    bx += dx;
+    by += dy;
+  }
+
+  const glow: BoltSegment[] = trunk.map((seg) => ({ x: seg.x - 3, y: seg.y, w: 9, h: seg.h, color: '#FFEFA0', kind: 'glow' }));
+
+  return [...glow, ...trunk, ...fork];
+}
+
+/** Reduced motion (3d of the lightning redesign): a static bolt, always on while the storm is active — no flash, no flickers (see `drawLightning`). */
+const REDUCED_MOTION_BOLT_VARIANT = 0;
+const REDUCED_MOTION_BOLT_X01 = 0.65;
+const REDUCED_MOTION_ENVELOPE: StrikeEnvelope = { bolt: 1, flash: 0, glow: 0.3 };
+
+/** Anchor for standalone in-cloud flickers (no strike is active to anchor to): reproduces the previous flicker's screen position, ref x 96 = this x01*480 minus the glow rect's own -42 offset. */
+const FLICKER_GLOW_X01 = 138 / 480;
 
 // ---------------------------------------------------------------------------
 // Per-weather draw branches — behind the creatures. Each takes the frame's
@@ -407,7 +570,6 @@ function drawStormClouds(
   k: KAPLAYCtx,
   cur: ResolvedTheme,
   tSec: number,
-  reduced: boolean,
   width: number,
   height: number,
   horizonY: number,
@@ -441,12 +603,6 @@ function drawStormClouds(
     }
   }
 
-  // In-cloud flicker on its own beat, offset from the bolt: class-2 cluster.
-  const ph2 = tSec % 4.5;
-  if (!reduced && ph2 > 1.7 && ph2 < 1.88) {
-    rect(k, mapX(96, width), mapY(12, horizonY, height), 84 * s, 34 * s, '#E8DFA8', 0.3 * ramp);
-  }
-
   // Near deck: heavier, lower, lit rims on top — class-2 clusters, anchor cnx.
   for (let cn = 0; cn < 4; cn++) {
     const cnx = ((cn * 150 + drift2) % 640) - 100;
@@ -460,18 +616,68 @@ function drawStormClouds(
   // Low ground mist whipped up by the rain: class-3 full-width veil.
   const [mistY, mistH] = vSpan(172, 188, horizonY, height);
   rect(k, 0, mistY, width, mistH, '#FFFFFF', 0.08 * ramp);
+}
 
-  // The bolt: unchanged timing/rect count from before this wave (Task 3
-  // replaces the whole mechanism); only its coordinates move through the
-  // class-2 rules, anchored at mapX(312, width).
-  if (isBoltOn(tSec, reduced)) {
-    const anchorX = mapX(312, width);
-    rect(k, anchorX, mapY(14, horizonY, height), 16 * s, 110 * s, '#FFEFA0', 0.18 * ramp);
-    rect(k, anchorX + 6 * s, mapY(14, horizonY, height), 5 * s, 28 * s, '#FFE896', ramp);
-    rect(k, anchorX, mapY(40, horizonY, height), 5 * s, 22 * s, '#FFE896', ramp);
-    rect(k, anchorX + 8 * s, mapY(60, horizonY, height), 5 * s, 26 * s, '#FFE896', ramp);
-    rect(k, anchorX + 3 * s, mapY(84, horizonY, height), 4 * s, 18 * s, '#FFE896', ramp);
-    rect(k, anchorX + 14 * s, mapY(46, horizonY, height), 8 * s, 4 * s, '#FFE896', ramp);
+/** The in-cloud glow rect (ref 84x34) around a strike anchor `x01`, or a standalone flicker's fixed anchor — class-2 cluster, see the file header's scaling classes. */
+function drawCloudGlow(k: KAPLAYCtx, x01: number, alpha: number, width: number, height: number, horizonY: number): void {
+  if (alpha <= 0) return;
+  const s = fy(horizonY);
+  const anchorX = x01 * width;
+  rect(k, anchorX - 42 * s, mapY(12, horizonY, height), 84 * s, 34 * s, '#E8DFA8', alpha);
+}
+
+/** The bolt's trunk/fork/glow segments (`boltSegments`) as a class-2 cluster anchored at `x01 * width`. */
+function drawBolt(
+  k: KAPLAYCtx,
+  variant: number,
+  x01: number,
+  env: StrikeEnvelope,
+  ramp: number,
+  width: number,
+  height: number,
+  horizonY: number,
+): void {
+  if (env.bolt <= 0) return;
+  const s = fy(horizonY);
+  const anchorX = x01 * width;
+  for (const seg of boltSegments(variant)) {
+    const alpha = (seg.kind === 'glow' ? 0.16 : 1) * env.bolt * ramp;
+    rect(k, anchorX + seg.x * s, mapY(seg.y, horizonY, height), seg.w * s, seg.h * s, seg.color, alpha);
+  }
+}
+
+/**
+ * The storm's lightning: a seeded strike about every 30s (pre-flicker, dark
+ * beat, forked bolt with in-cloud glow, a screen flash that ramps down
+ * instead of snapping off) plus dim standalone in-cloud flickers between
+ * strikes, suppressed while a strike is active (`flickerActive` already
+ * checks this). Reduced motion shows one static bolt the whole time the
+ * storm is active — no flash, no flickers.
+ */
+function drawLightning(
+  k: KAPLAYCtx,
+  cur: ResolvedTheme,
+  tSec: number,
+  reduced: boolean,
+  width: number,
+  height: number,
+  horizonY: number,
+): void {
+  const ramp = cur.weather.ramp;
+
+  if (reduced) {
+    drawBolt(k, REDUCED_MOTION_BOLT_VARIANT, REDUCED_MOTION_BOLT_X01, REDUCED_MOTION_ENVELOPE, ramp, width, height, horizonY);
+    drawCloudGlow(k, REDUCED_MOTION_BOLT_X01, 0.3 * REDUCED_MOTION_ENVELOPE.glow * ramp, width, height, horizonY);
+    return;
+  }
+
+  const strike = activeStrike(tSec);
+  if (strike) {
+    const env = strikeEnvelope(strike.dt);
+    drawBolt(k, strike.variant, strike.x01, env, ramp, width, height, horizonY);
+    drawCloudGlow(k, strike.x01, 0.3 * env.glow * ramp, width, height, horizonY);
+  } else if (flickerActive(tSec)) {
+    drawCloudGlow(k, FLICKER_GLOW_X01, 0.18 * ramp, width, height, horizonY);
   }
 }
 
@@ -670,7 +876,8 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
         break;
       case 'storm':
         drawRainAndSplashes(k, cur, t, reduced, width, height, horizonY);
-        drawStormClouds(k, cur, t, reduced, width, height, horizonY);
+        drawStormClouds(k, cur, t, width, height, horizonY);
+        drawLightning(k, cur, t, reduced, width, height, horizonY);
         break;
       case 'snow':
         drawOvercastCloudBlobs(k, 'snow', cur.flags.isNight, cur.weather.ramp, t, width, horizonY);
@@ -713,14 +920,17 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
   flash.onDraw(() => {
     const cur = current;
     if (!cur || cur.weather.kind !== 'storm' || cur.weather.ramp <= 0.02) return;
-    const t = liveT();
-    if (!isFlashNow(t, reducedMotion())) return;
+    if (reducedMotion()) return; // no flash under reduced motion (3d)
+    const strike = activeStrike(liveT());
+    if (!strike) return;
+    const env = strikeEnvelope(strike.dt);
+    if (env.flash <= 0) return;
     k.drawRect({
       pos: k.vec2(0, 0),
       width: k.width(),
       height: k.height(),
       color: k.Color.fromHex('#FFFFFF'),
-      opacity: 0.22 * cur.weather.ramp,
+      opacity: 0.12 * env.flash * cur.weather.ramp,
     });
   });
 
