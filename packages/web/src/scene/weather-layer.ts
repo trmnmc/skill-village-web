@@ -1207,7 +1207,7 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
 
   function rebuildRainbow(width: number, horizonY: number, sunX01: number, sunY01: number): void {
     rainbowRoot?.destroy();
-    const root = k.add([k.pos(0, 0), k.z(5), k.fixed()]);
+    const root = k.add([k.pos(0, 0), k.z(1), k.fixed()]);
     rainbowBlockObjs = [];
     rainbowBlockAlphas = [];
     for (const blk of rainbowBlocks(width, horizonY, sunX01, sunY01)) {
@@ -1241,14 +1241,16 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
         // a below-horizon sun leaves it centred. Rebuilding on every publish
         // would rebuild ~600 objects a minute for a sub-pixel shift, so the
         // sun only counts once it has moved a visible amount.
-        const sunX01 = t.sun.visible ? t.sun.x01 : 0.5;
-        const sunY01 = t.sun.visible ? t.sun.y01 : 0.5;
+        // The sun is read once, when the bow appears, and then held: a bow
+        // hangs where it is for as long as you can see it. Tracking the sun
+        // live made it hop sideways every time the rebuild threshold tripped.
+        const fresh = !rainbowRoot;
+        const sunX01 = fresh ? (t.sun.visible ? t.sun.x01 : 0.5) : rainbowBuiltSunX01;
+        const sunY01 = fresh ? (t.sun.visible ? t.sun.y01 : 0.5) : rainbowBuiltSunY01;
         if (
-          !rainbowRoot ||
+          fresh ||
           Math.abs(width - rainbowBuiltWidth) > 1 ||
-          Math.abs(horizonY - rainbowBuiltHorizonY) > 1 ||
-          Math.abs(sunX01 - rainbowBuiltSunX01) > 0.02 ||
-          Math.abs(sunY01 - rainbowBuiltSunY01) > 0.02
+          Math.abs(horizonY - rainbowBuiltHorizonY) > 1
         ) {
           rebuildRainbow(width, horizonY, sunX01, sunY01);
           rainbowBuiltWidth = width;
