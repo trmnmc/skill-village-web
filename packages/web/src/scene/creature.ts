@@ -360,8 +360,10 @@ export async function spawnCreature(
   // cover that baked 2x2 white block, not just draw a lash line over it, or
   // the white shows straight through. Each eye is three pieces:
   //   - pupil: shown when open, tracks gaze.
-  //   - lid: shown when shut, a body-hue block the exact size of the eye
-  //     white it covers.
+  //   - lid: shown when shut, a body-hue block oversized past the eye white
+  //     it covers. Exact-size left a one-pixel sliver of baked white peeking
+  //     out under breath squash — rounding puts the scaled lid and the
+  //     scaled body block on different pixel edges — so the lid overshoots.
   //   - lash: a thin dark line at the lid's lower edge, same construction as
   //     the trailer (reference/animation-trailer/skill-village-scene.jsx).
   // Visibility swaps via `.hidden` rather than swapping colour/role on one
@@ -370,8 +372,8 @@ export async function spawnCreature(
   // Eyes are siblings of `body`, not children, so `body.scale = vec2(U*sx,
   // U*sy)` deforming the baked eye-white block does nothing to these
   // overlays on its own — each one also carries its own `k.scale`, driven by
-  // the same sx/sy every frame below, so the lid stays exactly the size of
-  // the (now squashed/stretched) 2x2 white block it must fully cover.
+  // the same sx/sy every frame below, so the lid keeps covering the (now
+  // squashed/stretched) 2x2 white block whatever the breath is doing.
   const eyes = restGrid.eyes.map(() => {
     const pupil = root.add([
       k.rect(U * 0.95, U * 1.15),
@@ -382,7 +384,7 @@ export async function spawnCreature(
       k.z(1),
     ]);
     const lid = root.add([
-      k.rect(U * 2, U * 2),
+      k.rect(U * 2.4, U * 2.4),
       k.pos(0, 0),
       k.anchor('center'),
       k.color(lidColour),

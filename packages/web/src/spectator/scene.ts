@@ -2,7 +2,10 @@ import kaplay, { type KAPLAYCtx } from 'kaplay';
 import type { CreatureAppearance } from '@village/core/visual';
 import { TEXT_SS, U } from '../theme.js';
 import { THEME } from './theme.js';
-import { GROUND_TOP, GROUND_Y, placeInRange, type Spot } from '../layout/zones.js';
+import {
+  GROUND_TOP, GROUND_Y, houseProp, placeInRange, placeTableau, treeProp,
+  type Prop, type Spot,
+} from '../layout/zones.js';
 import { spawnCreature, type CreatureActor } from '../scene/creature.js';
 import { composeGrid, type EyeAnchor } from '../render/compose.js';
 import { bakePixels } from '../render/bake.js';
@@ -16,10 +19,40 @@ import type { EggView, RareViewFull, ResidentView, ShowroomView } from './protoc
 const WORLD_W = 2200;
 /** Fenced pen; eggs are placed here via placeInRange. */
 const NURSERY = { lo: 160, hi: 520 };
-/** Residents are placed here via placeInRange. */
+/** Residents are placed here via placeTableau, around the scenery. */
 const COMMONS = { lo: 640, hi: 1560 };
 /** The rare stands here, never in the commons. */
 const PEDESTAL_X = 1800;
+
+/**
+ * Camera zoom. 1:1 framed the whole meadow at once and the creatures read
+ * distant (playtest 2026-08-23); 1.2x brings them close enough to be the
+ * subject — the same call the main village made in `3e2fd59`. Every
+ * screen-to-world conversion has to divide by it: the pan clamp, the pan
+ * delta, and the cursor mapping, or clicks land beside the creature the
+ * cursor is on.
+ */
+const ZOOM = 1.2;
+
+/**
+ * The meadow's scenery, as data. buildScenery draws from this table and
+ * `COMMONS_PROPS` derives the seating keep-outs from the same rows, so a
+ * prop that moves takes its keep-out with it. Hand-typed band constants are
+ * exactly how a village comes to seat somebody inside a house.
+ */
+const HOUSES: readonly { x: number; base: number; wall: string; roof: string }[] = [
+  { x: 300, base: GROUND_Y - 20, wall: THEME.signCream, roof: THEME.accent },
+  { x: 900, base: GROUND_Y - 24, wall: THEME.wallLilac, roof: THEME.roofLilac },
+  { x: 1420, base: GROUND_Y - 18, wall: THEME.wallSand, roof: THEME.roofClay },
+];
+const TREE_XS: readonly number[] = [90, 610, 1160, 1700, 2100];
+const TREE_BASE = GROUND_Y - 10;
+
+/** What the commons may not seat behind, straight from what it draws. */
+const COMMONS_PROPS: readonly Prop[] = [
+  ...HOUSES.map((h) => houseProp(h.x, h.base)),
+  ...TREE_XS.map((x) => treeProp(x, TREE_BASE)),
+];
 
 /** How far a press may travel and still count as a click, in client pixels. */
 const CLICK_SLOP = 6;
@@ -484,10 +517,8 @@ export async function startSpectatorVillage(options: SpectatorVillageOptions): P
     block(k, px, GROUND_Y - 200, w, 46, THEME.groundDark, 0.2, 0.4);
   }
 
-  house(k, 300, GROUND_Y - 20, THEME.signCream, THEME.accent);
-  house(k, 900, GROUND_Y - 24, THEME.wallLilac, THEME.roofLilac);
-  house(k, 1420, GROUND_Y - 18, THEME.wallSand, THEME.roofClay);
-  for (const dx of [90, 610, 1160, 1700, 2100]) tree(k, dx, GROUND_Y - 10);
+  for (const h of HOUSES) house(k, h.x, h.base, h.wall, h.roof);
+  for (const x of TREE_XS) tree(k, x, TREE_BASE);
 
   nurseryFence(k, NURSERY.lo, NURSERY.hi, GROUND_Y);
   const pedestalTopY = pedestal(k, PEDESTAL_X, GROUND_Y);
@@ -544,17 +575,23 @@ export async function startSpectatorVillage(options: SpectatorVillageOptions): P
   let panning = false;
   const stopPanning = () => { panning = false; };
   k.onMouseDown('left', () => { panning = true; });
+  // Half the world the zoomed camera can see: the clamp keeps the camera
+  // centre this far from the world's edges so the view never runs past them.
+  const halfView = () => k.width() / (2 * ZOOM);
   k.onMouseMove((_pos, delta) => {
     if (!panning) return;
-    const next = k.getCamPos().x - delta.x;
-    k.setCamPos(k.clamp(next, k.width() / 2, WORLD_W - k.width() / 2), k.getCamPos().y);
+    // Screen pixels shrink by ZOOM in world terms — divide, or the meadow
+    // slides faster than the hand dragging it.
+    const next = k.getCamPos().x - delta.x / ZOOM;
+    k.setCamPos(k.clamp(next, halfView(), WORLD_W - halfView()), k.getCamPos().y);
   });
   window.addEventListener('mouseup', stopPanning);
   window.addEventListener('pointercancel', stopPanning);
   window.addEventListener('blur', stopPanning);
 
+  k.setCamScale(ZOOM);
   k.setCamPos(
-    k.clamp((COMMONS.lo + COMMONS.hi) / 2, k.width() / 2, WORLD_W - k.width() / 2),
+    k.clamp((COMMONS.lo + COMMONS.hi) / 2, halfView(), WORLD_W - halfView()),
     GROUND_Y - 130,
   );
 
@@ -573,14 +610,14 @@ export async function startSpectatorVillage(options: SpectatorVillageOptions): P
   let lookAt: number | null = null;
   let cursorY: number | null = null;
   k.onMouseMove((pos) => {
-    lookAt = pos.x + k.getCamPos().x - k.width() / 2;
-    cursorY = pos.y + k.getCamPos().y - k.height() / 2;
+    lookAt = k.getCamPos().x + (pos.x - k.width() / 2) / ZOOM;
+    cursorY = k.getCamPos().y + (pos.y - k.height() / 2) / ZOOM;
   });
 
   // Residents (commons + the rare, if one is configured and its appearance
   // is known) share one bookkeeping set, exactly as scene/village.ts does —
   // the rare is just a resident whose spot is the pedestal instead of a
-  // placeInRange seat.
+  // placeTableau seat.
   const actors = new Map<string, CreatureActor>();
   const generations = new Map<string, number>();
   let known = new Map<string, ResidentView>();
@@ -680,7 +717,9 @@ export async function startSpectatorVillage(options: SpectatorVillageOptions): P
     const commons = view.residents.filter((r) => !view.rare || r.slug !== view.rare.slug);
     const toRender = rareResident ? [...commons, rareResident] : commons;
 
-    const spots = new Map<string, Spot>(placeInRange(commons.map((r) => r.id), COMMONS.lo, COMMONS.hi));
+    const spots = new Map<string, Spot>(
+      placeTableau(commons.map((r) => r.id), { lo: COMMONS.lo, hi: COMMONS.hi, props: COMMONS_PROPS }),
+    );
     // wander 0: the rare resident stands its pedestal — Spot carries a wander
     // leash for the main village's amblers, which the showroom doesn't use.
     if (rareResident) spots.set(rareResident.id, { x: PEDESTAL_X, y: pedestalTopY, wander: 0 });

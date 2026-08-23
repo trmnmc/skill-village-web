@@ -127,7 +127,7 @@ export interface KeepOut {
   right: number;
 }
 
-interface Prop {
+export interface Prop {
   /** Visual x-footprint in world pixels — a house's includes the roof eaves. */
   left: number;
   right: number;
@@ -137,13 +137,25 @@ interface Prop {
   air: number;
 }
 
+/**
+ * A house's footprint from the point it is drawn at: an 86px wall from `x`
+ * on baseline `baseY`, eaves overhanging 8px each side and rising 102px.
+ * Both villages draw houses this way and both derive their keep-out bands
+ * from here, so a roof that grows in the draw code can never leave a stale
+ * hand-typed band behind.
+ */
+export function houseProp(x: number, baseY: number): Prop {
+  return { left: x - 8, right: x + 94, top: baseY - 102, base: baseY, air: PROP_AIR };
+}
+
+/** A tree's footprint: a 40px canopy from `x`, reaching 110px above `baseY`. */
+export function treeProp(x: number, baseY: number): Prop {
+  return { left: x, right: x + 40, top: baseY - 110, base: baseY, air: PROP_AIR };
+}
+
 const DECOR: readonly Prop[] = [
-  ...HOMES_HOUSE_XS.map((x) => ({
-    left: x - 8, right: x + 94, top: HOUSE_BASE_Y - 102, base: HOUSE_BASE_Y, air: PROP_AIR,
-  })),
-  ...HOMES_TREE_XS.map((x) => ({
-    left: x, right: x + 40, top: TREE_BASE_Y - 110, base: TREE_BASE_Y, air: PROP_AIR,
-  })),
+  ...HOMES_HOUSE_XS.map((x) => houseProp(x, HOUSE_BASE_Y)),
+  ...HOMES_TREE_XS.map((x) => treeProp(x, TREE_BASE_Y)),
 ];
 
 /** The Homes sign's board — the 30px strip that carries the zone label. */
@@ -167,26 +179,40 @@ function mergeBands(bands: readonly KeepOut[]): readonly KeepOut[] {
 }
 
 /**
- * Where a villager standing at `feetY` may not put its centre. Exclusion
- * follows what a body would actually cover, so the emptiness around a prop
- * is never wider than the prop's own shadow on that row — a hard ring around
- * everything read as a force field, the void as conspicuous as a queue:
+ * Where a villager standing at `feetY` may not put its centre, given a set
+ * of props. Exclusion follows what a body would actually cover, so the
+ * emptiness around a prop is never wider than the prop's own shadow on that
+ * row — a hard ring around everything read as a force field, the void as
+ * conspicuous as a queue.
  *
- * - Decor (houses, trees): blocked only for rows whose feet land among the
- *   prop's pixels, or perch just above its top edge. Rows in front stroll
- *   past — partial occlusion of decor is how a crowd blends in.
- * - The sign board is information and is never covered from any distance:
- *   blocked for every row whose body span crosses the board. The back rows
- *   pass behind it (their bodies never reach down to the board) and the
- *   front-most row passes in front below it, so the sign keeps neighbours.
+ * A prop blocks only the rows whose feet land among its pixels, or perch
+ * just above its top edge. Rows in front stroll past — partial occlusion of
+ * decor is how a crowd blends in — and rows far enough behind clear its
+ * roofline entirely.
+ *
+ * Both villages seat against this: Homes through `homesKeepOutAt`, the
+ * showroom meadow through `placeTableau`. Neither hand-maintains a band.
+ */
+export function keepOutAt(props: readonly Prop[], feetY: number): readonly KeepOut[] {
+  return mergeBands(
+    props
+      .filter((p) => feetY >= p.top - PERCH && feetY <= p.base)
+      .map((p) => ({
+        left: p.left - WIDEST_BODY / 2 - p.air,
+        right: p.right + WIDEST_BODY / 2 + p.air,
+      })),
+  );
+}
+
+/**
+ * Homes' own keep-outs: its decor, plus the one prop that is information
+ * rather than scenery. The sign board is never covered from any distance —
+ * blocked for every row whose body span crosses the board. The back rows
+ * pass behind it (their bodies never reach down to the board) and the
+ * front-most row passes in front below it, so the sign keeps neighbours.
  */
 export function homesKeepOutAt(feetY: number): readonly KeepOut[] {
-  const bands: KeepOut[] = DECOR.filter(
-    (p) => feetY >= p.top - PERCH && feetY <= p.base,
-  ).map((p) => ({
-    left: p.left - WIDEST_BODY / 2 - p.air,
-    right: p.right + WIDEST_BODY / 2 + p.air,
-  }));
+  const bands: KeepOut[] = [...keepOutAt(DECOR, feetY)];
 
   if (feetY >= SIGN_BOARD.top && feetY - BODY_REACH <= SIGN_BOARD.bottom) {
     bands.push({
@@ -226,19 +252,29 @@ interface RowGround {
   freeTotal: number;
 }
 
-const ROW_GROUND: readonly RowGround[] = Array.from({ length: ROWS }, (_, row) => {
-  const bands = homesKeepOutAt(rowY(row));
+/**
+ * A row's seatable ground: the bands that block it, and the stretches of
+ * [lo, hi] they leave clear. A row whose props swallowed it whole would keep
+ * the raw stretch — standing beside a prop beats going missing, the same
+ * call every other fallback here makes — though today's scenery never does.
+ */
+function freeGround(lo: number, hi: number, bands: readonly KeepOut[]): RowGround {
   const free: KeepOut[] = [];
-  let cursor = HOMES_LO;
+  let cursor = lo;
   for (const band of bands) {
-    if (band.right <= cursor || band.left >= HOMES_HI) continue;
+    if (band.right <= cursor || band.left >= hi) continue;
     if (band.left > cursor) free.push({ left: cursor, right: band.left });
     cursor = Math.max(cursor, band.right);
-    if (cursor >= HOMES_HI) break;
+    if (cursor >= hi) break;
   }
-  if (cursor < HOMES_HI) free.push({ left: cursor, right: HOMES_HI });
+  if (cursor < hi) free.push({ left: cursor, right: hi });
+  if (free.length === 0) free.push({ left: lo, right: hi });
   return { bands, free, freeTotal: free.reduce((sum, seg) => sum + (seg.right - seg.left), 0) };
-});
+}
+
+const ROW_GROUND: readonly RowGround[] = Array.from({ length: ROWS }, (_, row) =>
+  freeGround(HOMES_LO, HOMES_HI, homesKeepOutAt(rowY(row))),
+);
 
 /** Map a hash draw in [0, 1) onto a row's free segments, as if laid end to end. */
 function groundAt(along: number, ground: RowGround): number {
@@ -533,6 +569,81 @@ export function placeInRange(ids: readonly string[], lo: number, hi: number): Ma
     occupied.set(row, taken);
 
     spots.set(id, { x, y: GROUND_Y - row * ROW_DEPTH, wander: 0 });
+  }
+
+  return spots;
+}
+
+/** Depth rows in the showroom meadow — its pens were framed for four. */
+const TABLEAU_ROWS = 4;
+
+/** A static arrangement: a stretch of ground, and the props standing on it. */
+export interface Tableau {
+  lo: number;
+  hi: number;
+  props: readonly Prop[];
+}
+
+/**
+ * Deterministic placement for a village that never moves — the showroom
+ * meadow, where each villager is a project on display rather than a
+ * neighbour going about its day.
+ *
+ * Two rules the strolling Homes crowd does not need. Separation holds
+ * across depth rows, not only within one: rows sit ROW_DEPTH apart while
+ * bodies reach BODY_REACH above their feet, so two villagers at the same x
+ * in neighbouring rows are one creature covering another — and a tableau
+ * never walks itself apart the way Homes does within seconds. And every
+ * seat clears its own row's props, so nothing is displayed from behind a
+ * house.
+ *
+ * Everything else is the Homes machinery, reused rather than restated:
+ * stratified wanted positions so the meadow fills evenly without drawing a
+ * grid, personalSpace radii so neighbours stand at uneven distances, and the
+ * same degradation ladder — personal margins, then the MIN_SEPARATION floor,
+ * then spacing-blind on clear ground once the meadow is genuinely over-full.
+ * Nobody ever goes missing and nobody ever stands on a prop.
+ */
+export function placeTableau(ids: readonly string[], field: Tableau): Map<string, Spot> {
+  const ground = Array.from({ length: TABLEAU_ROWS }, (_, row) =>
+    freeGround(field.lo, field.hi, keepOutAt(field.props, GROUND_Y - row * ROW_DEPTH)),
+  );
+
+  const members = [...ids]
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    .map((id) => {
+      const h = hash(id);
+      return {
+        id,
+        row: h % TABLEAU_ROWS,
+        along: ((h >>> 8) % 10000) / 10000,
+        jitter: ((h >>> 24) & 0xff) / 256,
+        r: personalSpace(id),
+        wanted: 0,
+      };
+    });
+
+  // Stratified across the whole meadow rather than per row: x is one shared
+  // axis here, so the ranks that spread the crowd have to be global too.
+  const ordered = [...members].sort(
+    (a, b) => a.along - b.along || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+  ordered.forEach((member, i) => {
+    member.wanted = groundAt((i + 0.15 + 0.7 * member.jitter) / ordered.length, ground[member.row]!);
+  });
+
+  // One shared occupancy list across every row — that is what makes the
+  // separation cross-row rather than per-row.
+  const taken: Occupant[] = [];
+  const spots = new Map<string, Spot>();
+  for (const member of ordered) {
+    const bands = ground[member.row]!.bands;
+    const x =
+      findNearest(member.wanted, taken, field.lo, field.hi, bands, (other) => other.r + member.r) ??
+      findNearest(member.wanted, taken, field.lo, field.hi, bands, () => MIN_SEPARATION) ??
+      nearestGround(member.wanted, field.lo, field.hi, bands);
+    taken.push({ x, r: member.r });
+    spots.set(member.id, { x, y: GROUND_Y - member.row * ROW_DEPTH, wander: 0 });
   }
 
   return spots;

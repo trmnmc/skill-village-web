@@ -12,6 +12,10 @@ import {
   HOMES_LO,
   HOMES_HI,
   homesKeepOutAt,
+  keepOutAt,
+  houseProp,
+  treeProp,
+  placeTableau,
   personalSpace,
   placeCreatures,
 } from './zones.js';
@@ -445,6 +449,135 @@ describe('placeCreatures', () => {
     for (const { x } of spots.values()) {
       expect(x).toBeGreaterThanOrEqual(homes.x);
       expect(x).toBeLessThanOrEqual(homes.x + homes.w);
+    }
+  });
+});
+
+describe('prop footprints', () => {
+  it('describes a house exactly as the scenes draw one', () => {
+    // village.ts and the spectator both draw a house as an 86px wall from x
+    // with 102px-wide eaves overhanging 8px to the left, rising 102px above
+    // the baseline. The keep-out has to follow those pixels, so the builder
+    // owns the geometry and both scenes derive from it — a roof that grows
+    // in the draw code can never leave a stale band behind.
+    const p = houseProp(900, 600);
+    expect(p.left).toBe(892);
+    expect(p.right).toBe(994);
+    expect(p.top).toBe(498);
+    expect(p.base).toBe(600);
+  });
+
+  it('describes a tree exactly as the scenes draw one', () => {
+    const p = treeProp(610, 610);
+    expect(p.left).toBe(610);
+    expect(p.right).toBe(650);
+    expect(p.top).toBe(500);
+    expect(p.base).toBe(610);
+  });
+});
+
+describe('keepOutAt', () => {
+  const props = [houseProp(900, 600), treeProp(610, 610)];
+
+  it('blocks a row whose feet land among the prop pixels', () => {
+    const bands = keepOutAt(props, 574);
+    expect(bands.some((b) => 900 > b.left && 900 < b.right)).toBe(true);
+  });
+
+  it('lets a row in front of the prop stroll past it', () => {
+    // Feet below the prop's base are nearer the viewer than it: the villager
+    // draws in front, which is a crowd blending in, not a bug. This is the
+    // rule placeCreatures already uses in Homes.
+    expect(keepOutAt(props, 700)).toEqual([]);
+  });
+
+  it('lets a row far behind the prop stand above its roofline', () => {
+    expect(keepOutAt(props, 400)).toEqual([]);
+  });
+
+  it('folds overlapping bands together', () => {
+    // Two props closer than a body width apart must not leave a sliver of
+    // "clear" ground between their bands that no body could ever fit in.
+    const bands = keepOutAt([houseProp(900, 600), houseProp(940, 600)], 574);
+    expect(bands).toHaveLength(1);
+  });
+});
+
+describe('placeTableau', () => {
+  // The showroom meadow is a static tableau: nobody ambles, so any overlap
+  // stands forever. Two constraints the strolling Homes crowd does not need:
+  // separation holds across depth rows (rows are 46px apart, bodies ~128px
+  // tall, so same-x-different-row is one creature covering another), and
+  // nobody stands behind a prop.
+  const field = {
+    lo: 640,
+    hi: 1560,
+    props: [houseProp(900, 596), houseProp(1420, 602), treeProp(610, 610), treeProp(1160, 610)],
+  };
+  const ids = Array.from({ length: 8 }, (_, i) => `swarm:t${i}`);
+
+  it('places everyone, inside the range', () => {
+    const spots = placeTableau(ids, field);
+    expect(spots.size).toBe(ids.length);
+    for (const { x } of spots.values()) {
+      expect(x).toBeGreaterThanOrEqual(field.lo);
+      expect(x).toBeLessThanOrEqual(field.hi);
+    }
+  });
+
+  it('keeps MIN_SEPARATION between every pair, whatever their depth rows', () => {
+    const xs = [...placeTableau(ids, field).values()].map((s) => s.x).sort((a, b) => a - b);
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(MIN_SEPARATION);
+    }
+  });
+
+  it('never stands anyone behind a prop', () => {
+    for (const { x, y } of placeTableau(ids, field).values()) {
+      for (const band of keepOutAt(field.props, y)) {
+        expect(x > band.left && x < band.right, `x=${x} y=${y} inside ${band.left}..${band.right}`).toBe(false);
+      }
+    }
+  });
+
+  it('is deterministic and depends on the set, not the order handed over', () => {
+    expect([...placeTableau(ids, field)]).toEqual([...placeTableau(ids, field)]);
+    expect([...placeTableau([...ids].reverse(), field)].sort()).toEqual(
+      [...placeTableau(ids, field)].sort(),
+    );
+  });
+
+  it('varies depth so the meadow reads as a field, not a line', () => {
+    const ys = new Set([...placeTableau(ids, field).values()].map((s) => s.y));
+    expect(ys.size).toBeGreaterThan(1);
+  });
+
+  it('gives nobody a wander leash — a tableau holds its pose', () => {
+    for (const spot of placeTableau(ids, field).values()) expect(spot.wander).toBe(0);
+  });
+
+  it('loses nobody when the meadow is over-full', () => {
+    const crowd = Array.from({ length: 90 }, (_, i) => `swarm:crowd${i}`);
+    const spots = placeTableau(crowd, field);
+    expect(spots.size).toBe(crowd.length);
+    for (const { x } of spots.values()) {
+      expect(x).toBeGreaterThanOrEqual(field.lo);
+      expect(x).toBeLessThanOrEqual(field.hi);
+    }
+  });
+
+  it('never stacks the live six-project roster (playtest regression, 2026-08-23)', () => {
+    // The finding this seating exists for: Moon at x=1256 and Homeforge at
+    // x=1263 in neighbouring rows, one creature entirely behind the other.
+    const roster = [
+      'swarm:aphorism-cli', 'swarm:homeforge', 'swarm:moon',
+      'swarm:prompt-spark', 'swarm:prompt-spark-northstar', 'swarm:repo-atlas',
+    ];
+    const spots = placeTableau(roster, field);
+    expect(spots.size).toBe(roster.length);
+    const xs = [...spots.values()].map((s) => s.x).sort((a, b) => a - b);
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(MIN_SEPARATION);
     }
   });
 });
