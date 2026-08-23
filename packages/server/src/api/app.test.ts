@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { makeSandbox, skillFixture, type Sandbox } from '../testing/sandbox.js';
 import { createVillage, type Village } from '../village.js';
@@ -265,5 +267,76 @@ describe('POST /api/creatures/:id/persona', () => {
     const app = await boot([]);
     const res = await app.inject({ method: 'POST', url: '/api/creatures/skill:ghost/persona' });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('the robot shim', () => {
+  it('answers as the resident when one is set', async () => {
+    const app = await bootWithLlm(['code-review'], 'ok');
+    await village!.setRobotResident('skill:code-review');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: { model: 'anything', messages: [{ role: 'user', content: 'who are you?' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.object).toBe('chat.completion');
+    expect(body.choices[0].message.content).toContain('echo:');
+  });
+
+  it('an empty house still speaks', async () => {
+    const app = await boot();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: { messages: [{ role: 'user', content: 'hello?' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().choices[0].message.content).toContain('Nobody lives in me yet');
+  });
+
+  it('a resident whose creature has left the village gets the moved-away line', async () => {
+    const app = await bootWithLlm(['code-review'], 'ok');
+    await village!.setRobotResident('skill:code-review');
+    // remove the skill file and refresh, the way the file's release tests do
+    const file = join(sandbox!.paths.userSkillsDir, 'code-review', 'SKILL.md');
+    await rm(file, { recursive: true });
+    await village!.refresh();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: { messages: [{ role: 'user', content: 'hello?' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().choices[0].message.content).toContain('moved away');
+  });
+
+  it('stream: true returns SSE frames ending in [DONE]', async () => {
+    const app = await bootWithLlm(['code-review'], 'ok');
+    await village!.setRobotResident('skill:code-review');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: { stream: true, messages: [{ role: 'user', content: 'hi' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    expect(res.body).toContain('chat.completion.chunk');
+    expect(res.body.trimEnd().endsWith('data: [DONE]')).toBe(true);
+  });
+
+  it('malformed requests get an OpenAI-style 400', async () => {
+    const app = await boot();
+    const res = await app.inject({ method: 'POST', url: '/v1/chat/completions', payload: { nope: true } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.type).toBe('invalid_request_error');
+  });
+
+  it('/v1/models lists the one model the gateway can pick', async () => {
+    const app = await boot();
+    const res = await app.inject({ method: 'GET', url: '/v1/models' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data[0].id).toBe('skill-village-resident');
   });
 });

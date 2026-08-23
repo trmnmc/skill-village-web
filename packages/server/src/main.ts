@@ -48,7 +48,11 @@ async function main(): Promise<void> {
   if (village.startupNote) console.log(village.startupNote);
 
   const app = await createApp(village);
-  await app.listen({ port, host: '127.0.0.1' });
+  // 127.0.0.1 unless the player opts the server onto the LAN. The Docker-run
+  // voice gateway reaches the host via host.docker.internal, which needs a
+  // non-loopback bind on some setups; docs/robot/SETUP.md says when to set it.
+  const host = process.env.VILLAGE_HOST ?? '127.0.0.1';
+  await app.listen({ port, host });
   await writeInstance(paths, { pid: process.pid, port });
 
   void village.probeLlm().then((mode) => {
