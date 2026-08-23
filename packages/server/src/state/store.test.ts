@@ -205,6 +205,26 @@ describe('robot block (v4)', () => {
     expect(recovered).toBe(true);
     expect(state.robot).toEqual({ residentId: null });
   });
+
+  it('a v2 file missing the llm block is invalid, and a fresh village is started without throwing', async () => {
+    sandbox = await makeSandbox();
+    const v2WithoutLlm = {
+      version: 2,
+      createdAt: 5,
+      updatedAt: 9,
+      creatures: {},
+      problems: [],
+    };
+    await writeFile(sandbox.paths.statePath, JSON.stringify(v2WithoutLlm), 'utf8');
+    // No backup present: main is invalid, backup is missing too -> fresh village.
+
+    const { state, recovered, note } = await loadState(sandbox.paths, 1_000);
+    expect(recovered).toBe(true);
+    expect(note).toMatch(/backup|fresh|new/i);
+    expect(state.version).toBe(3);
+    expect(state.llm).toBeDefined();
+    expect(state.robot).toEqual({ residentId: null });
+  });
 });
 
 describe('saveState', () => {

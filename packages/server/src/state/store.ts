@@ -55,16 +55,14 @@ async function readStateFile(path: string): Promise<ReadStateResult> {
       return { ok: false, reason: 'invalid' };
     }
 
-    // A file already at the current version must carry its llm and robot
-    // blocks; older versions are missing them by definition and pick up
-    // defaults on migration.
-    if (parsed.version === STATE_VERSION) {
-      if (typeof parsed.llm !== 'object' || parsed.llm === null) {
-        return { ok: false, reason: 'invalid' };
-      }
-      if (typeof parsed.robot !== 'object' || parsed.robot === null) {
-        return { ok: false, reason: 'invalid' };
-      }
+    // A version's defining blocks must be present for the file to be valid at
+    // that version: llm arrived in v2, robot in v3. Older versions are missing
+    // them by definition and pick up defaults on migration.
+    if (parsed.version >= 2 && (typeof parsed.llm !== 'object' || parsed.llm === null)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    if (parsed.version >= 3 && (typeof parsed.robot !== 'object' || parsed.robot === null)) {
+      return { ok: false, reason: 'invalid' };
     }
 
     return { ok: true, state: parsed };
