@@ -1,6 +1,7 @@
 .superpowers/
 node_modules/
 dist/
+dist-spectator/
 *.log
 *.tsbuildinfo
 contact-sheet.html

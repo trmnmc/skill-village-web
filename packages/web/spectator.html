@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Swarm Village</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      html, body { margin: 0; height: 100%; background: #171310; overflow: hidden; }
+      canvas { display: block; image-rendering: pixelated; }
+      #side-panel {
+        position: fixed; top: 0; right: 0; bottom: 0; width: 320px; z-index: 11;
+        background: #FFFDF4; border-left: 3px solid #3A2E22;
+        display: flex; flex-direction: column;
+        font: 13px/1.55 'IBM Plex Mono', monospace; color: #3A2E22;
+      }
+      #side-panel[hidden] { display: none; }
+      #side-panel header {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 10px 14px; border-bottom: 2px solid #3A2E22;
+        font-family: 'Pixelify Sans', sans-serif; font-size: 18px;
+      }
+      #side-panel a { color: #B4552F; }
+      #side-panel a:hover { color: #8F3E20; }
+      @media (max-width: 700px) { #side-panel { width: 100%; } }
+      .hud { position: fixed; z-index: 10; color: #3A2E22;
+        font: 12px/1.5 'IBM Plex Mono', monospace; }
+      .hud .board { display: inline-block; background: #F2E5C4; border: 3px solid #3A2E22; padding: 8px 16px; }
+      .hud .chip { display: inline-block; background: #FFFDF4; border: 2px solid #3A2E22; padding: 3px 10px; }
+      #hud-sign { left: 24px; top: 20px; }
+      #hud-notice { left: 24px; bottom: 24px; }
+      #hud-hint { right: 24px; bottom: 24px; }
+    </style>
+  </head>
+  <body>
+    <div id="hud-sign" class="hud"></div>
+    <div id="hud-notice" class="hud"></div>
+    <div id="hud-hint" class="hud"></div>
+    <div id="side-panel" hidden></div>
+    <script type="module" src="/src/spectator/main.ts"></script>
+  </body>
+</html>

@@ -16,3 +16,5 @@ export * from './sim/stats.js';
 export * from './sim/friendship.js';
 
 export * from './personality/prompt.js';
+
+export * from './swarm.js';
