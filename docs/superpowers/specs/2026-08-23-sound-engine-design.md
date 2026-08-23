@@ -234,7 +234,18 @@ approved by ear:
   apart. Vinyl crackle: noise ticks through highpass 2.5kHz, 15ms decay,
   gain 0.012, every 60–380ms.
 - **Music-box note (crossover):** sine at f plus sine at 4f (12% gain),
-  sharp attack, exponential decay over 1.4s, gain 0.055.
+  sharp attack, exponential decay over 1.4s, gain 0.055; drops 4–9s apart
+  while music plays.
+- **Thinking blip:** two syllables of the creature's own voice at
+  `basePitch × 0.5`, 70ms apart, gain 0.06.
+- **Bubble pop:** sine 520→880 Hz over 50ms, gain 0.05, dead by 70ms.
+- **Chat open:** the thump patch at 320→180 Hz, 60ms, gain 0.1 (woody tap).
+- **Send tick:** noise through highpass 1.8kHz, 30ms decay, gain 0.05.
+- **Arrival chime:** music-box E5 then B5 120ms apart, then the newcomer's
+  greeting chirp ~450ms later.
+- **Stage-up:** music-box C5–E5–G5, 140ms apart.
+- **Offline:** sine 160 Hz, 150ms rise to 0.07, 900ms exponential fall.
+- **Reconnect:** sine G4 then D5, 110ms apart, soft 300ms tails.
 
 All gains are pre-master (master default 0.7) and are starting values, not
 contracts — the `?soundcheck` harness exists to retune them in place.
