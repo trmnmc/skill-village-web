@@ -8,6 +8,7 @@ import { tokenTag, sceneryColor, creatureTintColor } from './retint.js';
 import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, placeCreatures, type Spot } from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
+import { mountSky } from './sky.js';
 
 export interface VillageScene {
   k: KAPLAYCtx;
@@ -59,7 +60,7 @@ const bar = (remainingTok: number, cap: number) => {
  * retint walker find and recolour every one of these on a later theme
  * change without this function knowing anything about that walker.
  */
-function block(k: KAPLAYCtx, x: number, y: number, w: number, h: number, token: keyof Tokens, z = 0) {
+function block(k: KAPLAYCtx, x: number, y: number, w: number, h: number, token: keyof Tokens, z = 0, extraTags: string[] = []) {
   const { tokens, tint } = themeStore.current();
   return k.add([
     k.rect(w, h),
@@ -67,13 +68,18 @@ function block(k: KAPLAYCtx, x: number, y: number, w: number, h: number, token: 
     k.color(hex(k, sceneryColor(tokens, tint, token))),
     k.z(z),
     tokenTag(token),
+    ...extraTags,
   ]);
 }
 
 function house(k: KAPLAYCtx, x: number, y: number, wall: keyof Tokens, roof: keyof Tokens) {
   block(k, x, y - 66, 86, 66, wall, 1);
   block(k, x + 30, y - 34, 22, 34, 'wood', 2);
-  block(k, x + 10, y - 56, 16, 14, 'sky1', 2);
+  // Also tagged 'themed:window' — sky.ts's night-ambience layer swaps this
+  // block's fill to the lamp-glow colour when `windowsGlow` is on, on top of
+  // (or instead of, depending on update order) the ordinary sky1 retint
+  // every other 'themed:sky1' object gets from the walker below.
+  block(k, x + 10, y - 56, 16, 14, 'sky1', 2, ['themed:window']);
   // Roof: three stacked bars, widest at the eaves — a pixel gable.
   block(k, x - 8, y - 80, 102, 14, roof, 2);
   block(k, x + 6, y - 92, 74, 12, roof, 2);
@@ -168,6 +174,12 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   house(k, homes.x + 900, GROUND_Y - 30, 'houseBWall', 'houseBRoof');
   house(k, homes.x + 1700, GROUND_Y - 30, 'houseAWall', 'houseBRoof');
   for (const dx of [60, 620, 1240, 2050, 2420]) tree(k, homes.x + dx, GROUND_Y - 20);
+
+  // Sun/moon/stars/fireflies/lantern glow — mounted after the static
+  // scenery it sits in front of (or, for the sky, behind) and before any
+  // creature spawns, so a villager arriving mid-session never lands above
+  // an object this layer hasn't created yet.
+  const sky = mountSky(k);
 
   // Drag to pan along the strip. KAPLAY binds mousedown/mousemove/mouseup
   // on the canvas element itself (e.canvas.addEventListener, see
@@ -384,6 +396,11 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     for (const obj of k.get('themed:creature', { recursive: true })) {
       (obj as unknown as { color: unknown }).color = cTint;
     }
+    // Last, so its explicit window-glow colour (and everything else it
+    // positions/toggles from `t`) is the one that sticks rather than the
+    // plain sky1 retint the loop above just gave every 'themed:sky1' object,
+    // windows included.
+    sky.update(t);
   };
   applyTheme(themeStore.current());
   // No teardown path exists for this scene yet — same as the window-level
