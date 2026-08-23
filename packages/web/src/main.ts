@@ -1,5 +1,5 @@
 import { startVillage } from './scene/village.js';
-import { connect } from './net/client.js';
+import { connect, setRobotResident } from './net/client.js';
 import { createChatPanel } from './chat/panel.js';
 import { displayName } from './render/label.js';
 
@@ -15,6 +15,10 @@ const panel = createChatPanel({
 
 const scene = await startVillage({
   onCreatureClick: (creature) => panel.open({ id: creature.id, label: displayName(creature) }),
+  // Fire-and-forget: the next state frame moves the creature to the porch,
+  // which is the only confirmation that means anything.
+  onRobotDrop: (creatureId) => void setRobotResident(creatureId),
+  onRobotEvict: () => void setRobotResident(null),
 });
 
 connect({
