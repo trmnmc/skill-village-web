@@ -5,6 +5,13 @@ import { displayName } from './render/label.js';
 import { sound } from './sound/player.js';
 import { mountSoundHud } from './sound/hud.js';
 import { mountSoundcheck } from './sound/soundcheck.js';
+import { initTheme } from './theme/index.js';
+import { mountWeatherMenu } from './ui/weather-menu.js';
+
+// Boot the theme store first: it applies --sv-* CSS vars to the document root,
+// and everything painted after this (chat panel, scene chrome) should see them.
+const themeStore = initTheme();
+mountWeatherMenu(themeStore, document.body);
 
 // The panel is built before the scene and the scene is told about the panel:
 // each one's reference to the other lives inside an arrow function, which only

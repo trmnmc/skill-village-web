@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { THEME } from '../theme.js';
+import { THEME } from './theme.js';
 import { hexToRgb } from '../render/bake.js';
 import { bakeEgg, EGG_ROWS } from './egg.js';
 

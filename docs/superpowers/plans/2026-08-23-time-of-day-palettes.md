@@ -530,7 +530,7 @@ describe('WAYPOINTS', () => {
     expect(WAYPOINTS).toHaveLength(15);
     expect(WAYPOINTS[0]).toMatchObject({ palette: '1a', frame: 'day', weather: 'clear' });
     expect(WAYPOINTS[13]).toMatchObject({ palette: '1a', frame: 'night', weather: 'storm' });
-    expect(WAYPOINTS[14]).toMatchObject({ palette: '1b', frame: 'dawn', weather: 'clear' });
+    expect(WAYPOINTS[14]).toMatchObject({ palette: '1a', frame: 'dawn', weather: 'clear' });
   });
 
   it('cohesion invariant: adjacent stops (loop-closed) change at most two of the three axes', () => {
@@ -573,18 +573,18 @@ export const WAYPOINTS: Waypoint[] = [
   { palette: '1a', frame: 'day', weather: 'clear', label: 'summer blue' },
   { palette: '1a', frame: 'day', weather: 'wind', label: 'a breeze picks up' },
   { palette: '1f', frame: 'day', weather: 'heat', label: 'high-summer shimmer' },
-  { palette: '1b', frame: 'dusk', weather: 'clear', label: 'golden evening' },
+  { palette: '1f', frame: 'dusk', weather: 'clear', label: 'golden evening' },
   { palette: '1e', frame: 'dusk', weather: 'leaves', label: 'autumn drifts in' },
   { palette: '1d', frame: 'day', weather: 'leaves', label: 'amber afternoon' },
   { palette: '1d', frame: 'dusk', weather: 'fog', label: 'misty evening' },
   { palette: '1c', frame: 'dawn', weather: 'fog', label: 'cool morning mist' },
   { palette: '1c', frame: 'day', weather: 'rain', label: 'spring rain' },
-  { palette: '1a', frame: 'day', weather: 'rainbow', label: 'after the rain' },
+  { palette: '1e', frame: 'day', weather: 'rainbow', label: 'after the rain' },
   { palette: '1e', frame: 'night', weather: 'clear', label: 'starry night' },
   { palette: '1a', frame: 'night', weather: 'snow', label: 'quiet winter night' },
   { palette: '1b', frame: 'night', weather: 'rain', label: 'warm rainy night' },
   { palette: '1a', frame: 'night', weather: 'storm', label: 'the finale' },
-  { palette: '1b', frame: 'dawn', weather: 'clear', label: 'the storm breaks' },
+  { palette: '1a', frame: 'dawn', weather: 'clear', label: 'the storm breaks' },
 ];
 
 /** Loop position from the wall clock: stateless, reload-stable, shared by every tab. */

@@ -1,6 +1,7 @@
 import kaplay, { type KAPLAYCtx } from 'kaplay';
 import type { CreatureAppearance } from '@village/core/visual';
-import { TEXT_SS, THEME, U } from '../theme.js';
+import { TEXT_SS, U } from '../theme.js';
+import { THEME } from './theme.js';
 import { GROUND_TOP, GROUND_Y, placeInRange, type Spot } from '../layout/zones.js';
 import { spawnCreature, type CreatureActor } from '../scene/creature.js';
 import { composeGrid, type EyeAnchor } from '../render/compose.js';

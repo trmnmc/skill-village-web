@@ -1,11 +1,14 @@
 import type { KAPLAYCtx } from 'kaplay';
 import { WING, type Creature } from '@village/core/visual';
-import { TEXT_SS, THEME, U } from '../theme.js';
+import { TEXT_SS, U } from '../theme.js';
+import { themeStore } from '../theme/index.js';
+import type { Tokens } from '../theme/store.js';
+import { tokenTag, sceneryColor, creatureTintColor } from './retint.js';
 import { composeGrid } from '../render/compose.js';
 import { bakePixels } from '../render/bake.js';
 import { roleMap } from '../render/roles.js';
 import { displayName, fileLabel } from '../render/label.js';
-import { behaviourFor } from '../motion/behaviour.js';
+import { behaviourFor, type Behaviour } from '../motion/behaviour.js';
 import { sound } from '../sound/player.js';
 import { voiceParamsFor } from '../sound/voice.js';
 import {
@@ -31,6 +34,39 @@ const BUBBLE_LEADING = 4;
 const BUBBLE_MAX_W = 180;
 /** How far above the feet the bubble's tail sits — clear of the hover sign. */
 const BUBBLE_LIFT = 50;
+
+/**
+ * The creature's contact shadow. Fixed regardless of theme, unlike every
+ * other colour below — shadows already draw at a constant low alpha, and the
+ * scene's ambient tint (the `themed:creature` multiply on the sprite above
+ * it) is what carries the day/night mood, not the shadow itself.
+ */
+const SHADOW = '#5A4628';
+
+/**
+ * A token colour struck from the *current* resolved theme, for chrome that
+ * (like village.ts's `block()`) needs both an initial colour and the tag
+ * that lets `startVillage`'s retint walker find and recolour it later.
+ */
+function themedColor(k: KAPLAYCtx, token: keyof Tokens) {
+  const { tokens, tint } = themeStore.current();
+  return k.Color.fromHex(sceneryColor(tokens, tint, token));
+}
+
+/**
+ * Umbrella ownership, seeded per creature id — the reference's own trick
+ * (a plain charCode sum, not zones.ts's FNV hash used for layout) so the
+ * result is stable across respawns without depending on that other hash's
+ * exact algorithm. Roughly one creature in three owns one.
+ */
+function simpleHash(id: string): number {
+  let sum = 0;
+  for (let i = 0; i < id.length; i++) sum += id.charCodeAt(i);
+  return sum;
+}
+
+/** The reference umbrella (drawUmbrella) was authored at U=4; the game draws at U=6. */
+const UMBRELLA_SCALE = U / 4;
 
 export interface CreatureActor {
   update(t: number, lookAt: number | null, hovered?: boolean): void;
@@ -167,11 +203,12 @@ function puff(k: KAPLAYCtx, x: number, y: number): void {
       k.rect(5, 5),
       k.pos(x, y),
       k.anchor('center'),
-      k.color(k.Color.fromHex(THEME.bubbleWhite)),
+      k.color(themedColor(k, 'bubble')),
       k.opacity(0.9),
       k.z(4),
       k.lifespan(0.45, { fade: 0.25 }),
       k.move(k.vec2(Math.cos(angle), Math.sin(angle) * 0.5), 120),
+      tokenTag('bubble'),
     ]);
   }
 }
@@ -203,6 +240,11 @@ export async function spawnCreature(
   const phi = phaseFor(creature.id);
   // The audio half of identity, derived once like the phase offset.
   const voice = voiceParamsFor(creature);
+  // Appearance (and so `winged`) never changes without a respawn — village.ts
+  // only calls spawnCreature again when the look itself changed — so this is
+  // safe to capture once rather than re-reading `creature.appearance` per frame.
+  const winged = creature.appearance.winged;
+  const hasUmbrella = simpleHash(creature.id) % 3 === 0;
 
   // Bake the resting body once. A roaming lanky agent gets a second bake with
   // trailing legs; everyone else needs only the one.
@@ -237,8 +279,11 @@ export async function spawnCreature(
   /**
    * The grid actually on screen this frame. Same body and the same eye
    * anchors, but not the same height, which is the only reason this exists.
+   * Takes the frame's already-weather-gated `fly` rather than reading
+   * `behaviour.fly` itself, so a flyer grounded by rain drops the taller roam
+   * texture immediately rather than waiting for `behaviour` to catch up.
    */
-  const shown = () => (roamGrid && behaviour.fly === 'roam' ? roamGrid : restGrid);
+  const shown = (fly: Behaviour['fly']) => (roamGrid && fly === 'roam' ? roamGrid : restGrid);
 
   // Where this creature is standing right now. Not the `spot` parameter for
   // the life of the actor: the layout can move a villager along its row when a
@@ -252,16 +297,26 @@ export async function spawnCreature(
     k.rect(bw * 0.78, 10, { radius: 5 }),
     k.pos(0, 0),
     k.anchor('center'),
-    k.color(k.Color.fromHex(THEME.shadow)),
+    k.color(k.Color.fromHex(SHADOW)),
     k.opacity(creature.appearance.winged ? 0.1 : 0.18),
     k.z(-1),
   ]);
+
+  // A creature spawned after a theme change (e.g. the clock crosses into
+  // night while the page is open, and the server then sends a fresh look for
+  // this id) has to wear the *current* tint from its very first frame — it
+  // gets no help from the walker's own pass, which already ran before this
+  // sprite existed. Struck once here, not re-read per frame: `applyTheme`'s
+  // own pass is what keeps it current after that.
+  const creatureTint = k.Color.fromHex(creatureTintColor(themeStore.current().tint));
 
   const body = root.add([
     k.sprite(restKey),
     k.pos(0, 0),
     k.anchor('bot'),
     k.scale(U),
+    k.color(creatureTint),
+    'themed:creature',
   ]);
 
   const wings = creature.appearance.winged
@@ -284,6 +339,8 @@ export async function spawnCreature(
           k.scale(U * side, U),
           k.rotate(0),
           k.z(-2),
+          k.color(creatureTint),
+          'themed:creature',
         ]),
       )
     : [];
@@ -353,10 +410,11 @@ export async function spawnCreature(
     k.rect(10, hasNickname ? 36 : 24, { radius: 4 }),
     k.pos(0, -restH - (hasNickname ? 25 : 20)),
     k.anchor('center'),
-    k.color(k.Color.fromHex(THEME.signCream)),
-    k.outline(2, k.Color.fromHex(THEME.ink)),
+    k.color(themedColor(k, 'cream')),
+    k.outline(2, themedColor(k, 'ink')),
     k.opacity(0),
     k.z(4.6),
+    tokenTag('cream'),
   ]);
 
   // Text renders at TEXT_SS times its intended size and is scaled back down,
@@ -372,9 +430,10 @@ export async function spawnCreature(
     k.pos(0, -restH - (hasNickname ? 32 : 20)),
     k.anchor('center'),
     k.scale(1 / TEXT_SS),
-    k.color(k.Color.fromHex(THEME.ink)),
+    k.color(themedColor(k, 'ink')),
     k.opacity(0),
     k.z(5),
+    tokenTag('ink'),
   ]);
 
   const fileTag = hasNickname
@@ -383,9 +442,10 @@ export async function spawnCreature(
         k.pos(0, -restH - 15),
         k.anchor('center'),
         k.scale(1 / TEXT_SS),
-        k.color(k.Color.fromHex(THEME.ink)),
+        k.color(themedColor(k, 'ink')),
         k.opacity(0),
         k.z(5),
+        tokenTag('ink'),
       ])
     : null;
 
@@ -413,8 +473,9 @@ export async function spawnCreature(
     k.pos(0, 0),
     k.anchor('bot'),
     k.scale(1 / TEXT_SS),
-    k.color(k.Color.fromHex(THEME.ink)),
+    k.color(themedColor(k, 'ink')),
     k.z(7),
+    tokenTag('ink'),
   ]);
   const bubbleBg = root.add([
     // Sized from the rendered text on every `say`; these are placeholders.
@@ -422,10 +483,11 @@ export async function spawnCreature(
     k.pos(0, 0),
     k.anchor('bot'),
     k.scale(1),
-    k.color(k.Color.fromHex(THEME.bubbleWhite)),
-    k.outline(2, k.Color.fromHex(THEME.ink)),
+    k.color(themedColor(k, 'bubble')),
+    k.outline(2, themedColor(k, 'ink')),
     k.opacity(0.97),
     k.z(6.5),
+    tokenTag('bubble'),
   ]);
   bubbleText.hidden = true;
   bubbleBg.hidden = true;
@@ -488,12 +550,76 @@ export async function spawnCreature(
       k.pos(bw * 0.4, -restH),
       k.anchor('center'),
       k.scale(1 / TEXT_SS),
-      k.color(k.Color.fromHex(THEME.ink)),
+      k.color(themedColor(k, 'ink')),
       k.opacity(0.7),
       k.z(5),
+      tokenTag('ink'),
       { drift: i * 0.34 },
     ]),
   );
+
+  // The umbrella: 1 stick + 4 canopy rects, reference's drawUmbrella
+  // geometry scaled from its U=4 authoring to this game's U=6. Built for
+  // every umbrella-owning creature regardless of whether it's raining right
+  // now — like the sleep glyphs above, a creature spawned in clear weather
+  // still needs one ready for the next storm, since nothing respawns an
+  // actor when the weather changes.
+  //
+  // Visibility for all 5 rects is owned by weather-layer.ts's `update()`
+  // (tag 'themed:umbrella', found via the recursive k.get() every
+  // village.ts applyTheme run). Colour is split the same way village.ts's
+  // house windows split lamp-glow from ordinary scenery tint: the stick is
+  // an ordinary wood-token prop (tokenTag('wood') keeps it in step with
+  // every other wood prop via the *generic* per-token walker), while the
+  // canopy's colour — the reference's `cc(d.accent)`, i.e. accent mixed at
+  // the *creature* tint strength rather than the scenery one, so it tracks
+  // the creature it shelters rather than the surrounding scenery — has no
+  // generic token tag and is instead the sole responsibility of
+  // weather-layer.ts's 'themed:umbrella:canopy' pass, to avoid the two
+  // walkers fighting over the same paint every publish.
+  if (hasUmbrella) {
+    const nowTheme = themeStore.current();
+    // Correct initial visibility struck from the *current* weather, not a
+    // blanket "hidden until the next applyTheme" — the same reasoning as
+    // `creatureTint` above: a creature spawned mid-storm (server data
+    // arrives after the scene's own initial weather.update() already ran)
+    // gets no help from a walker pass that ran before it existed, and
+    // weather.update() only republishes when the resolved theme actually
+    // changes, which an already-steady storm may not do again for a while.
+    const rainingNow =
+      (nowTheme.weather.kind === 'rain' || nowTheme.weather.kind === 'storm') && nowTheme.weather.ramp > 0.5;
+    const yB = -restH - 8 * UMBRELLA_SCALE;
+    const stick = root.add([
+      k.rect(4 * UMBRELLA_SCALE, 20 * UMBRELLA_SCALE),
+      k.pos(6 * UMBRELLA_SCALE, yB),
+      k.color(themedColor(k, 'wood')),
+      k.z(3),
+      k.opacity(1),
+      tokenTag('wood'),
+      'themed:umbrella',
+    ]);
+    stick.hidden = !rainingNow;
+    const canopyColour = k.Color.fromHex(
+      sceneryColor(nowTheme.tokens, { col: nowTheme.tint.col, sceneryK: nowTheme.tint.creatureK }, 'accent'),
+    );
+    const canopyRects: [number, number, number, number][] = [
+      [-10 * UMBRELLA_SCALE, yB - 4 * UMBRELLA_SCALE, 36 * UMBRELLA_SCALE, 5 * UMBRELLA_SCALE],
+      [-5 * UMBRELLA_SCALE, yB - 9 * UMBRELLA_SCALE, 26 * UMBRELLA_SCALE, 5 * UMBRELLA_SCALE],
+      [1 * UMBRELLA_SCALE, yB - 13 * UMBRELLA_SCALE, 14 * UMBRELLA_SCALE, 4 * UMBRELLA_SCALE],
+      [6 * UMBRELLA_SCALE, yB - 17 * UMBRELLA_SCALE, 4 * UMBRELLA_SCALE, 4 * UMBRELLA_SCALE],
+    ];
+    for (const [x, y, w, h] of canopyRects) {
+      const canopy = root.add([
+        k.rect(w, h),
+        k.pos(x, y),
+        k.color(canopyColour),
+        k.z(3.5),
+        'themed:umbrella',
+        'themed:umbrella:canopy',
+      ]);
+      canopy.hidden = !rainingNow;
+    }
+  }
 
   // Timestamp of the most recently *observed* landing, so a hopper's `update`
   // (called once per frame) fires a puff exactly once per landing rather than
@@ -511,6 +637,14 @@ export async function spawnCreature(
     update(t, lookAt, hovered = false) {
       const frameDt = lastT === null ? 0 : Math.min(t - lastT, 0.1);
       lastT = t;
+      // Weather grounding: re-checked every frame (not just on the next
+      // server tick's setCreature) so a flyer settles the instant rain or a
+      // storm ramps past half strength, and lifts off again the instant it
+      // clears — themeStore.current() is a cheap read, not a subscription.
+      const weatherNow = themeStore.current().weather;
+      const grounded =
+        winged && (weatherNow.kind === 'rain' || weatherNow.kind === 'storm') && weatherNow.ramp > 0.5;
+      const fly = grounded ? null : behaviour.fly;
       // t0 = -phi * 2.6 (the hop cycle length, private to motion.ts) shifts
       // each hopper's cycle start by its own phase, the same way breathe/
       // isBlinking/gaze/wingAngle/hover already do — without it every hopper
@@ -521,21 +655,21 @@ export async function spawnCreature(
         ? { sx: 1, sy: 1 }
         : hop
           ? { sx: 1 - (hop.sy - 1) * 0.7, sy: hop.sy }
-          : breathe(t, phi, Boolean(behaviour.fly));
+          : breathe(t, phi, Boolean(fly));
 
-      const hover = behaviour.fly ? Math.sin(t * 1.3 + phi * 4) * 10 : 0;
+      const hover = fly ? Math.sin(t * 1.3 + phi * 4) * 10 : 0;
       // Everything hung off the top of the body is measured from the grid
       // being drawn right now, not from the resting one. Freeze this at
       // restGrid and a roaming lanky agent's pupils, nameplate, file label and
       // wings all stay put while the taller roam texture lifts its head out
       // from under them.
-      const grid = shown();
+      const grid = shown(fly);
       const bh = grid.h * U;
       body.pos.y = dy + hover;
       body.scale = k.vec2(U * sx, U * sy);
 
       if (dangles) {
-        const wanted = behaviour.fly === 'roam' ? roamKey : restKey;
+        const wanted = fly === 'roam' ? roamKey : restKey;
         if (body.sprite !== wanted) body.use(k.sprite(wanted));
       }
 
@@ -544,8 +678,9 @@ export async function spawnCreature(
       shadow.pos.y = 0;
 
       // A sleeping agent folds its wings; only a flying one flaps. Decided per
-      // frame because `behaviour` can change without a respawn.
-      const flap = behaviour.fly ? wingAngle(t, phi) : 0;
+      // frame because `behaviour` can change without a respawn, and now also
+      // because weather can ground a flyer without one either.
+      const flap = fly ? wingAngle(t, phi) : 0;
       wings.forEach((wing, i) => {
         wing.angle = i === 0 ? -flap : flap;
         wing.pos.y = -bh * 0.55 + hover;

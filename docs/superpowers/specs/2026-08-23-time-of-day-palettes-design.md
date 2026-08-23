@@ -152,6 +152,18 @@ Ported from the exploration painter into the KAPLAY scene:
 - `prefers-reduced-motion`: twinkle, drift, flicker, and particles freeze to
   their static-frame variants (the engine's `staticFrame` flag); nothing
   disappears.
+- **Ambient volumetric-feel clouds** (design delta, approved 2026-08-23,
+  supersedes the reference's day-only static clouds): fair-weather clouds
+  are sky furniture at *every* phase — white by day, warm at dawn, ember at
+  dusk, moonlit slate at night — so the Off-mode sky is never a void. Three
+  upgrades carry the depth: (1) clusters live on three parallax layers
+  (far/mid/near) that track the camera's pan by rising fractions
+  (0.1/0.18/0.3) and drift at rising speeds, so panning reads the sky as
+  deep; (2) each cluster shades in three tones — lit cap, body, darker
+  belly — so blobs read as mass, not flat stamps; (3) rect sizes billow on
+  slow incommensurate sines (the village-wander trick), bounded to a breath
+  (±11%) so clusters breathe without morphing. The overcast blobs share all
+  three mechanisms; fair clouds still crossfade out under `overcastRamp`.
 
 ## 6. Weather modes
 
@@ -172,18 +184,18 @@ player opts into a mood):
   1. Meadow Blue · day · clear — the summer-blue start
   2. Meadow Blue · day · wind — a breeze picks up
   3. Marigold · day · heat — high-summer shimmer
-  4. Golden Hour · dusk · clear — golden evening
+  4. Marigold · dusk · clear — golden evening
   5. Berry Dusk · dusk · leaves — autumn drifts in
   6. Toasted Oat · day · leaves — amber afternoon
   7. Toasted Oat · dusk · fog — misty evening
   8. Spring Tonic · dawn · fog — cool morning mist
   9. Spring Tonic · day · rain — spring rain
-  10. Meadow Blue · day · rainbow — after the rain
+  10. Berry Dusk · day · rainbow — after the rain
   11. Berry Dusk · night · clear — starry night, fireflies
   12. Meadow Blue · night · snow — quiet winter night
   13. Golden Hour · night · rain — warm rainy night
   14. Meadow Blue · night · storm — the finale
-  15. Golden Hour · dawn · clear — the storm breaks at sunrise → loop
+  15. Meadow Blue · dawn · clear — the storm breaks at dawn → loop
 
   Waypoint position derives from wall-clock time (`(now / 3min) mod 15`), so
   the journey is stateless, reload-stable, and shared by every open tab.
