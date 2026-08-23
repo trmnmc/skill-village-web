@@ -53,6 +53,16 @@ main() {
   step "service user and directories"
   if id -u "$APP_USER" >/dev/null 2>&1; then
     say "user $APP_USER already exists"
+    # Everything downstream — the checkout, the unit's HOME, the skills the
+    # game reads — hangs off --home. An existing user pointing somewhere else
+    # still works, because the unit sets HOME explicitly, but it is nearly
+    # always a typo in --home, so say so rather than quietly serving from two
+    # different places.
+    local passwd_home; passwd_home="$(getent passwd "$APP_USER" | cut -d: -f6)"
+    if [ "$passwd_home" != "$APP_HOME" ]; then
+      say "note: $APP_USER's home is $passwd_home, but this deploy uses $APP_HOME"
+      say "      (pass --home $passwd_home to use the existing one)"
+    fi
   else
     useradd --system --user-group --home-dir "$APP_HOME" --create-home --shell /usr/sbin/nologin "$APP_USER"
     say "created system user $APP_USER"

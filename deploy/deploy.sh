@@ -36,7 +36,12 @@ main() {
   # Whoever owns the checkout is the service user: asking the filesystem beats
   # asking the operator to keep a flag in sync with bootstrap.sh.
   APP_USER="$(stat -c '%U' "$repo_dir")"
-  APP_HOME="$(getent passwd "$APP_USER" | cut -d: -f6)"
+  # The home the *service* runs with, which bootstrap.sh sets from --home and
+  # always checks out into as $HOME/app. Deliberately not `getent passwd`:
+  # bootstrap reuses an existing user without moving its home, so the passwd
+  # entry can point somewhere the deploy has nothing to do with, and npm would
+  # go looking for its cache there.
+  APP_HOME="$(dirname "$repo_dir")"
   NODE_DIR="$(dirname "$(command -v node)")"
   [ -n "$branch" ] || branch="$(as_app_user git -C "$repo_dir" rev-parse --abbrev-ref HEAD)"
 
