@@ -36,4 +36,20 @@ describe('planForDate', () => {
     expect(isoWeek(d('2026-01-01'))).toBe(1);
     expect(isoWeek(d('2026-08-22'))).toBe(34);
   });
+
+  it('no two consecutive Saturdays share a palette (year boundary regression)', () => {
+    const sat1 = planForDate(d('2026-12-26'));
+    const sat2 = planForDate(d('2027-01-02'));
+    const sat3 = planForDate(d('2027-01-09'));
+    if (sat1.kind === 'single' && sat2.kind === 'single') expect(sat1.palette).not.toBe(sat2.palette);
+    if (sat2.kind === 'single' && sat3.kind === 'single') expect(sat2.palette).not.toBe(sat3.palette);
+  });
+
+  it('no two consecutive Sundays share a palette (year boundary regression)', () => {
+    const sun1 = planForDate(d('2026-12-27'));
+    const sun2 = planForDate(d('2027-01-03'));
+    const sun3 = planForDate(d('2027-01-10'));
+    if (sun1.kind === 'single' && sun2.kind === 'single') expect(sun1.palette).not.toBe(sun2.palette);
+    if (sun2.kind === 'single' && sun3.kind === 'single') expect(sun2.palette).not.toBe(sun3.palette);
+  });
 });
