@@ -1,7 +1,20 @@
 import type { Frame, PaletteId } from './palettes.js';
 
 export type DayPlan = { kind: 'weave' } | { kind: 'single'; palette: PaletteId };
-export interface Keyframe { atMin: number; palette: PaletteId; frame: Frame }
+export interface Keyframe {
+  atMin: number;
+  palette: PaletteId;
+  frame: Frame;
+  /**
+   * Pull this keyframe's sky toward the Kelvin daylight reference. Set only on
+   * a single-palette day's `day` keyframes: those days would otherwise hold a
+   * special palette's own noon — Marigold's pale yellow, Berry Dusk's lilac —
+   * straight through the hours the spec reserves for the 5500–6500K daylight
+   * plateau. The weave's own `1b` day keyframe is deliberately NOT flagged: it
+   * is the spec's ~4300K warm-white morning, a Kelvin step in its own right.
+   */
+  daylight?: boolean;
+}
 export interface SolarAnchors { sunriseMin: number; sunsetMin: number }
 
 export const DEFAULT_ANCHORS: SolarAnchors = { sunriseMin: 405, sunsetMin: 1125 };
@@ -39,8 +52,8 @@ export function buildTimeline(plan: DayPlan, prevPlan: DayPlan, anchors: SolarAn
     { atMin: -180, ...prev },
     { atMin: r - 75, ...prev },
     { atMin: r, palette: p, frame: 'dawn' },
-    { atMin: r + 105, palette: p, frame: 'day' },
-    { atMin: s - 120, palette: p, frame: 'day' },
+    { atMin: r + 105, palette: p, frame: 'day', daylight: true },
+    { atMin: s - 120, palette: p, frame: 'day', daylight: true },
     { atMin: s, palette: p, frame: 'dusk' },
     { atMin: s + 135, palette: p, frame: 'night' },
   ];

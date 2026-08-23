@@ -249,7 +249,10 @@ describe('createThemeStore — palette pin', () => {
     const reloaded = createThemeStore({ now: at('2026-08-23T14:00:00'), storage });
     expect(reloaded.pinnedPalette()).toBe('1c');
     reloaded.tick();
-    expect(reloaded.current().tokens.sky1).toBe(PALETTES['1c'].skies.day[1]);
+    // Identity is checked on ground rather than sky: a special day's noon sky
+    // is daylight-corrected (see 'daylight-corrected special days' below), so
+    // the sky no longer equals the palette's authored day colour.
+    expect(reloaded.current().tokens.ground).toBe(PALETTES['1c'].ground);
   });
 
   it('clears back to the schedule when set to null', () => {
@@ -268,7 +271,8 @@ describe('createThemeStore — palette pin', () => {
     const s = createThemeStore({ now: at('2026-08-23T14:00:00'), storage: mem(), search: '?palette=1e' });
     s.setPinnedPalette('1a');
     s.tick();
-    expect(s.current().tokens.sky1).toBe(PALETTES['1e'].skies.day[1]);
+    expect(s.current().tokens.ground).toBe(PALETTES['1e'].ground);
+    expect(s.current().tokens.ground).not.toBe(PALETTES['1a'].ground);
   });
 
   it('journey mode ignores the pin — it owns its own palette', () => {
@@ -288,5 +292,65 @@ describe('createThemeStore — palette pin', () => {
     const storage = mem();
     storage.setItem('sv-palette-pin', 'toString');
     expect(createThemeStore({ now: at('2026-08-23T14:00:00'), storage }).pinnedPalette()).toBeNull();
+  });
+});
+
+describe('createThemeStore — daylight-corrected special days', () => {
+  // 2026-08-23 is a Sunday: the schedule gives it a single special palette
+  // ('1f' Marigold), whose raw day sky is pale yellow. The user-facing rule is
+  // that noon always reads as real daylight, whichever palette owns the day —
+  // so a special day's DAY frame is pulled toward the Kelvin daylight blue,
+  // while its dawn/dusk/night keep the palette's own character.
+  const SUNDAY_NOON = '2026-08-23T13:00:00';
+  const blueness = (hex: string) => parseInt(hex.slice(5, 7), 16) - parseInt(hex.slice(1, 3), 16);
+
+  it('noon on a special day is far bluer than the palette\'s raw day sky', () => {
+    const s = createThemeStore({ now: at(SUNDAY_NOON), storage: mem() });
+    s.tick();
+    const sky = s.current().tokens.sky1;
+    expect(blueness(sky)).toBeGreaterThan(blueness(PALETTES['1f'].skies.day[1]));
+    // ...and lands near the Kelvin daylight reference (1a's day sky).
+    expect(Math.abs(blueness(sky) - blueness(PALETTES['1a'].skies.day[1]))).toBeLessThan(24);
+  });
+
+  it('every special palette gets a daylight noon, not just Marigold', () => {
+    for (const id of ['1c', '1d', '1e', '1f'] as const) {
+      const s = createThemeStore({ now: at(SUNDAY_NOON), storage: mem(), search: `?palette=${id}` });
+      s.tick();
+      expect(blueness(s.current().tokens.sky1)).toBeGreaterThan(blueness(PALETTES[id].skies.day[1]));
+    }
+  });
+
+  it('leaves a special day\'s dawn, dusk and night exactly as the palette authored them', () => {
+    const dawn = createThemeStore({ now: at('2026-08-23T06:45:00'), storage: mem() });
+    dawn.tick();
+    expect(dawn.current().tokens.sky1).toBe(PALETTES['1f'].skies.dawn[1]);
+    const night = createThemeStore({ now: at('2026-08-23T23:00:00'), storage: mem() });
+    night.tick();
+    expect(night.current().tokens.sky1).toBe(PALETTES['1f'].skies.night[1]);
+  });
+
+  it('keeps the palette\'s own ground and houses at noon — only the sky is corrected', () => {
+    const s = createThemeStore({ now: at(SUNDAY_NOON), storage: mem() });
+    s.tick();
+    const t = s.current();
+    expect(t.tokens.ground).toBe(PALETTES['1f'].ground);
+    expect(t.tokens.houseARoof).toBe(PALETTES['1f'].houseA[1]);
+    expect(t.tokens.cream).toBe(PALETTES['1f'].cream);
+  });
+
+  it('does NOT touch the weekday weave: 07:20 is still Golden Hour\'s warm-white morning', () => {
+    // The weave's own 1b-day keyframe is the spec\'s ~4300K warm morning — a
+    // deliberate Kelvin step, not a special day, so it must stay untouched.
+    const s = createThemeStore({ now: at('2026-08-18T07:20:00'), storage: mem() });
+    s.tick();
+    expect(s.current().tokens.sky1).toBe(PALETTES['1b'].skies.day[1]);
+  });
+
+  it('a pinned palette is a special day too — its noon reads as daylight', () => {
+    const s = createThemeStore({ now: at('2026-08-18T13:00:00'), storage: mem() });
+    s.setPinnedPalette('1f');
+    s.tick();
+    expect(blueness(s.current().tokens.sky1)).toBeGreaterThan(blueness(PALETTES['1f'].skies.day[1]));
   });
 });

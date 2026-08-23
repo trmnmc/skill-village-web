@@ -44,10 +44,22 @@ const VALID_MODES: WeatherMode[] = ['off', 'pick', 'journey', 'real'];
 const VALID_DAY_OVERRIDES = new Set(['sat', 'sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'weave']);
 const DOW: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
 
+/**
+ * The daylight plateau's own colour — 1a's day sky, the spec's 5500–6500K
+ * anchor — and how hard a special day's noon is pulled onto it. Only the sky
+ * moves: ground, foliage and houses stay the palette's own, so a Marigold
+ * Sunday still reads as Marigold, under a sky that reads as daylight.
+ */
+const DAYLIGHT_SKY = PALETTES['1a'].skies.day;
+const DAYLIGHT_PULL = 0.8;
+
 /** Frame-token builder: the full Tokens set for one (palette, frame) pair. */
-function tokensFor(paletteId: PaletteId, frame: Frame): Tokens {
+function tokensFor(paletteId: PaletteId, frame: Frame, daylight = false): Tokens {
   const p = PALETTES[paletteId];
-  const [sky0, sky1, sky2] = p.skies[frame];
+  const raw = p.skies[frame];
+  const [sky0, sky1, sky2] = daylight
+    ? (raw.map((c, i) => mix(c, DAYLIGHT_SKY[i]!, DAYLIGHT_PULL)) as [string, string, string])
+    : raw;
   return {
     sky0, sky1, sky2,
     ground: p.ground, groundDark: p.groundDark,
@@ -229,7 +241,7 @@ export function createThemeStore(deps?: {
       const prevPlan: DayPlan = (forcedPalette || ov.day) ? plan : planForDate(prevCalendarDay(n));
       const frames = buildTimeline(plan, prevPlan, anchors);
       const { a, b, t } = sampleTimeline(frames, minuteOfDay);
-      tokens = lerpTokens(tokensFor(a.palette, a.frame), tokensFor(b.palette, b.frame), t);
+      tokens = lerpTokens(tokensFor(a.palette, a.frame, a.daylight), tokensFor(b.palette, b.frame, b.daylight), t);
       tint = lerpTint(a.palette, a.frame, b.palette, b.frame, t);
       dominantFrame = t < 0.5 ? a.frame : b.frame;
 
