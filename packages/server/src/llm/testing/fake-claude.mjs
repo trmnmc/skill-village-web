@@ -16,6 +16,12 @@
  *   garbage     — prints something that is not JSON
  *   hang        — never replies (for the timeout path)
  *   exit-2      — exits nonzero with nothing on stdout
+ *   probe-ok-else-exit-2 — answers the probe (its prompt is fixed and asks
+ *                 for READY), exits 2 for everything else; stateless, so
+ *                 parallel test workers cannot trip over shared markers
+ *   inspect     — echoes what the child actually received (argv, the
+ *                 spawn-hygiene env vars, the system prompt file) so tests
+ *                 can assert the transport, not just the reply
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -64,6 +70,26 @@ process.stdin.on('end', () => {
         return reply('I would love to, but here is prose instead of JSON.');
       }
       return reply(card);
+    }
+    case 'inspect': {
+      const flagAt = process.argv.indexOf('--system-prompt-file');
+      const systemFile = flagAt >= 0 ? process.argv[flagAt + 1] : null;
+      return reply(JSON.stringify({
+        argv: process.argv.slice(3),
+        env: {
+          CLAUDECODE: process.env.CLAUDECODE ?? null,
+          CLAUDE_CODE_ENTRYPOINT: process.env.CLAUDE_CODE_ENTRYPOINT ?? null,
+          CLAUDE_CODE_SSE_PORT: process.env.CLAUDE_CODE_SSE_PORT ?? null,
+          MAX_THINKING_TOKENS: process.env.MAX_THINKING_TOKENS ?? null,
+        },
+        systemFile,
+        system: systemFile ? readFileSync(systemFile, 'utf8') : null,
+        prompt,
+      }));
+    }
+    case 'probe-ok-else-exit-2': {
+      if (prompt.includes('READY')) return reply('READY');
+      return process.exit(2);
     }
     case 'unauthenticated':
       return reply('Not logged in · Please run /login', {

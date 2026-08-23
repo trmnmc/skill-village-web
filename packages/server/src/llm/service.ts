@@ -7,6 +7,8 @@ export interface LlmRequest {
   kind: 'chatter' | 'serious';
   budget: 'interactive' | 'autonomous';
   prompt: string;
+  /** The voice for this call; replaces the CLI's own preamble entirely. */
+  system?: string;
 }
 
 export type LlmReply =
@@ -27,6 +29,13 @@ interface Options {
   setLlm: (next: LlmState) => Promise<void>;
   concurrency?: number;
   timeoutMs?: number;
+  /**
+   * One line per failed CLI call (reason, detail, duration). Without this
+   * the village answers questions with canned lines and nobody can say why
+   * — a whole playtest was lost to that silence. Defaults to nothing so
+   * tests stay quiet; main.ts wires it to the server console.
+   */
+  log?: (line: string) => void;
 }
 
 /**
@@ -38,6 +47,7 @@ interface Options {
 export function createLlmService(opts: Options): LlmService {
   const command = opts.command ?? defaultCliCommand();
   const concurrency = opts.concurrency ?? 2;
+  const log = opts.log ?? (() => {});
   let mode: LlmMode = 'silent';
 
   // A minimal promise queue: `slots` tracks running children; waiters resolve
@@ -62,6 +72,7 @@ export function createLlmService(opts: Options): LlmService {
     mode: () => mode,
 
     async probe() {
+      const started = opts.now();
       const result = await runCli(command, {
         prompt: 'Reply with exactly: READY',
         model: 'haiku',
@@ -70,6 +81,8 @@ export function createLlmService(opts: Options): LlmService {
       mode = result.ok ? 'full' : 'silent';
       if (result.ok) {
         await opts.setLlm(recordSpend(opts.getLlm(), 'interactive', result.inputTokens, result.outputTokens, opts.now()));
+      } else {
+        log(`[llm] probe failed (${result.reason}) after ${opts.now() - started}ms: ${result.detail}`);
       }
       return mode;
     },
@@ -80,13 +93,16 @@ export function createLlmService(opts: Options): LlmService {
 
       await acquire();
       try {
+        const started = opts.now();
         const result = await runCli(command, {
           prompt: req.prompt,
+          system: req.system,
           model: req.kind === 'chatter' ? 'haiku' : undefined,
           timeoutMs: opts.timeoutMs,
         });
 
         if (!result.ok) {
+          log(`[llm] ${req.kind} call failed (${result.reason}) after ${opts.now() - started}ms: ${result.detail}`);
           if (result.reason === 'unauthenticated' || result.reason === 'missing') mode = 'silent';
           return { ok: false, why: 'failed' };
         }

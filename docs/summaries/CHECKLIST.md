@@ -4,7 +4,7 @@
 - [x] Real-terminal smoke test (probe READY, chat source:"llm")
 - [x] Thinking indicators + persona prefetch shipped (`1fd6135`)
 - [x] Wireframes saved to reference/ + chat layout decided (1e)
-- [ ] Investigate voice quality/latency/fallback (add failure logging first; hypotheses in pause-2026-08-22-voice-quality-investigation.md)
+- [x] Investigate voice quality/latency/fallback — root causes found + fixed (slim transport, real system prompt, failure logging, nested-env scrub); record: `docs/superpowers/records/2026-08-22-voice-investigation.md`
 - [ ] Re-playtest chat after fixes (personalities, latency, no unexplained "(canned)")
 - [ ] Remap spec (sibling session, branch `claude/skills-projects-agents-mechanics-36973e`)
 - [ ] LICENSE decision (user's call; MIT suggested if reuse/PRs wanted)

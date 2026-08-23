@@ -40,6 +40,9 @@ async function main(): Promise<void> {
         // service's 90s default, which two stuck calls could otherwise
         // saturate and freeze the panel on.
         timeoutMs: 30_000,
+        // Failures land on the server console: one line with reason, detail
+        // and duration, so a canned fallback is never a mystery again.
+        log: (line) => console.error(line),
       }),
   });
   if (village.startupNote) console.log(village.startupNote);
@@ -52,7 +55,7 @@ async function main(): Promise<void> {
     console.log(
       mode === 'full'
         ? 'The village found its voice (claude CLI reachable).'
-        : 'Silent-movie mode: no reachable claude CLI. (A server started from inside a Claude Code session always lands here — run it from a plain terminal to chat.)',
+        : 'Silent-movie mode: no reachable claude CLI. (Is `claude` installed and logged in? The line above says what the probe hit.)',
     );
   }).catch((error) => console.error('LLM probe failed:', error));
 

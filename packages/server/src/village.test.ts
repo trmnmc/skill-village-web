@@ -6,7 +6,7 @@ import { makeSandbox, skillFixture, agentFixture, type Sandbox } from './testing
 import { createVillage, type Village } from './village.js';
 import { MS_PER_HOUR } from './sim/tick.js';
 import { defaultLlmState } from './llm/ledger.js';
-import { createLlmService, type LlmService } from './llm/service.js';
+import { createLlmService, type LlmRequest, type LlmService } from './llm/service.js';
 import { fakeCliCommand } from './llm/testing/fake.js';
 
 let sandbox: Sandbox | null = null;
@@ -233,6 +233,30 @@ describe('chat', () => {
     expect(creature.stats.bond).toBe(16);
   });
 
+  it('sends the personality as the system prompt and the player message as the prompt', async () => {
+    // The card used to be prepended to the user prompt, where it sat beneath
+    // the CLI's own preamble and read as a footnote; as the system prompt it
+    // IS the voice.
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('tdd', skillFixture('tdd'));
+    const seen: LlmRequest[] = [];
+    const capturing: LlmService = {
+      mode: () => 'full',
+      probe: async () => 'full',
+      request: async (req) => {
+        seen.push(req);
+        return isChat(req.prompt) ? { ok: true, text: 'hello.' } : { ok: true, text: CARD };
+      },
+    };
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000, llm: capturing });
+    await village.chat('skill:tdd', 'hi there');
+
+    const chat = seen.find((r) => isChat(r.prompt))!;
+    expect(chat.system).toContain('You are Mo');
+    expect(chat.prompt).toContain('The player says to you: "hi there"');
+    expect(chat.prompt).not.toContain('You are');
+  });
+
   it('falls back to a canned line when the model refuses, and still applies care', async () => {
     sandbox = await makeSandbox();
     await sandbox.writeSkill('tdd', skillFixture('tdd'));
@@ -249,6 +273,23 @@ describe('chat', () => {
     sandbox = await makeSandbox();
     village = await createVillage({ paths: sandbox.paths, now: () => 1_000 });
     await expect(village.chat('skill:ghost', 'hi')).rejects.toThrow('not found');
+  });
+
+  it('records a persona-failed event when no card could be written', async () => {
+    // A creature that silently stays card-less chats in a generic voice and
+    // nobody can say why; the event makes the gap show up in the log.
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('tdd', skillFixture('tdd'));
+    const failing: LlmService = {
+      mode: () => 'full',
+      probe: async () => 'full',
+      request: async (req) =>
+        isChat(req.prompt) ? { ok: true, text: 'hi.' } : { ok: false, why: 'failed' },
+    };
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000, llm: failing });
+    await village.chat('skill:tdd', 'hello');
+    const events = await readEvents(sandbox.paths);
+    expect(events.map((e) => e.type)).toContain('persona-failed');
   });
 
   it('does not regenerate a persona that already exists', async () => {

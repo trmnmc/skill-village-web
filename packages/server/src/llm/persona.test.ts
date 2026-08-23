@@ -80,4 +80,20 @@ describe('generatePersona', () => {
     await service.probe();
     expect(await generatePersona(service, input)).toBeNull();
   });
+
+  it('sends its own small system prompt so the card call is slim too', async () => {
+    // Without one, the CLI falls back to its full Claude Code preamble and
+    // the card call pays the ~30k-token toll the chat calls just escaped.
+    const seen: Array<{ system?: string }> = [];
+    const capturing = {
+      mode: () => 'full' as const,
+      probe: async () => 'full' as const,
+      request: async (req: { system?: string }) => {
+        seen.push(req);
+        return { ok: true as const, text: VALID };
+      },
+    };
+    await generatePersona(capturing, input);
+    expect(seen[0]!.system).toMatch(/village/i);
+  });
 });

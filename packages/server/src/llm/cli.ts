@@ -1,7 +1,17 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 export interface CliCall {
   prompt: string;
+  /**
+   * The voice the model speaks with (persona card, game rules). Travels via
+   * --system-prompt-file so it replaces the CLI's own ~30k-token Claude Code
+   * preamble instead of being buried under it.
+   */
+  system?: string;
   /** Omit for the session-default model; 'haiku' for chatter. */
   model?: 'haiku';
   timeoutMs?: number;
@@ -27,39 +37,79 @@ export function defaultCliCommand(): string[] {
 /**
  * One headless CLI call. The prompt travels on stdin — never argv — so there
  * is no quoting surface and no length limit. Output is ONE JSON object
- * (probed contract, claude 2.1.239): failure is `is_error: true`, which the
- * real binary emits even with `subtype: "success"`, so only `is_error`
- * decides. An unauthenticated CLI is its own failure kind because it decides
- * the village's whole mode, not just this call's outcome.
+ * (probed contract, claude 2.1.239, re-verified 2.1.241): failure is
+ * `is_error: true`, which the real binary emits even with
+ * `subtype: "success"`, so only `is_error` decides. An unauthenticated CLI
+ * is its own failure kind because it decides the village's whole mode, not
+ * just this call's outcome.
  *
- * Note for anyone running the server from inside a Claude Code session: a
- * nested `claude` reports "Not logged in" by design, and the village boots
- * into silent-movie mode. Develop chat from a plain terminal.
+ * The call is deliberately slim (measured against 2.1.241): `--tools=` and
+ * `--setting-sources=` drop the ~30k tokens of tool schemas and preamble the
+ * CLI otherwise ships with every -p call, MAX_THINKING_TOKENS=0 stops the
+ * model spending hundreds of thinking tokens on a one-line quip, and
+ * --no-session-persistence keeps village chatter out of the player's session
+ * history. Together they took a real chat call from ~7.5s/$0.023 to
+ * ~2.5s/$0.0016. The `=` forms matter: under shell:true a bare empty-string
+ * arg would be lost when Node joins argv with spaces.
+ *
+ * The child's environment is scrubbed of nested-session markers — with them
+ * present, a `claude` spawned from inside a Claude Code session refuses with
+ * "Not logged in" and the village boots into silent-movie mode even though
+ * the player is logged in.
  */
-export function runCli(command: readonly string[], call: CliCall): Promise<CliResult> {
+export async function runCli(command: readonly string[], call: CliCall): Promise<CliResult> {
+  // The system prompt travels in a file, not argv: the card text is
+  // model-written content, and argv must stay quoting-safe under shell:true.
+  let systemFile: string | undefined;
+  if (call.system !== undefined) {
+    systemFile = join(tmpdir(), `skill-village-system-${randomUUID()}.txt`);
+    try {
+      await writeFile(systemFile, call.system, 'utf8');
+    } catch (error) {
+      return { ok: false, reason: 'error', detail: `system prompt file: ${String(error)}` };
+    }
+  }
+
   return new Promise((resolve) => {
-    const args = [
-      ...command.slice(1),
-      '-p',
-      '--output-format', 'json',
-      '--max-turns', '1',
-      ...(call.model ? ['--model', call.model] : []),
-    ];
+    const env: NodeJS.ProcessEnv = { ...process.env, MAX_THINKING_TOKENS: '0' };
+    delete env.CLAUDECODE;
+    delete env.CLAUDE_CODE_ENTRYPOINT;
+    delete env.CLAUDE_CODE_SSE_PORT;
 
     // shell:true for the bare `claude` name, and for any .cmd/.bat shim: on
     // Windows those resolve through cmd.exe, which plain spawn cannot
     // execute — and since Node's CVE-2024-27980 fix, spawning a .cmd/.bat
     // directly without shell:true throws EINVAL *synchronously*, before any
-    // event fires. Args carry no user content (the prompt is on stdin), so
-    // the shell sees only fixed flags.
+    // event fires. Args carry no user content (the prompt is on stdin and
+    // the system prompt in a file), so the shell sees only fixed flags and
+    // one path of our own making — quoted, in case the temp dir has spaces.
     const useShell =
       process.platform === 'win32' &&
       (command[0] === 'claude' || /\.(cmd|bat)$/i.test(command[0] ?? ''));
+
+    const args = [
+      ...command.slice(1),
+      '-p',
+      '--output-format', 'json',
+      '--max-turns', '1',
+      '--tools=',
+      '--setting-sources=',
+      '--no-session-persistence',
+      ...(systemFile ? ['--system-prompt-file', useShell ? `"${systemFile}"` : systemFile] : []),
+      ...(call.model ? ['--model', call.model] : []),
+    ];
+
+    // The file must be gone by the time the promise resolves — a caller (or
+    // test) observing the result must never see the prompt still on disk.
+    const cleanup = async () => {
+      if (systemFile) await unlink(systemFile).catch(() => {});
+    };
 
     let child;
     try {
       child = spawn(command[0]!, args, {
         shell: useShell,
+        env,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (error) {
@@ -67,7 +117,7 @@ export function runCli(command: readonly string[], call: CliCall): Promise<CliRe
       // shell:true) never fires an 'error' event, so it must be caught here
       // — otherwise it would reject the promise instead of yielding a typed
       // CliResult. No timer exists yet, so there's nothing to clear.
-      resolve({ ok: false, reason: 'missing', detail: String(error) });
+      void cleanup().then(() => resolve({ ok: false, reason: 'missing', detail: String(error) }));
       return;
     }
 
@@ -77,7 +127,7 @@ export function runCli(command: readonly string[], call: CliCall): Promise<CliRe
     const settle = (result: CliResult) => {
       if (!settled) {
         settled = true;
-        resolve(result);
+        void cleanup().then(() => resolve(result));
       }
     };
 

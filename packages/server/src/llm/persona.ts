@@ -48,6 +48,9 @@ export function parsePersona(text: string): Persona | null {
   };
 }
 
+/** Replaces the CLI's own preamble so the card call is as slim as a chat. */
+const CASTING_SYSTEM = 'You cast creatures for a cozy village game. Follow the instructions exactly and reply with JSON only, no prose.';
+
 /**
  * One model call for card + nickname + canned pool, with one retry on a
  * malformed reply. Null on failure: the creature simply stays card-less until
@@ -60,7 +63,7 @@ export async function generatePersona(
 ): Promise<Persona | null> {
   const prompt = personalityCardPrompt(input);
   for (let attempt = 0; attempt < 2; attempt++) {
-    const reply = await service.request({ kind: 'chatter', budget: 'interactive', prompt });
+    const reply = await service.request({ kind: 'chatter', budget: 'interactive', prompt, system: CASTING_SYSTEM });
     if (!reply.ok) return null;
     const persona = parsePersona(reply.text);
     if (persona) return persona;

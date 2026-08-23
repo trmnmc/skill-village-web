@@ -15,6 +15,7 @@ export type VillageEventType =
   | 'stage-changed'
   | 'import-failed'
   | 'persona-written'
+  | 'persona-failed'
   | 'chatted';
 
 export interface VillageEvent {

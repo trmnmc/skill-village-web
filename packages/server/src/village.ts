@@ -212,7 +212,13 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
         description: creature.name,
         body,
       });
-      if (!persona) return;
+      if (!persona) {
+        // The gap must be visible: a card-less creature chats in a generic
+        // voice, and a whole playtest went by before anyone knew why.
+        const at = now();
+        await commit({ ...state, updatedAt: at }, [{ at, type: 'persona-failed', creatureId, detail: creature.name }]);
+        return;
+      }
 
       // Re-read from the live state: the model call took real time, and the
       // ledger write inside it has already replaced `state`.
@@ -295,9 +301,10 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
       const fresh = state.creatures[creatureId];
       if (!fresh) throw new Error(`Creature not found: ${creatureId}`);
 
+      // The card travels as the call's actual system prompt — not prepended
+      // to the user turn, where it read as a footnote and the voice went mid.
+      const system = chatSystemPrompt(fresh);
       const prompt = [
-        chatSystemPrompt(fresh),
-        '',
         `The player says to you: "${message}"`,
         '',
         'Reply as yourself, in one or two short sentences.',
@@ -309,7 +316,7 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
       // another way of not having one.
       let reply: LlmReply;
       try {
-        reply = await llm.request({ kind: 'chatter', budget: 'interactive', prompt });
+        reply = await llm.request({ kind: 'chatter', budget: 'interactive', prompt, system });
       } catch {
         reply = { ok: false, why: 'failed' };
       }

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { existsSync } from 'node:fs';
 import { runCli, defaultCliCommand } from './cli.js';
 import { fakeCliCommand, resetFakeCli } from './testing/fake.js';
 
@@ -59,6 +60,48 @@ describe('runCli', () => {
     const result = await runCli(fakeCliCommand('hang'), { prompt: 'hi', timeoutMs: 300 });
     expect(result).toMatchObject({ ok: false, reason: 'timeout' });
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it('passes the slim transport flags and a scrubbed environment', async () => {
+    // A server started from inside a Claude Code session leaks the nested-
+    // session markers into the child, which made the CLI refuse with "Not
+    // logged in"; scrubbing them is what lets the village chat from anywhere.
+    const before = process.env.CLAUDECODE;
+    process.env.CLAUDECODE = '1';
+    try {
+      const result = await runCli(fakeCliCommand('inspect'), { prompt: 'hi' });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const seen = JSON.parse(result.text);
+      expect(seen.argv).toEqual(expect.arrayContaining(['--tools=', '--setting-sources=', '--no-session-persistence']));
+      expect(seen.env.CLAUDECODE).toBeNull();
+      expect(seen.env.CLAUDE_CODE_ENTRYPOINT).toBeNull();
+      expect(seen.env.CLAUDE_CODE_SSE_PORT).toBeNull();
+      expect(seen.env.MAX_THINKING_TOKENS).toBe('0');
+    } finally {
+      if (before === undefined) delete process.env.CLAUDECODE;
+      else process.env.CLAUDECODE = before;
+    }
+  });
+
+  it('carries the system prompt in a temp file and removes it afterwards', async () => {
+    const system = 'You are Finch.\nSpeak in "short" sentences & stay in character.';
+    const result = await runCli(fakeCliCommand('inspect'), { prompt: 'hi', system });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const seen = JSON.parse(result.text);
+    expect(seen.system).toBe(system);
+    expect(seen.prompt).toBe('hi');
+    expect(existsSync(seen.systemFile)).toBe(false);
+  });
+
+  it('omits --system-prompt-file when no system prompt is given', async () => {
+    const result = await runCli(fakeCliCommand('inspect'), { prompt: 'hi' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const seen = JSON.parse(result.text);
+    expect(seen.systemFile).toBeNull();
+    expect(seen.argv).not.toContain('--system-prompt-file');
   });
 });
 

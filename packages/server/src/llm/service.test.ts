@@ -93,6 +93,48 @@ describe('request', () => {
     expect(broken.mode()).toBe('silent');
   });
 
+  it('logs why a request failed, with reason, detail and duration', async () => {
+    // The playtest lesson behind this: a failed call used to vanish into a
+    // bare why:'failed', and the village answered questions with idle canned
+    // lines nobody could explain. Every failure must leave one legible line.
+    const lines: string[] = [];
+    const service = createLlmService({
+      command: fakeCliCommand('probe-ok-else-exit-2'),
+      now: () => NOON,
+      getLlm: () => defaultLlmState(NOON),
+      setLlm: async () => {},
+      log: (line) => lines.push(line),
+    });
+    await service.probe(); // first call succeeds -> mode full
+    const reply = await service.request({ kind: 'chatter', budget: 'interactive', prompt: 'hi' });
+    expect(reply).toEqual({ ok: false, why: 'failed' });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/chatter call failed \(error\) after \d+ms: /);
+  });
+
+  it('logs why the probe failed', async () => {
+    const lines: string[] = [];
+    const service = createLlmService({
+      command: fakeCliCommand('exit-2'),
+      now: () => NOON,
+      getLlm: () => defaultLlmState(NOON),
+      setLlm: async () => {},
+      log: (line) => lines.push(line),
+    });
+    expect(await service.probe()).toBe('silent');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/probe failed \(error\) after \d+ms: /);
+  });
+
+  it('forwards the system prompt to the CLI', async () => {
+    const h = harness('inspect');
+    await h.service.probe();
+    const reply = await h.service.request({ kind: 'chatter', budget: 'interactive', prompt: 'hi', system: 'BE FINCH' });
+    expect(reply.ok).toBe(true);
+    if (!reply.ok) return;
+    expect(JSON.parse(reply.text).system).toBe('BE FINCH');
+  });
+
   it('serializes calls: never more than `concurrency` children at once', async () => {
     // 'slow' exists exactly for this: it succeeds after 400ms, so the probe
     // (also 'slow') goes full, and two serialized requests must take at
