@@ -340,3 +340,38 @@ describe('the robot shim', () => {
     expect(res.json().data[0].id).toBe('skill-village-resident');
   });
 });
+
+describe('the robot api', () => {
+  it('round-trips the resident', async () => {
+    const app = await boot(['code-review']);
+    const empty = await app.inject({ method: 'GET', url: '/api/robot' });
+    expect(empty.json()).toEqual({ residentId: null, resident: null, lastTurnAt: null });
+
+    const set = await app.inject({
+      method: 'PUT', url: '/api/robot/resident', payload: { creatureId: 'skill:code-review' },
+    });
+    expect(set.statusCode).toBe(200);
+    expect(set.json().residentId).toBe('skill:code-review');
+    expect(set.json().resident.id).toBe('skill:code-review');
+
+    const evict = await app.inject({ method: 'PUT', url: '/api/robot/resident', payload: { creatureId: null } });
+    expect(evict.json().residentId).toBe(null);
+  });
+
+  it('404s an unknown creature and 400s a malformed body', async () => {
+    const app = await boot();
+    const unknown = await app.inject({
+      method: 'PUT', url: '/api/robot/resident', payload: { creatureId: 'skill:nobody' },
+    });
+    expect(unknown.statusCode).toBe(404);
+    const bad = await app.inject({ method: 'PUT', url: '/api/robot/resident', payload: {} });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it('state frames carry the robot block and activity stamp', async () => {
+    const app = await boot();
+    const state = (await app.inject({ method: 'GET', url: '/api/state' })).json();
+    expect(state.robot).toEqual({ residentId: null });
+    expect(state.robotLastTurnAt).toBe(null);
+  });
+});

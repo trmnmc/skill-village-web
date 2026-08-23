@@ -38,6 +38,9 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
   const withMode = (state: ReturnType<Village['getState']>) => ({
     ...state,
     llm: { ...state.llm, mode: village.llmMode() },
+    // In-memory, not persisted: the presence glow wants "is he talking right
+    // now", which a saved timestamp from last week must never answer.
+    robotLastTurnAt: village.robotActivityAt(),
   });
 
   app.get('/api/state', async () => ({
@@ -172,6 +175,31 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
       }
     });
     socket.on('close', unsubscribe);
+  });
+
+  const robotSnapshot = () => {
+    const s = village.getState();
+    const residentId = s.robot.residentId;
+    return {
+      residentId,
+      resident: residentId ? s.creatures[residentId] ?? null : null,
+      lastTurnAt: village.robotActivityAt(),
+    };
+  };
+
+  app.get('/api/robot', async () => robotSnapshot());
+
+  app.put<{ Body: { creatureId?: unknown } }>('/api/robot/resident', async (request, reply) => {
+    const creatureId = request.body?.creatureId;
+    if (creatureId !== null && typeof creatureId !== 'string') {
+      return reply.code(400).send({ error: 'creatureId must be a creature id string, or null to move the resident out' });
+    }
+    try {
+      await village.setRobotResident(creatureId);
+    } catch (error) {
+      return reply.code(404).send({ error: (error as Error).message });
+    }
+    return robotSnapshot();
   });
 
   // ---- The robot shim: an OpenAI-compatible brain for the voice gateway ----
