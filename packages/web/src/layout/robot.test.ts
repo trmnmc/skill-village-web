@@ -21,4 +21,15 @@ describe('the robot-house plot', () => {
     expect(PORCH_SPOT.y).toBe(GROUND_Y);
     expect(inRobotHouse(PORCH_SPOT.x, PORCH_SPOT.y - 34)).toBe(false); // body midpoint clear of the box
   });
+
+  it('the drop box clears every decor house and tree in Homes', () => {
+    const homes = ZONES.find((z) => z.id === 'homes')!;
+    const houseSpans = [180, 900, 1700].map((dx) => [homes.x + dx - 8, homes.x + dx + 94]);
+    const treeSpans = [60, 620, 1240, 2050, 2420].map((dx) => [homes.x + dx, homes.x + dx + 40]);
+    const boxLeft = ROBOT_HOUSE_BOX.x;
+    const boxRight = ROBOT_HOUSE_BOX.x + ROBOT_HOUSE_BOX.w;
+    for (const [lo, hi] of [...houseSpans, ...treeSpans]) {
+      expect(boxRight <= lo || boxLeft >= hi).toBe(true);
+    }
+  });
 });
