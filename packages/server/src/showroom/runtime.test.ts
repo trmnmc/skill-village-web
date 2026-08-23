@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -100,6 +100,40 @@ describe('createShowroom', () => {
     runtime.setConfig(parseShowroomConfig({ hidden: ['moon'] }).config);
     expect(notified).toBe(1);
     expect(runtime.getPayload().counts.villagers).toBe(0);
+    runtime.close();
+  });
+
+  it('persistence failure logs and notifies, never rejects poll()', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'showroom-rt-'));
+    // Create a file to block directory creation; nest dataDir under it
+    const blocker = join(home, 'blocker');
+    await writeFile(blocker, 'x');
+    const paths = resolveShowroomPaths({ home: blocker });
+    paths.dataDir = join(blocker, 'nested'); // This path cannot be created (blocker is a file)
+
+    const logs: string[] = [];
+    const runtime = await createShowroom({
+      paths, config: CONFIG, now: () => 7000,
+      fetchFeed: async () => [P('flux', true)],
+      log: (line) => logs.push(line),
+    });
+
+    let notifyCount = 0;
+    runtime.subscribe(() => { notifyCount += 1; });
+
+    // poll() must resolve despite persistence failure
+    await runtime.poll();
+
+    // Payload reflects the fetched village (in-memory)
+    expect(runtime.getPayload().counts.villagers).toBe(1);
+    expect(runtime.getPayload().events).toHaveLength(0); // first poll never emits events
+
+    // Subscriber was notified once
+    expect(notifyCount).toBe(1);
+
+    // Log captured the persistence failure
+    expect(logs.some((line) => /persistence failed/.test(line))).toBe(true);
+
     runtime.close();
   });
 });

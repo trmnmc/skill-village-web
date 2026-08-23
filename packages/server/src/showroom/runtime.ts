@@ -67,8 +67,12 @@ export async function createShowroom(options: {
     for (const reason of resolveRares(config, fetched).ignored) log(`showroom: ${reason} — ignored`);
     roster = roster === null ? fetched : mergeRoster(roster, fetched);
     events = events.concat(fresh);
-    await writeSnapshot(options.paths, roster);
-    await appendEvents(options.paths, fresh);
+    try {
+      await writeSnapshot(options.paths, roster);
+      await appendEvents(options.paths, fresh);
+    } catch (error) {
+      log(`showroom: persistence failed — state kept in memory (${(error as Error).message})`);
+    }
     notify(fresh);
   }
 
