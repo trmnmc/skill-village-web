@@ -1,29 +1,33 @@
 import { describe, it, expect } from 'vitest';
-import { chatSystemPrompt, personalityCardPrompt, interviewSystemPrompt, moodWord } from './prompt.js';
+import { chatSystemPrompt, personalityCardPrompt, interviewSystemPrompt, moodWord, spokenSystemPrompt } from './prompt.js';
 import type { Creature } from '../types.js';
 
-const creature: Creature = {
-  id: 'skill:code-review',
-  kind: 'skill',
-  name: 'code-review',
-  nickname: 'Nit',
-  appearance: {
-    body: 'round', crown: 'ears', winged: false, restPosture: null,
-    palette: { hue: '#9dba77', lite: '#c0d6a0', dark: '#7c9a58' },
-  },
-  stats: { mood: 82, energy: 60, bond: 45, xp: 300 },
-  stage: 'adult',
-  personality: {
-    temperament: 'a fastidious detective',
-    voice: 'clipped, faintly smug',
-    quirks: ['counts things aloud', 'hates unexplained magic numbers'],
-    likes: ['small diffs'],
-    dislikes: ['force pushes'],
-  },
-  sourcePath: '/home/u/.claude/skills/code-review/SKILL.md',
-  friendships: {},
-  lastSeenAt: 0,
-};
+function creatureFixture(): Creature {
+  return {
+    id: 'skill:code-review',
+    kind: 'skill',
+    name: 'code-review',
+    nickname: 'Nit',
+    appearance: {
+      body: 'round', crown: 'ears', winged: false, restPosture: null,
+      palette: { hue: '#9dba77', lite: '#c0d6a0', dark: '#7c9a58' },
+    },
+    stats: { mood: 82, energy: 60, bond: 45, xp: 300 },
+    stage: 'adult',
+    personality: {
+      temperament: 'a fastidious detective',
+      voice: 'clipped, faintly smug',
+      quirks: ['counts things aloud', 'hates unexplained magic numbers'],
+      likes: ['small diffs'],
+      dislikes: ['force pushes'],
+    },
+    sourcePath: '/home/u/.claude/skills/code-review/SKILL.md',
+    friendships: {},
+    lastSeenAt: 0,
+  };
+}
+
+const creature: Creature = creatureFixture();
 
 describe('chatSystemPrompt', () => {
   it('includes the nickname, temperament and voice', () => {
@@ -119,4 +123,32 @@ describe('moodWord', () => {
     'describes %i as %s', (mood, word) => {
       expect(moodWord(mood as number)).toBe(word);
     });
+});
+
+describe('spokenSystemPrompt', () => {
+  it('frames the creature as speaking aloud through a robot, not a bubble', () => {
+    const text = spokenSystemPrompt(creatureFixture());
+    expect(text).toContain('speaking aloud');
+    expect(text).toContain('one to three short sentences');
+    expect(text).not.toContain('speech bubble');
+  });
+
+  it('carries the personality card when present', () => {
+    const c = creatureFixture();
+    c.personality = {
+      temperament: 'a fastidious detective',
+      voice: 'clipped and faintly smug',
+      quirks: ['squints at diffs'],
+      likes: ['small commits'],
+      dislikes: ['force pushes'],
+    };
+    const text = spokenSystemPrompt(c);
+    expect(text).toContain('a fastidious detective');
+    expect(text).toContain('clipped and faintly smug');
+  });
+
+  it('forbids markup a robot voice cannot say', () => {
+    const text = spokenSystemPrompt(creatureFixture());
+    expect(text).toContain('No markdown');
+  });
 });
