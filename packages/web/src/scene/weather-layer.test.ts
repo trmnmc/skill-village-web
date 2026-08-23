@@ -334,9 +334,12 @@ describe('cloudSuppression', () => {
     }
   });
 
-  it('empties the sky for heat and rainbow — the two kinds that want a bare sky', () => {
+  it('empties the sky for the heat haze, the one kind that wants a bare glare', () => {
     expect(cloudSuppression('heat', 1)).toBe(1);
-    expect(cloudSuppression('rainbow', 1)).toBe(1);
+  });
+
+  it('keeps clouds behind a rainbow - a bow only ever appears with rain about', () => {
+    expect(cloudSuppression('rainbow', 1)).toBe(0);
   });
 
   it('still hands the overcast kinds over to their own blob decks', () => {
@@ -347,7 +350,7 @@ describe('cloudSuppression', () => {
 
   it('follows the ramp rather than snapping, so a journey transition crossfades', () => {
     expect(cloudSuppression('heat', 0.5)).toBe(0.5);
-    expect(cloudSuppression('rainbow', 0)).toBe(0);
+    expect(cloudSuppression('rain', 0.25)).toBe(0.25);
     expect(cloudSuppression('clear', 0.5)).toBe(0);
   });
 });

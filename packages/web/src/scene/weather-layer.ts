@@ -269,8 +269,13 @@ export function rainbowBlocks(
   return blocks;
 }
 
-/** Kinds that want a bare sky behind them, with no ambient cloud set. */
-const CLOUDLESS: ReadonlySet<WeatherKind> = new Set<WeatherKind>(['heat', 'rainbow']);
+/**
+ * Kinds that want a bare sky behind them, with no ambient cloud set. Only the
+ * heat haze: it reads as a bleached, empty glare. A rainbow keeps its clouds —
+ * a bow only ever appears with rain about, so an empty sky behind one looks
+ * wrong even though the arc is easier to admire without them.
+ */
+const CLOUDLESS: ReadonlySet<WeatherKind> = new Set<WeatherKind>(['heat']);
 
 /**
  * How strongly a weather kind suppresses the ambient fair-weather clouds,
