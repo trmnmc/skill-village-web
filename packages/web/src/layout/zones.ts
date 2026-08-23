@@ -119,26 +119,10 @@ function nearestClearSpot(wanted: number, taken: readonly number[], lo: number, 
 }
 
 /**
- * Deterministic placement inside Homes. A creature asks for the row and the
- * offset its own id hashes to, and gets exactly that unless somebody is
- * already standing there; when somebody is, only the arriving creature moves.
- *
- * Guaranteed spacing and placement-from-the-id-alone cannot both hold: with a
- * finite number of non-overlapping spots, two ids that hash together mean one
- * of them has to stand somewhere else. So a spot depends on the id *and* on
- * who was seated before it. Seating order is fixed here rather than inherited
- * from the caller — by code unit, which is locale-independent, unlike the
- * `localeCompare` protocol.ts sorts views with — so the layout is a pure
- * function of the *set* of ids. That is the stable-geography promise in the
- * form it can actually keep: the same villagers always produce the same
- * village, however the caller ordered them, on every reload. Membership
- * changes are the exception, and a villager can be nudged along its row to
- * make room; `village.ts` moves the actor to match.
+ * Deterministic placement inside any horizontal range — the same seating
+ * contract as Homes (see placeCreatures), reused by the spectator meadow.
  */
-export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
-  const homes = ZONES.find((z) => z.id === 'homes')!;
-  const lo = homes.x + MARGIN;
-  const hi = homes.x + homes.w - MARGIN;
+export function placeInRange(ids: readonly string[], lo: number, hi: number): Map<string, Spot> {
   const spots = new Map<string, Spot>();
   /** x values already handed out, per row. */
   const occupied = new Map<number, number[]>();
@@ -161,4 +145,26 @@ export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
   }
 
   return spots;
+}
+
+/**
+ * Deterministic placement inside Homes. A creature asks for the row and the
+ * offset its own id hashes to, and gets exactly that unless somebody is
+ * already standing there; when somebody is, only the arriving creature moves.
+ *
+ * Guaranteed spacing and placement-from-the-id-alone cannot both hold: with a
+ * finite number of non-overlapping spots, two ids that hash together mean one
+ * of them has to stand somewhere else. So a spot depends on the id *and* on
+ * who was seated before it. Seating order is fixed here rather than inherited
+ * from the caller — by code unit, which is locale-independent, unlike the
+ * `localeCompare` protocol.ts sorts views with — so the layout is a pure
+ * function of the *set* of ids. That is the stable-geography promise in the
+ * form it can actually keep: the same villagers always produce the same
+ * village, however the caller ordered them, on every reload. Membership
+ * changes are the exception, and a villager can be nudged along its row to
+ * make room; `village.ts` moves the actor to match.
+ */
+export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
+  const homes = ZONES.find((z) => z.id === 'homes')!;
+  return placeInRange(ids, homes.x + MARGIN, homes.x + homes.w - MARGIN);
 }
