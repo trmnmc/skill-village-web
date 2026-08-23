@@ -36,8 +36,8 @@ the villagers; skills/agents fold into helpers). The layouts survive that pivot 
 the creature card, care verbs, and builder screens are cast-agnostic — but names
 like "SKILL · lv 7" will read differently by the time these are built.
 
-## Open question
+## Decided
 
-Chat layout is deliberately undecided between 1d (input floats under the clicked
-creature, on the map) and 1e (one fixed input bar in the dock, transcript beside
-it). Decide when the dock is built.
+Chat layout: **1e** (user's call, 2026-08-22) — one fixed input bar in the dock
+with the transcript beside it; replies still float as bubbles over the villager.
+1d (input under the clicked creature) is rejected.
