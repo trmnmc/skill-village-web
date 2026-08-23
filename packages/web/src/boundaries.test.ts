@@ -62,4 +62,29 @@ describe('package boundaries', () => {
       .map(({ f }) => relative(SRC_DIR, f));
     expect(offenders).toEqual([]);
   });
+
+  it('under sound/, only player.ts touches the Web Audio API', () => {
+    // The house rule, spec §2: everything that decides is pure; only the
+    // last inch rings. The regex is exercised against a known-bad string so
+    // this guard can never silently stop matching.
+    const AUDIO_API = /\b(AudioContext|webkitAudioContext|createOscillator|createGain|StereoPannerNode)\b/;
+    expect(AUDIO_API.test('new AudioContext()')).toBe(true);
+    const offenders = files
+      .filter((f) => f.includes('sound') && !f.endsWith('player.ts'))
+      .map((f) => ({ f, text: readFileSync(f, 'utf8') }))
+      .filter(({ text }) => AUDIO_API.test(text))
+      .map(({ f }) => relative(SRC_DIR, f));
+    expect(offenders).toEqual([]);
+  });
+
+  it('under sound/, only settings.ts touches localStorage', () => {
+    const STORAGE = /\blocalStorage\b/;
+    expect(STORAGE.test('localStorage.getItem(k)')).toBe(true);
+    const offenders = files
+      .filter((f) => f.includes('sound') && !f.endsWith('settings.ts'))
+      .map((f) => ({ f, text: readFileSync(f, 'utf8') }))
+      .filter(({ text }) => STORAGE.test(text))
+      .map(({ f }) => relative(SRC_DIR, f));
+    expect(offenders).toEqual([]);
+  });
 });

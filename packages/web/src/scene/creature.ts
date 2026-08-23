@@ -6,6 +6,8 @@ import { bakePixels } from '../render/bake.js';
 import { roleMap } from '../render/roles.js';
 import { displayName, fileLabel } from '../render/label.js';
 import { behaviourFor } from '../motion/behaviour.js';
+import { sound } from '../sound/player.js';
+import { voiceParamsFor } from '../sound/voice.js';
 import {
   breathe,
   BUBBLE_OUT,
@@ -48,7 +50,7 @@ export interface CreatureActor {
    * history — the panel keeps the log — so a second `say` replaces the first
    * rather than queueing behind it.
    */
-  say(text: string): void;
+  say(text: string, source?: 'llm' | 'canned'): void;
   /**
    * Show a small endless "…" bubble — the creature is composing a reply.
    * The next `say` replaces it; `clearThought` shrinks it away when the
@@ -56,6 +58,8 @@ export interface CreatureActor {
    */
   think(): void;
   clearThought(): void;
+  /** The creature's audible signature, played when the player opens chat with it. */
+  greet(): void;
   destroy(): void;
 }
 
@@ -197,6 +201,8 @@ export async function spawnCreature(
   // page is open rather than only on the frame the creature was first drawn.
   let behaviour = behaviourFor(creature);
   const phi = phaseFor(creature.id);
+  // The audio half of identity, derived once like the phase offset.
+  const voice = voiceParamsFor(creature);
 
   // Bake the resting body once. A roaming lanky agent gets a second bake with
   // trailing legs; everyone else needs only the one.
@@ -460,6 +466,7 @@ export async function spawnCreature(
     bubbleH = bubbleText.height / TEXT_SS;
     bubbleLife = life;
     bubbleShownAt = -1;
+    sound.event({ type: 'bubble-in', x: at.x });
     endThought = false;
     // Nothing draws until `update` has given this line a real scale; without
     // this it could flash for one frame at the measuring scale of 1, which
@@ -607,6 +614,7 @@ export async function spawnCreature(
           bubbleShownAt = null;
           bubbleText.hidden = true;
           bubbleBg.hidden = true;
+          sound.event({ type: 'bubble-out', x: at.x });
         } else {
           // Both pieces are anchored 'bot' at the same base point, so the pop
           // grows the bubble upward out of the villager's head rather than out
@@ -650,6 +658,10 @@ export async function spawnCreature(
         } else if (hop.landedAt !== lastLanding) {
           lastLanding = hop.landedAt;
           puff(k, root.pos.x, root.pos.y);
+          // The same exactly-once guard scores the landing: a landing that
+          // draws no puff makes no sound either (the adopt-silently branch
+          // above emits nothing).
+          sound.event({ type: 'hop-landed', x: at.x });
         }
       }
 
@@ -677,7 +689,20 @@ export async function spawnCreature(
      * swap — is already read per frame in `update`.
      */
     setCreature(next) {
+      const prev = behaviour;
       behaviour = behaviourFor(next);
+      // Transitions ring; states don't. setCreature runs on every server
+      // tick, so comparing against the previous flags is what keeps a
+      // sleeping creature from snoring once per second.
+      if (!prev.asleep && behaviour.asleep) {
+        sound.event({ type: 'sleep-start', x: at.x, voice });
+      }
+      if (prev.fly !== 'roam' && behaviour.fly === 'roam') {
+        sound.event({ type: 'takeoff', x: at.x });
+      }
+      if (prev.fly === 'roam' && behaviour.fly !== 'roam') {
+        sound.event({ type: 'touch-down', x: at.x });
+      }
     },
     /**
      * Guaranteed spacing and per-id-only placement cannot both hold — with a
@@ -694,20 +719,25 @@ export async function spawnCreature(
       root.pos.y = next.y;
       root.z = next.y;
     },
-    say(text) {
+    say(text, source = 'llm') {
       if (text.trim() === '') return;
       // Reading time comes off the line the creature said, not the wrapped
       // one — the line breaks are this bubble's business, not the reader's.
       showBubble(text, bubbleLifetime(text));
+      sound.event({ type: 'speak', x: at.x, voice, textLength: text.length, canned: source === 'canned' });
     },
     think() {
       showBubble('…', Number.POSITIVE_INFINITY);
+      sound.event({ type: 'thinking', x: at.x, voice });
     },
     clearThought() {
       // Only a thinking bubble is endless, so this can never cut short a
       // spoken line that replaced it. `update` resolves the flag because the
       // remaining life is measured on the same clock as every other motion.
       if (bubbleLife === Number.POSITIVE_INFINITY && bubbleShownAt !== null) endThought = true;
+    },
+    greet() {
+      sound.event({ type: 'greeting', x: at.x, voice });
     },
     destroy() {
       k.destroy(root);

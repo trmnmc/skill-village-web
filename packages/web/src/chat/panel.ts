@@ -1,4 +1,5 @@
 import { openLog, receiveError, receiveReply, sendMessage, type ChatLog } from './log.js';
+import { sound } from '../sound/player.js';
 
 export interface ChatPanel {
   open(creature: { id: string; label: string }): void;
@@ -14,7 +15,7 @@ export interface ChatPanel {
  * over the villager's head as well.
  */
 export function createChatPanel(opts: {
-  onBubble(creatureId: string, text: string): void;
+  onBubble(creatureId: string, text: string, source: 'llm' | 'canned'): void;
   /** A message is in flight — the scene shows a thought bubble. */
   onThinking(creatureId: string): void;
   /** The flight ended without a line to speak — retire the thought bubble. */
@@ -71,6 +72,7 @@ export function createChatPanel(opts: {
     log = sendMessage(log, text);
     input.value = '';
     render();
+    sound.event({ type: 'chat-send' });
     opts.onThinking(target);
 
     void fetch(`/api/creatures/${encodeURIComponent(target)}/chat`, {
@@ -84,7 +86,7 @@ export function createChatPanel(opts: {
         if (log && log.creatureId === target) {
           log = receiveReply(log, body.reply.text, body.reply.source);
           // The spoken bubble replaces the thought bubble in one move.
-          opts.onBubble(target, body.reply.text);
+          opts.onBubble(target, body.reply.text, body.reply.source);
           render();
         } else {
           opts.onThinkingDone(target);
@@ -102,6 +104,7 @@ export function createChatPanel(opts: {
   root.querySelector('#chat-close')!.addEventListener('click', () => {
     root.hidden = true;
     log = null;
+    sound.event({ type: 'chat-close' });
   });
 
   return {
@@ -109,6 +112,7 @@ export function createChatPanel(opts: {
       log = openLog(creature.id);
       title.textContent = creature.label;
       root.hidden = false;
+      sound.event({ type: 'chat-open' });
       render();
       // Prefetch: start writing the personality card while the player is
       // still typing their first message. Best-effort — the chat path
@@ -120,6 +124,7 @@ export function createChatPanel(opts: {
     close() {
       root.hidden = true;
       log = null;
+      sound.event({ type: 'chat-close' });
     },
     isOpen: () => !root.hidden,
   };

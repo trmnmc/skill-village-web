@@ -2,30 +2,55 @@ import { startVillage } from './scene/village.js';
 import { connect } from './net/client.js';
 import { createChatPanel } from './chat/panel.js';
 import { displayName } from './render/label.js';
+import { sound } from './sound/player.js';
+import { mountSoundHud } from './sound/hud.js';
+import { mountSoundcheck } from './sound/soundcheck.js';
 
 // The panel is built before the scene and the scene is told about the panel:
 // each one's reference to the other lives inside an arrow function, which only
 // runs long after both exist. Declaring them the other way round would need
 // the scene to know what a chat panel is.
 const panel = createChatPanel({
-  onBubble: (creatureId, text) => scene.sayFor(creatureId, text),
+  onBubble: (creatureId, text, source) => scene.sayFor(creatureId, text, source),
   onThinking: (creatureId) => scene.thinkFor(creatureId),
   onThinkingDone: (creatureId) => scene.clearThoughtFor(creatureId),
 });
 
 const scene = await startVillage({
-  onCreatureClick: (creature) => panel.open({ id: creature.id, label: displayName(creature) }),
+  onCreatureClick: (creature) => {
+    panel.open({ id: creature.id, label: displayName(creature) });
+    // Its audible name, spec §3: the signature phrase on meeting.
+    scene.greetFor(creature.id);
+  },
 });
+
+sound.init();
+mountSoundHud();
+mountSoundcheck();
+
+let lastStatus: 'connecting' | 'live' | 'offline' = 'connecting';
+// client.ts emits 'connecting' synchronously at the start of every retry, so
+// the real sequence after a drop is live → offline → connecting → live —
+// by the time 'live' lands, lastStatus is 'connecting', not 'offline'. This
+// flag survives that intermediate hop so "reconnected" still has something
+// to check against.
+let wasOffline = false;
 
 connect({
   onView: (view) => {
     scene.setView(view);
     if (view.llm) setSilentBanner(view.llm.mode);
   },
-  onStatus: (status) =>
+  onStatus: (status) => {
     scene.setStatus(
       status === 'live' ? 'live' : status === 'connecting' ? 'connecting…' : 'server offline — retrying',
-    ),
+    );
+    // Only real transitions ring, spec §4: losing a live village, or getting
+    // it back. The initial 'connecting' is a pending answer, not a verdict.
+    if (status === 'offline' && lastStatus === 'live') { sound.event({ type: 'offline' }); wasOffline = true; }
+    if (status === 'live' && wasOffline) { sound.event({ type: 'reconnected' }); wasOffline = false; }
+    lastStatus = status;
+  },
 });
 
 // The silent-movie banner rides the live state frames (every frame carries
