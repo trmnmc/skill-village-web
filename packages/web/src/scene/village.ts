@@ -9,6 +9,7 @@ import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, placeCreatures, type Spot } from 
 import type { VillageView } from '../net/protocol.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
 import { mountSky } from './sky.js';
+import { mountWeather } from './weather-layer.js';
 
 export interface VillageScene {
   k: KAPLAYCtx;
@@ -197,6 +198,10 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // creature spawns, so a villager arriving mid-session never lands above
   // an object this layer hasn't created yet.
   const sky = mountSky(k);
+  // World-space rain/snow/fog/etc, mounted alongside the sky layer — both are
+  // driven from the same `applyTheme` walker below, `sky.update(t)` and
+  // `weather.update(t)` called back to back on every resolved-theme change.
+  const weather = mountWeather(k);
 
   // Drag to pan along the strip. KAPLAY binds mousedown/mousemove/mouseup
   // on the canvas element itself (e.canvas.addEventListener, see
@@ -418,6 +423,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     // `house()` above) sets the one colour a window wears, with no other
     // pass in this walker touching it.
     sky.update(t);
+    weather.update(t);
   };
   applyTheme(themeStore.current());
   // No teardown path exists for this scene yet — same as the window-level
