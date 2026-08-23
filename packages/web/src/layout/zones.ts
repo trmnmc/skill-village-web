@@ -18,19 +18,19 @@ export interface Zone {
  */
 export const ZONES: readonly Zone[] = Object.freeze([
   { id: 'hatchery', label: 'Hatchery', x: 0, w: 520 },
-  { id: 'homes', label: 'Homes', x: 520, w: 3200 },
-  { id: 'adoption', label: 'Adoption Center', x: 3720, w: 760 },
-  { id: 'notice', label: 'Notice Board', x: 4480, w: 420 },
+  { id: 'homes', label: 'Homes', x: 520, w: 3000 },
+  { id: 'adoption', label: 'Adoption Center', x: 3520, w: 760 },
+  { id: 'notice', label: 'Notice Board', x: 4280, w: 420 },
 ]);
 
-export const WORLD_W = 4900;
+export const WORLD_W = 4700;
 /** Baseline the props are anchored around; depth rows reach both ways from it. */
 export const GROUND_Y = 620;
 
 /** Depth rows behind the baseline, toward the horizon. */
 const BACK_ROWS = 3;
 /** Depth rows in front of the baseline, toward the viewer. */
-const FRONT_ROWS = 2;
+const FRONT_ROWS = 3;
 const ROWS = BACK_ROWS + FRONT_ROWS + 1;
 const ROW_DEPTH = 46;
 const MARGIN = 90;
@@ -49,12 +49,12 @@ export const GROUND_FRONT = GROUND_Y + FRONT_ROWS * ROW_DEPTH;
 const rowY = (row: number) => GROUND_FRONT - row * ROW_DEPTH;
 
 /**
- * The row lottery, front-most first — one entry per row. The field fills
- * from the back: most villagers mill about the baseline and the far field,
- * and coming near the camera is the exception, so the front row draws the
- * fewest tickets and the second row is still shy of the rest.
+ * The row lottery, front-most first — one entry per row. Only the row
+ * pressed right against the glass stays sparse; every other row carries its
+ * share, or the bottom of the frame — the biggest stretch of screen the
+ * village owns — reads as empty field.
  */
-const ROW_WEIGHTS: readonly number[] = [1, 2, 3, 3, 3, 3];
+const ROW_WEIGHTS: readonly number[] = [2, 3, 3, 3, 3, 3, 3];
 const TOTAL_WEIGHT = ROW_WEIGHTS.reduce((sum, w) => sum + w, 0);
 
 /** Weighted row draw from a creature's hash; ROW_WEIGHTS must cover every row. */
@@ -96,8 +96,8 @@ const HOMES = ZONES.find((z) => z.id === 'homes')!;
  * these and placeCreatures derives its keep-out bands from them, so a moved
  * tree moves its keep-out with it — the two can never drift apart.
  */
-export const HOMES_HOUSE_XS: readonly number[] = [200, 1100, 2150].map((dx) => HOMES.x + dx);
-export const HOMES_TREE_XS: readonly number[] = [80, 750, 1500, 2500, 3000].map((dx) => HOMES.x + dx);
+export const HOMES_HOUSE_XS: readonly number[] = [190, 1030, 2015].map((dx) => HOMES.x + dx);
+export const HOMES_TREE_XS: readonly number[] = [75, 700, 1405, 2345, 2810].map((dx) => HOMES.x + dx);
 /** The Homes sign's centre — the one prop that is information, not decor. */
 export const HOMES_SIGN_X = HOMES.x + HOMES.w / 2;
 

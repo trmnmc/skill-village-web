@@ -150,23 +150,19 @@ describe('placeCreatures', () => {
   });
 
   it('fills the field from the back: the closer to the viewer, the fewer villagers', () => {
-    // A depth gradient is what sells the composition: most villagers mill
-    // about the baseline and the far field, and only a few bold ones come
-    // near the camera. Uniform rows put a sixth of the village in the front
-    // row and it read as a crowd pressed against the glass.
+    // A depth gradient still sells the composition, but only the row pressed
+    // right against the glass stays sparse — the rest of the foreground
+    // carries its share, or the bottom of the frame reads as empty field.
     const many = Array.from({ length: 600 }, (_, i) => `skill:many${i}`);
     const counts = new Map<number, number>();
     for (const { y } of placeCreatures(many).values()) {
       counts.set(y, (counts.get(y) ?? 0) + 1);
     }
     const front = counts.get(GROUND_FRONT) ?? 0;
-    const second = counts.get(GROUND_FRONT - 46) ?? 0;
     expect(front).toBeGreaterThan(0);
     for (const [y, n] of counts) {
       if (y === GROUND_FRONT) continue;
       expect(front, `front row vs row y=${y}`).toBeLessThan(n);
-      if (y === GROUND_FRONT - 46) continue;
-      expect(second, `second row vs row y=${y}`).toBeLessThan(n);
     }
   });
 
@@ -221,11 +217,12 @@ describe('placeCreatures', () => {
       homesKeepOutAt(feetY).some((b) => b.left < x && x < b.right);
 
     // The sign stays approachable from behind (back rows) and in front below
-    // (front-most row), and protected from every row that would cover it.
-    for (const y of [GROUND_Y - 3 * 46, GROUND_Y - 2 * 46, GROUND_FRONT]) {
+    // (the near rows, whose body tops no longer reach the board), and
+    // protected from every row that would cover it.
+    for (const y of [GROUND_Y - 3 * 46, GROUND_Y - 2 * 46, GROUND_Y + 2 * 46, GROUND_FRONT]) {
       expect(inBand(y, HOMES_SIGN_X), `sign free at y=${y}`).toBe(false);
     }
-    for (const y of [GROUND_Y - 46, GROUND_Y, GROUND_FRONT - 46]) {
+    for (const y of [GROUND_Y - 46, GROUND_Y, GROUND_Y + 46]) {
       expect(inBand(y, HOMES_SIGN_X), `sign protected at y=${y}`).toBe(true);
     }
 
