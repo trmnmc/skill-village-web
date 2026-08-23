@@ -258,13 +258,15 @@ export interface CloudBlobSpec {
 }
 
 /**
- * Slow billow: a rect's size breathes around its authored dimensions on two
+ * Slow billow, one-sided: the authored size is the *floor* and the cloud
+ * swells upward from it, oscillating between authored and ~1.35x on two
  * incommensurate sines (the same trick the village's wander uses), seeded
- * per rect so no two breathe together. Bounded to ±11% and slow enough that
- * one frame's change is invisible — a breath, never a morph or a jitter.
+ * per rect so no two swell together. Slow enough that one frame's change is
+ * invisible — a swell, never a morph or a jitter.
  */
 function billow(tSec: number, seed: number): number {
-  return 1 + 0.07 * Math.sin(tSec * 0.09 + seed * 7) + 0.04 * Math.sin(tSec * 0.157 + seed * 3);
+  const wave = (Math.sin(tSec * 0.09 + seed * 7) + 0.5 * Math.sin(tSec * 0.157 + seed * 3)) / 1.5;
+  return 1 + 0.35 * (wave + 1) / 2;
 }
 
 /**
@@ -300,11 +302,15 @@ function driftedClusterRects(
     cluster.rects.forEach((r, ri) => {
       const seed = frac(cluster.baseX * 0.317 + ri * 0.611);
       const bw = billow(tSec, seed);
-      const bh = 1 + 0.05 * Math.sin(tSec * 0.11 + seed * 5);
+      // Height swells on the same one-sided rule, gentler and on its own
+      // phase, so a swelling cloud thickens rather than only stretching.
+      const bh = 1 + 0.2 * (Math.sin(tSec * 0.11 + seed * 5) + 1) / 2;
       const sway = 3 * Math.sin(tSec * 0.073 + seed * 11);
+      // Growth is centred: the rect swells in place instead of bulging
+      // right- and downward off its authored anchor.
       out.push({
-        x: anchorX + (r.dx + sway) * s,
-        y: r.y * s,
+        x: anchorX + (r.dx + sway - (r.w * (bw - 1)) / 2) * s,
+        y: (r.y - (r.h * (bh - 1)) / 2) * s,
         w: r.w * bw * s,
         h: r.h * bh * s,
         tone: r.tone,

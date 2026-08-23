@@ -312,16 +312,17 @@ describe('overcastCloudSpecs', () => {
     }
   });
 
-  it('billows: rect sizes breathe slowly around their authored dimensions', () => {
+  it('billows upward: the authored size is the floor, and clouds swell well past it', () => {
     const at = (t: number) => overcastCloudSpecs('cloudy', false, t, 0, 480, 182)[2]!;
-    const widths = [0, 7, 14, 21, 28].map((t) => at(t).w);
-    expect(new Set(widths).size).toBeGreaterThan(1); // it moves
+    const widths = Array.from({ length: 40 }, (_, i) => at(i * 2.7).w);
     for (const w of widths) {
-      expect(w).toBeGreaterThan(96 * 0.85); // this near cluster's body is 96 ref px wide
-      expect(w).toBeLessThan(96 * 1.15); // ...and billow stays a breath, not a morph
+      expect(w).toBeGreaterThanOrEqual(96 * 0.999); // never smaller than authored (96 ref px)
+      expect(w).toBeLessThan(96 * 1.4); // ...and swelling stays a swell, not a bloom
     }
+    // "Bigger sometimes" is real: the swell visits well above the floor.
+    expect(Math.max(...widths)).toBeGreaterThan(96 * 1.2);
     // One frame at 60fps changes the width imperceptibly — billow never jitters.
-    expect(Math.abs(at(10 + 1 / 60).w - at(10).w)).toBeLessThan(0.1);
+    expect(Math.abs(at(10 + 1 / 60).w - at(10).w)).toBeLessThan(0.2);
   });
 
   it('scales intra-cluster offsets and sizes by fy(horizonY) on both axes (class-2 cluster)', () => {
@@ -398,12 +399,14 @@ describe('fairCloudSpecs', () => {
     }
   });
 
-  it('billows: sizes breathe slowly and stay near their authored dimensions', () => {
-    const widths = [0, 9, 18, 27].map((t) => fairCloudSpecs('day', t, 0, 480, 182, 0).at(-3)!.w);
-    expect(new Set(widths).size).toBeGreaterThan(1);
+  it('billows upward from the authored floor, never below it', () => {
+    const widths = Array.from({ length: 40 }, (_, i) =>
+      fairCloudSpecs('day', i * 2.7, 0, 480, 182, 0).at(-3)!.w,
+    );
     for (const w of widths) {
-      expect(w).toBeGreaterThan(40 * 0.85); // the near cluster's 40 ref-px body
-      expect(w).toBeLessThan(40 * 1.15);
+      expect(w).toBeGreaterThanOrEqual(40 * 0.999); // the near cluster's 40 ref-px body
+      expect(w).toBeLessThan(40 * 1.4);
     }
+    expect(Math.max(...widths)).toBeGreaterThan(40 * 1.2);
   });
 });
