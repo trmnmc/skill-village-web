@@ -18,29 +18,47 @@ const scene = await startVillage({
 });
 
 connect({
-  onView: (view) => scene.setView(view),
+  onView: (view) => {
+    scene.setView(view);
+    if (view.llm) setSilentBanner(view.llm.mode);
+  },
   onStatus: (status) =>
     scene.setStatus(
       status === 'live' ? 'live' : status === 'connecting' ? 'connecting…' : 'server offline — retrying',
     ),
 });
 
-// Silent mode is a property of the server process, not of the village state,
-// so it is asked for once rather than watched: no CLI answered at boot and
-// none will start answering later in this session.
-void fetch('/api/llm')
-  .then((r) => r.json())
-  .then((llm: { mode?: string }) => {
-    if (llm.mode !== 'silent') return;
+// The silent-movie banner rides the live state frames (every frame carries
+// the service mode), so it clears itself the moment the boot probe lands and
+// can reappear if the CLI is lost mid-session. A page that loads while the
+// probe is still in flight briefly sees 'silent', which is a pending answer,
+// not a verdict — hence the grace delay before showing anything.
+const BANNER_GRACE_MS = 4_000;
+let latestMode: 'full' | 'silent' = 'full';
+let bannerTimer: ReturnType<typeof setTimeout> | null = null;
+let bannerDismissed = false;
+
+function setSilentBanner(mode: 'full' | 'silent'): void {
+  latestMode = mode;
+  if (mode === 'full') {
+    if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
+    document.getElementById('silent-banner')?.remove();
+    bannerDismissed = false; // a later, separate outage deserves a fresh banner
+    return;
+  }
+  if (bannerDismissed || bannerTimer || document.getElementById('silent-banner')) return;
+  bannerTimer = setTimeout(() => {
+    bannerTimer = null;
+    if (latestMode !== 'silent' || bannerDismissed) return;
     const strip = document.createElement('div');
     strip.id = 'silent-banner';
     strip.innerHTML = `The village is in silent-movie mode — no Claude CLI answered. Creatures speak from memory.
-      <small>(Started from inside a Claude Code session? Run npm run dev from a plain terminal.)</small>
+      <small>(Is the claude CLI installed and logged in? The server console says what the probe hit.)</small>
       <button type="button" aria-label="Dismiss">×</button>`;
-    strip.querySelector('button')!.addEventListener('click', () => strip.remove());
+    strip.querySelector('button')!.addEventListener('click', () => {
+      bannerDismissed = true;
+      strip.remove();
+    });
     document.body.appendChild(strip);
-  })
-  .catch(() => {
-    // No answer from the server is already visible in the status line; a
-    // missing banner is not worth a second complaint.
-  });
+  }, BANNER_GRACE_MS);
+}

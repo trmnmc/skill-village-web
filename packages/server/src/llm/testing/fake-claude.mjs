@@ -11,7 +11,10 @@
  *   card        — replies with a valid personality-card JSON (as the model
  *                 would: a JSON string inside `result`)
  *   card-broken-once — first call returns unparseable prose, second a valid
- *                 card (state kept in a scratch file beside the script)
+ *                 card (state kept in a scratch file beside the script).
+ *                 Accepts a `:key` suffix (card-broken-once:mytest) giving
+ *                 the marker a per-test name, so a parallel worker's
+ *                 resetFakeCli() cannot delete it mid-test
  *   unauthenticated — is_error with the real "Not logged in" text
  *   garbage     — prints something that is not JSON
  *   hang        — never replies (for the timeout path)
@@ -27,7 +30,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-const behaviour = process.argv[2] ?? 'ok';
+const [behaviour, markerKey] = (process.argv[2] ?? 'ok').split(':');
 const chunks = [];
 process.stdin.on('data', (c) => chunks.push(c));
 process.stdin.on('end', () => {
@@ -64,7 +67,8 @@ process.stdin.on('end', () => {
     case 'card':
       return reply(card);
     case 'card-broken-once': {
-      const marker = join(dirname(fileURLToPath(import.meta.url)), '.broken-once');
+      const name = markerKey ? `.broken-once-${markerKey}` : '.broken-once';
+      const marker = join(dirname(fileURLToPath(import.meta.url)), name);
       if (!existsSync(marker)) {
         writeFileSync(marker, '1');
         return reply('I would love to, but here is prose instead of JSON.');

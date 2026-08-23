@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { WebSocket } from 'ws';
 import { makeSandbox, skillFixture, type Sandbox } from '../testing/sandbox.js';
 import { createVillage, type Village } from '../village.js';
 import { defaultLlmState } from '../llm/ledger.js';
@@ -62,6 +63,40 @@ describe('GET /api/state', () => {
     const app = await boot();
     const res = await app.inject({ method: 'GET', url: '/api/state' });
     expect(res.json()).toHaveProperty('startupNote');
+  });
+
+  it('stamps the live llm mode onto the state payload', async () => {
+    // The client's silent-movie banner rides the state frames now; a state
+    // payload without the mode would read as full and hide a real outage.
+    const silent = await boot(['tdd']); // no llm option: silent stub
+    expect((await silent.inject({ method: 'GET', url: '/api/state' })).json().llm.mode).toBe('silent');
+  });
+
+  it('stamps full onto the state payload once the probe has succeeded', async () => {
+    const app = await bootWithLlm(['tdd'], 'card');
+    expect((await app.inject({ method: 'GET', url: '/api/state' })).json().llm.mode).toBe('full');
+  });
+});
+
+describe('GET /ws', () => {
+  it('stamps the live llm mode onto every websocket frame', async () => {
+    const app = await boot(['tdd']); // no llm option: silent stub
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      const port = (app.server.address() as { port: number }).port;
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+      const frame = await new Promise<{ type: string; state: { llm?: { mode?: string } } }>(
+        (resolve, reject) => {
+          socket.on('message', (raw) => resolve(JSON.parse(String(raw))));
+          socket.on('error', reject);
+        },
+      );
+      socket.close();
+      expect(frame.type).toBe('state');
+      expect(frame.state.llm?.mode).toBe('silent');
+    } finally {
+      await app.close();
+    }
   });
 });
 

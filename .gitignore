@@ -5,4 +5,4 @@ dist/
 *.tsbuildinfo
 contact-sheet.html
 .claude/
-packages/server/src/llm/testing/.broken-once
+packages/server/src/llm/testing/.broken-once*

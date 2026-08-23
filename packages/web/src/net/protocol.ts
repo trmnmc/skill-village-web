@@ -86,7 +86,7 @@ export function toView(payload: unknown): VillageView | null {
   let llm: LlmView | null = null;
   const rawLlm = p.llm;
   if (typeof rawLlm === 'object' && rawLlm !== null) {
-    const l = rawLlm as { ledger?: Record<string, unknown>; config?: Record<string, unknown> };
+    const l = rawLlm as { mode?: unknown; ledger?: Record<string, unknown>; config?: Record<string, unknown> };
     const led = l.ledger;
     const cfg = l.config;
     if (
@@ -95,7 +95,10 @@ export function toView(payload: unknown): VillageView | null {
       typeof cfg.interactiveCap === 'number'
     ) {
       llm = {
-        mode: 'full',
+        // The server stamps the live service mode onto each frame; a frame
+        // without one (older server, /api/state) reads as full so a missing
+        // field can never conjure a false silent-movie banner.
+        mode: l.mode === 'silent' ? 'silent' : 'full',
         interactiveCap: cfg.interactiveCap,
         interactiveRemaining: Math.max(0, cfg.interactiveCap - led.interactiveIn - led.interactiveOut),
       };

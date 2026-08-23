@@ -23,8 +23,16 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
 
   app.get('/api/health', async () => ({ ok: true, creatures: Object.keys(village.getState().creatures).length }));
 
+  // The service mode lives on the llm service, not in the persisted state,
+  // but every consumer of a state payload wants them together: the client's
+  // silent-movie banner rides these frames and must never have to guess.
+  const withMode = (state: ReturnType<Village['getState']>) => ({
+    ...state,
+    llm: { ...state.llm, mode: village.llmMode() },
+  });
+
   app.get('/api/state', async () => ({
-    ...village.getState(),
+    ...withMode(village.getState()),
     startupNote: village.startupNote,
   }));
 
@@ -148,10 +156,10 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
   });
 
   app.get('/ws', { websocket: true }, (socket) => {
-    socket.send(JSON.stringify({ type: 'state', state: village.getState() }));
+    socket.send(JSON.stringify({ type: 'state', state: withMode(village.getState()) }));
     const unsubscribe = village.subscribe((state) => {
       if (socket.readyState === socket.OPEN) {
-        socket.send(JSON.stringify({ type: 'state', state }));
+        socket.send(JSON.stringify({ type: 'state', state: withMode(state) }));
       }
     });
     socket.on('close', unsubscribe);

@@ -68,9 +68,13 @@ describe('generatePersona', () => {
   });
 
   it('retries once past a malformed reply', async () => {
-    const service = serviceWith('card-broken-once');
+    // The keyed marker belongs to this test alone; the probe burns one
+    // broken call, the keyed reset re-arms it, and the two generatePersona
+    // attempts then see broken-then-valid regardless of what parallel
+    // workers' bare resetFakeCli() calls are doing.
+    const service = serviceWith('card-broken-once:persona-retry');
     await service.probe();
-    await resetFakeCli();
+    await resetFakeCli('persona-retry');
     const persona = await generatePersona(service, input);
     expect(persona?.nickname).toBe('Nit');
   });

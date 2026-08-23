@@ -44,6 +44,31 @@ describe('toView', () => {
     expect(toView({ creatures: {}, problems: [] })!.creatures).toEqual([]);
   });
 
+  it('carries a silent llm mode through instead of assuming full', () => {
+    // The banner used to come from a one-shot fetch that raced the boot
+    // probe; the live frames are the truth now, so the mode must survive.
+    const withLlm = {
+      ...state,
+      llm: {
+        mode: 'silent',
+        ledger: { interactiveIn: 10, interactiveOut: 20, autonomousIn: 0, autonomousOut: 0 },
+        config: { interactiveCap: 500_000 },
+      },
+    };
+    expect(toView(withLlm)!.llm!.mode).toBe('silent');
+  });
+
+  it('treats a frame without a mode as full, not silent', () => {
+    const withLlm = {
+      ...state,
+      llm: {
+        ledger: { interactiveIn: 10, interactiveOut: 20, autonomousIn: 0, autonomousOut: 0 },
+        config: { interactiveCap: 500_000 },
+      },
+    };
+    expect(toView(withLlm)!.llm!.mode).toBe('full');
+  });
+
   it('rejects a payload with no creature map', () => {
     expect(toView({ problems: [] })).toBeNull();
     expect(toView(null)).toBeNull();
