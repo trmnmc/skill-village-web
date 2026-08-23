@@ -210,3 +210,25 @@ describe('GET /api/llm and PATCH /api/llm/config', () => {
     }
   });
 });
+
+describe('POST /api/creatures/:id/persona', () => {
+  it('writes the card ahead of the first chat', async () => {
+    const app = await bootWithLlm(['code-review'], 'card');
+    const res = await app.inject({ method: 'POST', url: '/api/creatures/skill:code-review/persona' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().creature.personality.temperament).toBe('a fastidious detective');
+  });
+
+  it('answers 200 with no card when there is no model', async () => {
+    const app = await boot(['tdd']);
+    const res = await app.inject({ method: 'POST', url: '/api/creatures/skill:tdd/persona' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().creature.personality).toBeNull();
+  });
+
+  it('404s an unknown creature', async () => {
+    const app = await boot([]);
+    const res = await app.inject({ method: 'POST', url: '/api/creatures/skill:ghost/persona' });
+    expect(res.statusCode).toBe(404);
+  });
+});

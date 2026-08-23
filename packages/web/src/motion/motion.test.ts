@@ -206,3 +206,10 @@ describe('nobody moves in lockstep', () => {
     expect(new Set(phases.map((phi) => gaze(t, phi))).size).toBeGreaterThan(1);
   });
 });
+
+describe('bubbleScale — endless life', () => {
+  it('sustains at 1 forever on an Infinity lifetime, so a thinking bubble never shrinks on its own', () => {
+    expect(bubbleScale(5, Number.POSITIVE_INFINITY)).toBe(1);
+    expect(bubbleScale(600, Number.POSITIVE_INFINITY)).toBe(1);
+  });
+});

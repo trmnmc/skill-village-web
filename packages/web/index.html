@@ -38,6 +38,11 @@
       #chat-entries li { margin-bottom: 10px; padding: 8px 10px; border-radius: 8px; max-width: 90%; }
       #chat-entries li[data-who='player'] { background: #E8E0D0; margin-left: auto; }
       #chat-entries li[data-who='creature'] { background: #F2E5C4; border: 1.5px solid #3A2E22; }
+      #chat-entries li.thinking { animation: chat-thinking 1.2s ease-in-out infinite; }
+      @keyframes chat-thinking {
+        0%, 100% { opacity: 0.35; }
+        50% { opacity: 1; }
+      }
       #chat-form { padding: 10px; border-top: 2px solid #3A2E22; }
       #chat-input { width: 100%; box-sizing: border-box; padding: 8px 10px; font: inherit;
         border: 2px solid #3A2E22; border-radius: 8px; background: #FFFDF4; }

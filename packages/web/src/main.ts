@@ -9,6 +9,8 @@ import { displayName } from './render/label.js';
 // the scene to know what a chat panel is.
 const panel = createChatPanel({
   onBubble: (creatureId, text) => scene.sayFor(creatureId, text),
+  onThinking: (creatureId) => scene.thinkFor(creatureId),
+  onThinkingDone: (creatureId) => scene.clearThoughtFor(creatureId),
 });
 
 const scene = await startVillage({

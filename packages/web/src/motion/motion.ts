@@ -11,7 +11,8 @@ const HOP_RECOVER = 0.23;
 const HOP_HEIGHT = 64;
 
 const BUBBLE_IN = 0.38;
-const BUBBLE_OUT = 0.28;
+/** Exported for the scene: ending a thinking bubble means giving it this much life. */
+export const BUBBLE_OUT = 0.28;
 
 export function clamp(value: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, value));

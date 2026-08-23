@@ -61,6 +61,17 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
     },
   );
 
+  app.post<{ Params: { id: string } }>('/api/creatures/:id/persona', async (request, reply) => {
+    if (!village.getState().creatures[request.params.id]) {
+      return reply.code(404).send({ error: `Creature not found: ${request.params.id}` });
+    }
+    // Prefetch: the panel calls this the moment it opens, so the card is
+    // (being) written while the player types their first message. Failures
+    // stay quiet — the chat path retries the card itself.
+    await village.ensurePersona(request.params.id);
+    return { creature: village.getState().creatures[request.params.id] ?? null };
+  });
+
   app.post<{ Params: { id: string }; Body: { message?: unknown } }>(
     '/api/creatures/:id/chat',
     async (request, reply) => {

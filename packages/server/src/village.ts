@@ -70,6 +70,12 @@ export interface Village {
   care(creatureId: string, verb: CareVerb): Promise<void>;
   /** Say something to a creature and hear back. Never rejects on a model failure. */
   chat(creatureId: string, message: string): Promise<ChatReply>;
+  /**
+   * Write the creature's personality card ahead of time, so the first chat
+   * doesn't pay for two model calls in a row. Single-flight, quiet on every
+   * failure, and a no-op for an unknown id or a creature already carded.
+   */
+  ensurePersona(creatureId: string): Promise<void>;
   /** Whether a model is answering at all, for the quiet-village banner. */
   llmMode(): LlmMode;
   /** One cheap call to find out whether a model is reachable at all. */
@@ -333,6 +339,10 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
 
     llmMode() {
       return llm.mode();
+    },
+
+    ensurePersona(creatureId) {
+      return ensurePersona(creatureId);
     },
 
     probeLlm() {

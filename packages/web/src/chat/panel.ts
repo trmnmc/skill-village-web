@@ -13,7 +13,13 @@ export interface ChatPanel {
  * and hands each creature reply to the scene through onBubble so it can float
  * over the villager's head as well.
  */
-export function createChatPanel(opts: { onBubble(creatureId: string, text: string): void }): ChatPanel {
+export function createChatPanel(opts: {
+  onBubble(creatureId: string, text: string): void;
+  /** A message is in flight — the scene shows a thought bubble. */
+  onThinking(creatureId: string): void;
+  /** The flight ended without a line to speak — retire the thought bubble. */
+  onThinkingDone(creatureId: string): void;
+}): ChatPanel {
   const root = document.createElement('aside');
   root.id = 'chat-panel';
   root.hidden = true;
@@ -43,6 +49,15 @@ export function createChatPanel(opts: { onBubble(creatureId: string, text: strin
         return li;
       }),
     );
+    if (log.pending) {
+      // The first exchange writes the creature's whole personality before it
+      // answers, which takes long enough to read as a hang without this.
+      const li = document.createElement('li');
+      li.dataset.who = 'creature';
+      li.className = 'thinking';
+      li.textContent = '· · ·';
+      entriesEl.appendChild(li);
+    }
     input.disabled = log.pending;
     if (!log.pending) input.focus();
     entriesEl.scrollTop = entriesEl.scrollHeight;
@@ -56,6 +71,7 @@ export function createChatPanel(opts: { onBubble(creatureId: string, text: strin
     log = sendMessage(log, text);
     input.value = '';
     render();
+    opts.onThinking(target);
 
     void fetch(`/api/creatures/${encodeURIComponent(target)}/chat`, {
       method: 'POST',
@@ -67,11 +83,15 @@ export function createChatPanel(opts: { onBubble(creatureId: string, text: strin
         const body = (await res.json()) as { reply: { text: string; source: 'llm' | 'canned' } };
         if (log && log.creatureId === target) {
           log = receiveReply(log, body.reply.text, body.reply.source);
+          // The spoken bubble replaces the thought bubble in one move.
           opts.onBubble(target, body.reply.text);
           render();
+        } else {
+          opts.onThinkingDone(target);
         }
       })
       .catch(() => {
+        opts.onThinkingDone(target);
         if (log && log.creatureId === target) {
           log = receiveError(log);
           render();
@@ -90,6 +110,12 @@ export function createChatPanel(opts: { onBubble(creatureId: string, text: strin
       title.textContent = creature.label;
       root.hidden = false;
       render();
+      // Prefetch: start writing the personality card while the player is
+      // still typing their first message. Best-effort — the chat path
+      // regenerates the card itself, and the server single-flights the two.
+      void fetch(`/api/creatures/${encodeURIComponent(creature.id)}/persona`, { method: 'POST' }).catch(
+        () => {},
+      );
     },
     close() {
       root.hidden = true;

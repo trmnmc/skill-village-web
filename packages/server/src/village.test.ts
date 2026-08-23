@@ -452,3 +452,33 @@ describe('chat', () => {
     await expect(talking).rejects.toThrow('not found');
   });
 });
+
+describe('ensurePersona (public prefetch surface)', () => {
+  it('writes the card without applying any care', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('prefetch', skillFixture('prefetch'));
+    let llmState = defaultLlmState(1_000);
+    const service = createLlmService({
+      command: fakeCliCommand('card'),
+      now: () => 1_000,
+      getLlm: () => llmState,
+      setLlm: async (next) => { llmState = next; },
+    });
+    await service.probe();
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000, llm: service });
+
+    const before = village.getState().creatures['skill:prefetch']!.stats;
+    await village.ensurePersona('skill:prefetch');
+
+    const creature = village.getState().creatures['skill:prefetch']!;
+    expect(creature.personality?.temperament).toBe('a fastidious detective');
+    expect(creature.nickname).toBe('Nit');
+    expect(creature.stats).toEqual(before);
+  });
+
+  it('quietly resolves for an unknown creature', async () => {
+    sandbox = await makeSandbox();
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000 });
+    await expect(village.ensurePersona('skill:ghost')).resolves.toBeUndefined();
+  });
+});

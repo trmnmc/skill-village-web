@@ -14,6 +14,9 @@ export interface VillageScene {
    * bubble is a second showing of the line, not the record of it.
    */
   sayFor(creatureId: string, text: string): void;
+  /** Show / retire the "composing a reply" thought bubble over one creature. */
+  thinkFor(creatureId: string): void;
+  clearThoughtFor(creatureId: string): void;
 }
 
 export interface VillageOptions {
@@ -396,6 +399,12 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
       // its reply lands — has no actor to speak through. The panel holds the
       // line either way, so there is nothing to recover here.
       actors.get(creatureId)?.say(text);
+    },
+    thinkFor(creatureId) {
+      actors.get(creatureId)?.think();
+    },
+    clearThoughtFor(creatureId) {
+      actors.get(creatureId)?.clearThought();
     },
   };
 }

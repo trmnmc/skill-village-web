@@ -8,6 +8,7 @@ import { displayName, fileLabel } from '../render/label.js';
 import { behaviourFor } from '../motion/behaviour.js';
 import {
   breathe,
+  BUBBLE_OUT,
   bubbleLifetime,
   bubbleScale,
   gaze,
@@ -48,6 +49,13 @@ export interface CreatureActor {
    * rather than queueing behind it.
    */
   say(text: string): void;
+  /**
+   * Show a small endless "…" bubble — the creature is composing a reply.
+   * The next `say` replaces it; `clearThought` shrinks it away when the
+   * reply never comes.
+   */
+  think(): void;
+  clearThought(): void;
   destroy(): void;
 }
 
@@ -424,6 +432,41 @@ export async function spawnCreature(
    */
   let bubbleShownAt: number | null = null;
   let bubbleLife = 0;
+  let endThought = false;
+
+  /**
+   * Measure on the component that will draw the line. Assigning `.text`
+   * re-runs KAPLAY's own formatter synchronously and republishes
+   * `.width`/`.height` (its `set text` → `update()` path), so these are
+   * the dimensions of the glyphs that actually land on screen — the box is
+   * sized from the text, never from a wrap budget, which is the whole
+   * point of the first playtest's complaint about oversized signs.
+   *
+   * The scale is pinned first because the component reports the
+   * *pre-scale* width (`formatted.width / scale.x`, components/draw/text.ts)
+   * and a new bubble can arrive while the previous one is mid-shrink at some
+   * arbitrary scale. At 1 the reported numbers are supersampled pixels,
+   * so screen pixels are one division away. `update` takes the scale back
+   * over on the next frame.
+   */
+  const showBubble = (text: string, life: number) => {
+    bubbleText.scale = k.vec2(1, 1);
+    const measure = (line: string) => {
+      bubbleText.text = escapeStyled(line);
+      return bubbleText.width / TEXT_SS;
+    };
+    bubbleText.text = wrapToWidth(measure, text, BUBBLE_MAX_W).map(escapeStyled).join('\n');
+    bubbleW = bubbleText.width / TEXT_SS;
+    bubbleH = bubbleText.height / TEXT_SS;
+    bubbleLife = life;
+    bubbleShownAt = -1;
+    endThought = false;
+    // Nothing draws until `update` has given this line a real scale; without
+    // this it could flash for one frame at the measuring scale of 1, which
+    // is TEXT_SS times too big.
+    bubbleText.hidden = true;
+    bubbleBg.hidden = true;
+  };
   /** The rendered size of the current line, in screen pixels. Set by `say`. */
   let bubbleW = 0;
   let bubbleH = 0;
@@ -550,6 +593,12 @@ export async function spawnCreature(
 
       if (bubbleShownAt !== null) {
         if (bubbleShownAt === -1) bubbleShownAt = t;
+        if (endThought) {
+          // Give the endless thinking bubble exactly a shrink-out's worth of
+          // remaining life, measured from this frame.
+          endThought = false;
+          if (bubbleLife === Number.POSITIVE_INFINITY) bubbleLife = t - bubbleShownAt + BUBBLE_OUT;
+        }
         const age = t - bubbleShownAt;
         const scale = bubbleScale(age, bubbleLife);
         // Scale is 0 at both ends of the life; the age guard is what tells the
@@ -647,36 +696,18 @@ export async function spawnCreature(
     },
     say(text) {
       if (text.trim() === '') return;
-      // Measure on the component that will draw the line. Assigning `.text`
-      // re-runs KAPLAY's own formatter synchronously and republishes
-      // `.width`/`.height` (its `set text` → `update()` path), so these are
-      // the dimensions of the glyphs that actually land on screen — the box is
-      // sized from the text, never from a wrap budget, which is the whole
-      // point of the first playtest's complaint about oversized signs.
-      //
-      // The scale is pinned first because the component reports the
-      // *pre-scale* width (`formatted.width / scale.x`, components/draw/text.ts)
-      // and `say` can arrive while the previous line is mid-shrink at some
-      // arbitrary scale. At 1 the reported numbers are supersampled pixels,
-      // so screen pixels are one division away. `update` takes the scale back
-      // over on the next frame.
-      bubbleText.scale = k.vec2(1, 1);
-      const measure = (line: string) => {
-        bubbleText.text = escapeStyled(line);
-        return bubbleText.width / TEXT_SS;
-      };
-      bubbleText.text = wrapToWidth(measure, text, BUBBLE_MAX_W).map(escapeStyled).join('\n');
-      bubbleW = bubbleText.width / TEXT_SS;
-      bubbleH = bubbleText.height / TEXT_SS;
       // Reading time comes off the line the creature said, not the wrapped
       // one — the line breaks are this bubble's business, not the reader's.
-      bubbleLife = bubbleLifetime(text);
-      bubbleShownAt = -1;
-      // Nothing draws until `update` has given this line a real scale; without
-      // this it could flash for one frame at the measuring scale of 1, which
-      // is TEXT_SS times too big.
-      bubbleText.hidden = true;
-      bubbleBg.hidden = true;
+      showBubble(text, bubbleLifetime(text));
+    },
+    think() {
+      showBubble('…', Number.POSITIVE_INFINITY);
+    },
+    clearThought() {
+      // Only a thinking bubble is endless, so this can never cut short a
+      // spoken line that replaced it. `update` resolves the flag because the
+      // remaining life is measured on the same clock as every other motion.
+      if (bubbleLife === Number.POSITIVE_INFINITY && bubbleShownAt !== null) endThought = true;
     },
     destroy() {
       k.destroy(root);
