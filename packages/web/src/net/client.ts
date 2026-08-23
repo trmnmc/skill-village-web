@@ -1,4 +1,4 @@
-import { parseServerMessage, toView, type VillageView } from './protocol.js';
+﻿import { parseServerMessage, toView, type VillageView } from './protocol.js';
 
 export interface ClientHandlers {
   onView(view: VillageView): void;
@@ -53,4 +53,22 @@ export function connect(handlers: ClientHandlers): { close(): void } {
       socket?.close();
     },
   };
+}
+
+/**
+ * Move a creature into (or out of, with null) the robot. True on success;
+ * false is "the server said no or is away", which the caller treats as
+ * "nothing happened" — the next state frame is the truth either way.
+ */
+export async function setRobotResident(creatureId: string | null): Promise<boolean> {
+  try {
+    const res = await fetch('/api/robot/resident', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ creatureId }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }

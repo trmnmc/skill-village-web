@@ -166,3 +166,23 @@ describe('toView — llm block', () => {
     expect(view.llm).toBeNull();
   });
 });
+
+describe('robot fields', () => {
+  it('reads the resident and activity stamp when present', () => {
+    const view = toView({ ...state, robot: { residentId: 'skill:x' }, robotLastTurnAt: 123 });
+    expect(view!.robotResidentId).toBe('skill:x');
+    expect(view!.robotLastTurnAt).toBe(123);
+  });
+
+  it('defaults both to null on older or partial payloads', () => {
+    const view = toView(state);
+    expect(view!.robotResidentId).toBe(null);
+    expect(view!.robotLastTurnAt).toBe(null);
+  });
+
+  it('a malformed robot block reads as empty, never crashes the frame', () => {
+    const view = toView({ ...state, robot: 'garbage', robotLastTurnAt: 'soon' });
+    expect(view!.robotResidentId).toBe(null);
+    expect(view!.robotLastTurnAt).toBe(null);
+  });
+});

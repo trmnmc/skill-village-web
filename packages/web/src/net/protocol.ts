@@ -1,4 +1,4 @@
-import { BODY_IDS, CROWN_IDS, type Creature } from '@village/core/visual';
+﻿import { BODY_IDS, CROWN_IDS, type Creature } from '@village/core/visual';
 
 export interface LlmView {
   mode: 'full' | 'silent';
@@ -12,6 +12,10 @@ export interface VillageView {
   problems: unknown[];
   startupNote: string | null;
   llm: LlmView | null;
+  /** Who lives in the physical robot, or null. Drawn at the robot-house porch. */
+  robotResidentId: string | null;
+  /** When the robot last spoke (server process memory), for the presence glow. */
+  robotLastTurnAt: number | null;
 }
 
 const BODY_ID_SET: ReadonlySet<string> = new Set(BODY_IDS);
@@ -27,7 +31,7 @@ function isRenderablePalette(value: unknown): boolean {
  * `body`/`crown` must be real ids, not merely strings: compose.ts indexes
  * `BODIES[body]`/`CROWNS[crown]` directly and then reads `body.w`, so a
  * stray string produces `undefined` there rather than a real grid. `restPosture`
- * is deliberately left unchecked — it is legitimately null for most creatures,
+ * is deliberately left unchecked â€” it is legitimately null for most creatures,
  * and composeGrid already falls back to 'stubs' when it is absent.
  */
 function isRenderableAppearance(value: unknown): boolean {
@@ -53,7 +57,7 @@ function isRenderableStats(value: unknown): boolean {
  * roles.ts reads palette.hue/lite, compose.ts indexes BODIES[body]/CROWNS[crown]
  * then body.w, behaviour.ts branches on winged and compares stats.mood/energy,
  * and displayName calls nickname.trim(). This is deliberately narrower than the
- * full Creature shape — over-fitting to every field core exposes would reject
+ * full Creature shape â€” over-fitting to every field core exposes would reject
  * server payloads for no reason the renderer cares about.
  */
 function isRenderable(value: unknown): value is Creature {
@@ -69,6 +73,11 @@ function isRenderable(value: unknown): value is Creature {
   );
 }
 
+/** The renderable subset of an arbitrary list, sorted for stable render order. */
+export function filterRenderable(values: unknown[]): Creature[] {
+  return values.filter(isRenderable).sort((a, b) => a.id.localeCompare(b.id));
+}
+
 /**
  * Turn a server state payload into what the renderer needs. Anything the
  * renderer cannot draw is dropped rather than crashing the village: one bad
@@ -76,12 +85,10 @@ function isRenderable(value: unknown): value is Creature {
  */
 export function toView(payload: unknown): VillageView | null {
   if (typeof payload !== 'object' || payload === null) return null;
-  const p = payload as { creatures?: unknown; problems?: unknown; startupNote?: unknown; llm?: unknown };
+  const p = payload as { creatures?: unknown; problems?: unknown; startupNote?: unknown; llm?: unknown; robot?: unknown; robotLastTurnAt?: unknown };
   if (typeof p.creatures !== 'object' || p.creatures === null) return null;
 
-  const creatures = Object.values(p.creatures as Record<string, unknown>)
-    .filter(isRenderable)
-    .sort((a, b) => a.id.localeCompare(b.id));
+  const creatures = filterRenderable(Object.values(p.creatures as Record<string, unknown>));
 
   let llm: LlmView | null = null;
   const rawLlm = p.llm;
@@ -104,11 +111,21 @@ export function toView(payload: unknown): VillageView | null {
       };
     }
   }
+  let robotResidentId: string | null = null;
+  const rawRobot = (p as { robot?: unknown }).robot;
+  if (typeof rawRobot === 'object' && rawRobot !== null) {
+    const r = rawRobot as { residentId?: unknown };
+    if (typeof r.residentId === 'string') robotResidentId = r.residentId;
+  }
+  const rawTurn = (p as { robotLastTurnAt?: unknown }).robotLastTurnAt;
+  const robotLastTurnAt = typeof rawTurn === 'number' ? rawTurn : null;
 
   return {
     creatures,
     problems: Array.isArray(p.problems) ? p.problems : [],
     startupNote: typeof p.startupNote === 'string' ? p.startupNote : null,
+    robotResidentId,
+    robotLastTurnAt,
     llm,
   };
 }
@@ -126,3 +143,6 @@ export function parseServerMessage(raw: string): VillageView | null {
   if (frame.type !== 'state') return null;
   return toView(frame.state);
 }
+
+
+
