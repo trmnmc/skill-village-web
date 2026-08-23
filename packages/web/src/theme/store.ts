@@ -335,5 +335,6 @@ export function cssVars(t: ResolvedTheme): Record<string, string> {
     '--sv-panel-bg': t.flags.isNight ? mix(t.tokens.ink, '#000000', 0.25) : t.tokens.bubble,
     '--sv-panel-fg': t.flags.isNight ? t.tokens.cream : t.tokens.ink,
     '--sv-banner-bg': t.flags.isNight ? mix(t.tokens.ink, '#000000', 0.15) : t.tokens.cream,
+    '--sv-chip-player': t.flags.isNight ? mix(t.tokens.ink, '#000000', 0.05) : '#E8E0D0',
   };
 }

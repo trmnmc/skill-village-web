@@ -99,9 +99,11 @@ describe('cssVars', () => {
     day.tick();
     const dv = cssVars(day.current());
     expect(dv['--sv-panel-bg']).toBe(day.current().tokens.bubble);
+    expect(dv['--sv-chip-player']).toBe('#E8E0D0');
     const night = createThemeStore({ now: at('2026-08-19T23:00:00'), storage: mem() });
     night.tick();
     const nv = cssVars(night.current());
     expect(nv['--sv-panel-bg']).toBe(mix(night.current().tokens.ink, '#000000', 0.25));
+    expect(nv['--sv-chip-player']).toBe(mix(night.current().tokens.ink, '#000000', 0.05));
   });
 });
