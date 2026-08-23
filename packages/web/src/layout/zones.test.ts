@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, MIN_SEPARATION, placeCreatures } from './zones.js';
+import {
+  ZONES, WORLD_W, GROUND_Y, GROUND_TOP, MIN_SEPARATION,
+  placeCreatures, placeInRangeAcrossRows, seatCapacity,
+} from './zones.js';
 
 const ids = Array.from({ length: 70 }, (_, i) => `skill:s${i}`);
 
@@ -160,5 +163,66 @@ describe('placeCreatures', () => {
       expect(x).toBeGreaterThanOrEqual(homes.x);
       expect(x).toBeLessThanOrEqual(homes.x + homes.w);
     }
+  });
+});
+
+describe('placeInRangeAcrossRows', () => {
+  // The spectator's tableau is static: nobody strolls, so a cross-row stack
+  // never resolves itself. Bodies are ~128px tall and depth rows only 46px
+  // apart, which makes "different row, same x" read as one creature covering
+  // another — the 2026-08-23 playtest finding. This variant promises
+  // MIN_SEPARATION on x across ALL rows, not just within one.
+  const lo = 700;
+  const hi = 1100;
+
+  it('keeps MIN_SEPARATION between every pair, whatever their depth rows', () => {
+    const ids = ['swarm:a', 'swarm:b', 'swarm:c', 'swarm:d'];
+    const xs = [...placeInRangeAcrossRows(ids, lo, hi).values()].map((s) => s.x).sort((a, b) => a - b);
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(MIN_SEPARATION);
+    }
+  });
+
+  it('seats a roster at exact capacity without a single overlap', () => {
+    // Greedy nearest-clear seating can strand seats below capacity (one
+    // villager in the middle of a segment blocks both ends), so this pins the
+    // slot-based contract: seatCapacity seats really are all reachable.
+    const cap = seatCapacity(lo, hi);
+    const ids = Array.from({ length: cap }, (_, i) => `swarm:cap${i}`);
+    const spots = placeInRangeAcrossRows(ids, lo, hi);
+    expect(spots.size).toBe(cap);
+    const xs = [...spots.values()].map((s) => s.x).sort((a, b) => a - b);
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(MIN_SEPARATION);
+    }
+    for (const x of xs) {
+      expect(x).toBeGreaterThanOrEqual(lo);
+      expect(x).toBeLessThanOrEqual(hi);
+    }
+  });
+
+  it('never loses anyone past capacity — overlap beats going missing', () => {
+    const ids = Array.from({ length: seatCapacity(lo, hi) + 5 }, (_, i) => `swarm:over${i}`);
+    const spots = placeInRangeAcrossRows(ids, lo, hi);
+    expect(spots.size).toBe(ids.length);
+    for (const { x } of spots.values()) {
+      expect(x).toBeGreaterThanOrEqual(lo);
+      expect(x).toBeLessThanOrEqual(hi);
+    }
+  });
+
+  it('depends on the set of villagers, not the order they are handed over', () => {
+    const ids = ['swarm:d', 'swarm:a', 'swarm:c', 'swarm:b'];
+    const sorted = [...ids].sort();
+    expect([...placeInRangeAcrossRows(ids, lo, hi)].sort()).toEqual(
+      [...placeInRangeAcrossRows(sorted, lo, hi)].sort(),
+    );
+    expect([...placeInRangeAcrossRows(ids, lo, hi)]).toEqual([...placeInRangeAcrossRows(ids, lo, hi)]);
+  });
+
+  it('still varies depth so the meadow reads as a field, not a line', () => {
+    const ids = Array.from({ length: 8 }, (_, i) => `swarm:depth${i}`);
+    const ys = new Set([...placeInRangeAcrossRows(ids, 0, 2000).values()].map((s) => s.y));
+    expect(ys.size).toBeGreaterThan(1);
   });
 });

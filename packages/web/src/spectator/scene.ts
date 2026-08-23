@@ -16,8 +16,13 @@ import type { EggView, RareViewFull, ResidentView, ShowroomView } from './protoc
 const WORLD_W = 2200;
 /** Fenced pen; eggs are placed here via placeInRange. */
 const NURSERY = { lo: 160, hi: 520 };
-/** Residents are placed here via placeAvoiding around the scenery. */
-const COMMONS = { lo: 640, hi: 1560 };
+/**
+ * Residents are placed here via placeAvoiding around the scenery. Runs to
+ * the pedestal-side tree at 1700: seating is one seat per MIN_SEPARATION and
+ * villagers never share an x across depth rows (they'd cover each other —
+ * playtest 2026-08-23), so the commons needs every clear strip it can get.
+ */
+const COMMONS = { lo: 640, hi: 1700 };
 /** The rare stands here, never in the commons. */
 const PEDESTAL_X = 1800;
 
@@ -33,6 +38,7 @@ const COMMONS_BARRIERS: XSpan[] = [
   { lo: 888, hi: 1006 },  // house at 900
   { lo: 1148, hi: 1212 }, // tree at 1160
   { lo: 1408, hi: 1526 }, // house at 1420
+  { lo: 1688, hi: 1752 }, // tree at 1700 (the commons' right edge stops here)
 ];
 
 /** How far a press may travel and still count as a click, in client pixels. */

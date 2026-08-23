@@ -148,6 +148,76 @@ export function placeInRange(ids: readonly string[], lo: number, hi: number): Ma
 }
 
 /**
+ * How many creatures [lo, hi] can hold with MIN_SEPARATION between every
+ * pair: one per whole separation the width covers, plus the seat at the far
+ * end. This is the capacity placeInRangeAcrossRows guarantees it can seat.
+ */
+export function seatCapacity(lo: number, hi: number): number {
+  return Math.floor((hi - lo) / MIN_SEPARATION) + 1;
+}
+
+/**
+ * placeInRange, but the exclusion zone runs across every depth row, not just
+ * within one. The game's contract is per-row because Homes villagers stroll —
+ * a cross-row stack walks itself apart within seconds. The spectator's meadow
+ * is a static tableau: nobody moves, rows sit ROW_DEPTH (46px) apart while
+ * bodies rise ~128px, so "different row, near-equal x" is one creature
+ * permanently covering another (the 2026-08-23 playtest finding).
+ *
+ * Seats are the range's seatCapacity slot positions — evenly spread, spacing
+ * ≥ MIN_SEPARATION by construction — and each creature takes the free slot
+ * nearest the x its own hash asks for. Greedy nearest-clear seating cannot
+ * promise this: one villager seated mid-range blocks both ends of a
+ * two-seat segment, stranding capacity that the slots always reach. Past
+ * capacity, a creature stands exactly where its hash points and overlaps —
+ * the same overlap-beats-missing fallback as everywhere else.
+ *
+ * Seating order is fixed by code unit, exactly like placeCreatures: the
+ * layout is a pure function of the *set* of ids, however the caller sorted.
+ */
+export function placeInRangeAcrossRows(ids: readonly string[], lo: number, hi: number): Map<string, Spot> {
+  const cap = seatCapacity(lo, hi);
+  let slots: number[];
+  if (cap === 1) {
+    slots = [Math.round((lo + hi) / 2)];
+  } else {
+    // Integer spacing keeps every gap exactly ≥ MIN_SEPARATION after
+    // rounding; the lattice is centred so a sparse meadow doesn't lean left.
+    const spacing = Math.floor((hi - lo) / (cap - 1));
+    const start = Math.round(lo + ((hi - lo) - (cap - 1) * spacing) / 2);
+    slots = Array.from({ length: cap }, (_, j) => start + j * spacing);
+  }
+
+  const free = new Set(slots.keys());
+  const spots = new Map<string, Spot>();
+  const seating = [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+  for (const id of seating) {
+    const h = hashId(id);
+    const row = h % ROWS;
+    const along = ((h >>> 8) % 10000) / 10000;
+    const wanted = lo + along * (hi - lo);
+
+    let best: number | null = null;
+    for (const j of free) {
+      // Ties go to the smaller x, so the result never depends on set order.
+      if (best === null || Math.abs(slots[j]! - wanted) < Math.abs(slots[best]! - wanted)) best = j;
+    }
+    let x: number;
+    if (best === null) {
+      x = Math.round(wanted);
+    } else {
+      x = slots[best]!;
+      free.delete(best);
+    }
+
+    spots.set(id, { x, y: GROUND_Y - row * ROW_DEPTH });
+  }
+
+  return spots;
+}
+
+/**
  * Deterministic placement inside Homes. A creature asks for the row and the
  * offset its own id hashes to, and gets exactly that unless somebody is
  * already standing there; when somebody is, only the arriving creature moves.
