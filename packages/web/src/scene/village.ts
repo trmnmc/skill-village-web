@@ -356,15 +356,34 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // its own to stay in sync with; `creature.ts` tags its own chrome and
   // sprite roots with the same tags at spawn time, including a fresh spawn
   // that lands after this theme change has already fired.
+  //
+  // `{ recursive: true }` is load-bearing on both `k.get()` calls below.
+  // KAPLAY's `get(tag, opts)` (kaplay.mjs) is `opts.recursive ? deep-flatMap
+  // : this.children` — a plain `k.get(tag)` only returns *direct* children of
+  // the scene root. Every creature's themed chrome (body/wing sprites,
+  // nameplate box, ink texts, bubble bg) lives under `creature.ts`'s own
+  // `root = k.add(...)`, so it is a *grandchild* of the scene root
+  // (`root.add(...)`), and without `recursive: true` this walker would never
+  // find it — the village would darken around already-spawned creatures
+  // stuck at their spawn-time tint forever.
   const applyTheme = (t: ResolvedTheme) => {
     k.setBackground(hex(k, mix(t.tokens.sky1, t.tint.col, t.tint.sceneryK)));
+    // Every `k.outline()` in the scene (the nameplate box, the speech
+    // bubble's background) is ink-coloured; struck once per call rather than
+    // per tagged object.
+    const inkCol = hex(k, sceneryColor(t.tokens, t.tint, 'ink'));
     for (const token of Object.keys(t.tokens) as (keyof Tokens)[]) {
-      for (const obj of k.get(tokenTag(token))) {
-        (obj as unknown as { color: unknown }).color = hex(k, sceneryColor(t.tokens, t.tint, token));
+      const colour = hex(k, sceneryColor(t.tokens, t.tint, token));
+      for (const obj of k.get(tokenTag(token), { recursive: true })) {
+        (obj as unknown as { color: unknown }).color = colour;
+        const outlined = obj as unknown as { outline?: { color?: unknown } };
+        if (outlined.outline) outlined.outline.color = inkCol;
       }
     }
     const cTint = hex(k, creatureTintColor(t.tint));
-    for (const obj of k.get('themed:creature')) (obj as unknown as { color: unknown }).color = cTint;
+    for (const obj of k.get('themed:creature', { recursive: true })) {
+      (obj as unknown as { color: unknown }).color = cTint;
+    }
   };
   applyTheme(themeStore.current());
   // No teardown path exists for this scene yet — same as the window-level
