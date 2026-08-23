@@ -26,7 +26,7 @@ export function minuteOfDay(date: Date): number {
 const NIGHT: AmbienceMix = { windFreq: 260, windGain: 0.02, birdRate: 0, cricketGain: 0.036, musicLevel: 0, musicWarmth: 0 };
 const DAWN_RISE: AmbienceMix = { windFreq: 400, windGain: 0.028, birdRate: 0.25, cricketGain: 0.02, musicLevel: 0, musicWarmth: 0 };
 const DAWN_PEAK: AmbienceMix = { windFreq: 520, windGain: 0.032, birdRate: 0.5, cricketGain: 0.008, musicLevel: 0, musicWarmth: 0 };
-const MORNING: AmbienceMix = { windFreq: 700, windGain: 0.04, birdRate: 0.3, cricketGain: 0, musicLevel: 0.5, musicWarmth: 0.2 };
+const MORNING: AmbienceMix = { windFreq: 700, windGain: 0.04, birdRate: 0.3, cricketGain: 0, musicLevel: 0, musicWarmth: 0.2 };
 const DAY: AmbienceMix = { windFreq: 900, windGain: 0.045, birdRate: 0.18, cricketGain: 0, musicLevel: 1, musicWarmth: 0 };
 const DUSK: AmbienceMix = { windFreq: 650, windGain: 0.038, birdRate: 0.08, cricketGain: 0.012, musicLevel: 1, musicWarmth: 1 };
 const DUSK_LATE: AmbienceMix = { windFreq: 420, windGain: 0.03, birdRate: 0.02, cricketGain: 0.024, musicLevel: 0.4, musicWarmth: 1 };
@@ -34,9 +34,9 @@ const DUSK_LATE: AmbienceMix = { windFreq: 420, windGain: 0.03, birdRate: 0.02, 
 /**
  * Anchors in minutes of the local day, straight off the palette spec's
  * table: night holds to 05:30, dawn 06:10–07:20 with the chorus peak at
- * 06:45, the plateau 08:30–16:45, dusk 17:45–19:20, night from 21:00.
- * The 0 and 1440 endpoints are both NIGHT, which is what makes midnight
- * continuous without a special case.
+ * 06:45 (music stays 0, the chorus is the show), the plateau 08:30–16:45,
+ * dusk 17:45–19:20, night from 21:00. The 0 and 1440 endpoints are both
+ * NIGHT, which is what makes midnight continuous without a special case.
  */
 const KEYS: { m: number; mix: AmbienceMix }[] = [
   { m: 0, mix: NIGHT },

@@ -52,4 +52,11 @@ describe('mixAt', () => {
       expect(Math.abs(a[f] - b[f])).toBeLessThan(0.01 * Math.max(1, a[f]));
     }
   });
+
+  it('dawn stays music-free — the chorus is the show', () => {
+    expect(mixAt(at(6, 20)).musicLevel).toBe(0);
+    expect(mixAt(at(7, 0)).musicLevel).toBe(0);
+    expect(mixAt(at(7, 20)).musicLevel).toBe(0);
+    expect(mixAt(at(8, 0)).musicLevel).toBeGreaterThan(0);
+  });
 });
