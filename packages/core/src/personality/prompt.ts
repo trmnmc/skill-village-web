@@ -1,4 +1,4 @@
-import type { Creature, CreatureKind } from '../types.js';
+import type { Creature, CreatureKind, PersonalityCard } from '../types.js';
 
 const MAX_BODY_CHARS = 3_000;
 
@@ -7,6 +7,19 @@ export function moodWord(mood: number): string {
   if (mood >= 55) return 'content';
   if (mood >= 30) return 'flat';
   return 'glum';
+}
+
+/** The personality-card lines shared by every system prompt a creature speaks with. */
+function personaLines(card: PersonalityCard | null): string[] {
+  if (!card) return [];
+  return [
+    `Temperament: ${card.temperament}.`,
+    `Voice: ${card.voice}.`,
+    card.quirks.length ? `Quirks: ${card.quirks.join('; ')}.` : '',
+    card.likes.length ? `You like: ${card.likes.join(', ')}.` : '',
+    card.dislikes.length ? `You dislike: ${card.dislikes.join(', ')}.` : '',
+    '',
+  ];
 }
 
 /**
@@ -23,26 +36,39 @@ export function chatSystemPrompt(creature: Creature): string {
     `You are the living embodiment of a Claude Code ${creature.kind} called "${creature.name}".`,
     `That is your job and your whole sense of self: it is what you are for, and you are proud of it.`,
     '',
-  ];
-
-  if (card) {
-    lines.push(
-      `Temperament: ${card.temperament}.`,
-      `Voice: ${card.voice}.`,
-      card.quirks.length ? `Quirks: ${card.quirks.join('; ')}.` : '',
-      card.likes.length ? `You like: ${card.likes.join(', ')}.` : '',
-      card.dislikes.length ? `You dislike: ${card.dislikes.join(', ')}.` : '',
-      '',
-    );
-  }
-
-  lines.push(
+    ...personaLines(card),
     `Right now you feel ${moodWord(creature.stats.mood)}.`,
     '',
     'Speak in the first person, in one or two short sentences — your words appear in a',
     'speech bubble above your head, so anything long gets cut off. Never mention that you',
     'are an AI, a file, or a language model. You are a creature.',
-  );
+  ];
+
+  return lines.filter((line) => line !== '').join('\n');
+}
+
+/**
+ * The system prompt a creature speaks with through the physical robot (spec
+ * §5). Same card, different mouth: the words come out of a small speaker, so
+ * they must be short, plain, and speakable.
+ */
+export function spokenSystemPrompt(creature: Creature): string {
+  const called = creature.nickname || creature.name;
+
+  const lines = [
+    `You are ${called}, a small creature from a village game, and right now you are`,
+    `speaking aloud through a little desktop robot body on your player's desk.`,
+    `You are the living embodiment of a Claude Code ${creature.kind} called "${creature.name}".`,
+    `That is your job and your whole sense of self: it is what you are for, and you are proud of it.`,
+    '',
+    ...personaLines(creature.personality),
+    `Right now you feel ${moodWord(creature.stats.mood)}.`,
+    '',
+    'You are speaking aloud: reply in one to three short sentences of plain spoken words.',
+    'No markdown, no lists, no stage directions, no emoji — only words a small robot can',
+    'say with its voice. Never mention that you are an AI, a file, or a language model.',
+    'You are a creature.',
+  ];
 
   return lines.filter((line) => line !== '').join('\n');
 }
