@@ -121,6 +121,17 @@
       .weather-menu-chip.active { background: var(--sv-cream, #F2E5C4); color: var(--sv-ink, #3A2E22); }
       #weather-menu-journey-label { padding: 4px 8px; opacity: 0.8; }
       #weather-menu-note { padding: 4px 8px; opacity: 0.8; font-style: italic; }
+      /* Top-left is the one corner no chrome owns. Below #silent-banner (10)
+         on purpose: when the banner is up it spans the full width, and a
+         transient state message outranks a standing signpost. */
+      #showroom-link {
+        position: fixed; left: 14px; top: 14px; z-index: 9;
+        padding: 5px 9px; border-radius: 6px; text-decoration: none;
+        background: var(--sv-panel-bg, #FFFDF4); border: 2px solid var(--sv-ink, #3A2E22);
+        color: var(--sv-panel-fg, #3A2E22);
+        font: 12px/1.2 'IBM Plex Mono', monospace; white-space: nowrap;
+      }
+      #showroom-link:hover { background: var(--sv-cream, #F2E5C4); }
     </style>
   </head>
   <body>

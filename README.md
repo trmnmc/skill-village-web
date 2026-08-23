@@ -52,6 +52,26 @@ Then open http://localhost:5173. The server finds your skills in `~/.claude/skil
 `~/.claude/agents`; if you have none, the village is an empty field waiting for M5's adoption
 center.
 
+## The Swarm Showroom
+
+This repo holds a **second app**: a public, read-only village of the projects
+[Swarm](https://swarm.fenley.ai/api/projects) has built. Eggs incubate in the nursery while a
+project is still being written, hatch into villagers when the repo appears, and a judge-picked rare
+stands on the pedestal with an auction countdown. It reuses the game's compositor, motion, and
+creature actors wholesale — same pixels, same DNA — but serves a feed instead of your `~/.claude`
+folder, so nothing local is involved.
+
+It runs as two processes, separate from the game's:
+
+```bash
+npm run dev:showroom     # the feed poller + REST/WebSocket API, on :8263
+npm run dev:spectator    # the spectator village itself, on :5176
+```
+
+The running game links to it from the top-left corner. Deploying it to a droplet is
+[`docs/showroom-deploy.md`](docs/showroom-deploy.md); the design is
+[`docs/superpowers/specs/2026-08-23-swarm-showroom-design.md`](docs/superpowers/specs/2026-08-23-swarm-showroom-design.md).
+
 ## How it's built
 
 | Package | Role |
@@ -62,7 +82,7 @@ center.
 
 The architecture rule throughout: **everything that decides is a pure function; only the last inch
 draws.** Grid composition, motion math, behaviour flags, layout, and protocol parsing are all
-DOM-free and tested (449 tests); the KAPLAY glue is deliberately thin.
+DOM-free and tested (886 tests); the KAPLAY glue is deliberately thin.
 
 ## Roadmap
 

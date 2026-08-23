@@ -7,11 +7,13 @@ import { mountSoundHud } from './sound/hud.js';
 import { mountSoundcheck } from './sound/soundcheck.js';
 import { initTheme } from './theme/index.js';
 import { mountWeatherMenu } from './ui/weather-menu.js';
+import { mountShowroomLink } from './ui/showroom-link.js';
 
 // Boot the theme store first: it applies --sv-* CSS vars to the document root,
 // and everything painted after this (chat panel, scene chrome) should see them.
 const themeStore = initTheme();
 mountWeatherMenu(themeStore, document.body);
+mountShowroomLink(document.body, import.meta.env.DEV);
 
 // The panel is built before the scene and the scene is told about the panel:
 // each one's reference to the other lives inside an arrow function, which only
