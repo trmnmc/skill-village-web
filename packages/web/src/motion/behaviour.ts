@@ -23,11 +23,15 @@ const ROAM_ENERGY = 60;
 /**
  * Turn a creature's stats into the flags the renderer reads. Spec §4.2:
  * behaviours are data, not code paths — the renderer never sees a stat.
+ *
+ * `night` beds the whole village down regardless of how rested it is: a
+ * village asleep after dark is what the day/night sky is for, and it outranks
+ * every other posture, so nothing hops or flies in its sleep.
  */
-export function behaviourFor(creature: Creature): Behaviour {
+export function behaviourFor(creature: Creature, night = false): Behaviour {
   const { mood, energy } = creature.stats;
   const flyer = creature.appearance.winged;
-  const asleep = energy < SLEEP_BELOW;
+  const asleep = night || energy < SLEEP_BELOW;
   const scruffy = mood < SCRUFFY_BELOW;
 
   if (asleep) {

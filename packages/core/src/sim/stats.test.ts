@@ -32,9 +32,12 @@ describe('decayStat', () => {
     expect(afterThreeDays).toBeGreaterThan(STAT_FLOOR);
   });
 
-  it('never lifts a value that is already at or below the floor', () => {
+  it('keeps the floor above the renderer SLEEP_BELOW line of 25, so resting creatures stay awake', () => {
+    expect(STAT_FLOOR).toBeGreaterThan(25);
+  });
+
+  it('holds a value already resting exactly on the floor', () => {
     expect(decayStat(STAT_FLOOR, 100)).toBeCloseTo(STAT_FLOOR, 5);
-    expect(decayStat(5, 100)).toBeLessThanOrEqual(5);
   });
 
   it('rejects negative time rather than silently inflating a stat', () => {
@@ -130,5 +133,20 @@ describe('nextStage', () => {
   it('never demotes, because nothing in this game goes backwards', () => {
     expect(nextStage('elder', 1, true)).toBe('elder');
     expect(nextStage('adult', 1, false)).toBe('adult');
+  });
+});
+
+describe('decayStat — the floor is a resting point, not a one-way trapdoor', () => {
+  it('lifts a creature that somehow sits below the floor back up toward it', () => {
+    // Rest restores. Without this a creature driven under the floor (by play
+    // costs, or by a save written under an older floor) stayed there forever.
+    const risen = decayStat(10, 24);
+    expect(risen).toBeGreaterThan(10);
+    expect(risen).toBeLessThanOrEqual(STAT_FLOOR);
+  });
+
+  it('converges on the floor from either direction', () => {
+    expect(decayStat(5, 10_000)).toBeCloseTo(STAT_FLOOR, 5);
+    expect(decayStat(100, 10_000)).toBeCloseTo(STAT_FLOOR, 5);
   });
 });

@@ -1,11 +1,17 @@
 import type { Stage, Stats } from '../types.js';
 
-/** Mood and energy sink toward this while the player is away; they never reach 0. */
-export const STAT_FLOOR = 20;
+/**
+ * The resting baseline mood and energy settle at while the player is away —
+ * approached from above by a well-tended creature and from below by a drained
+ * one, because rest restores. Deliberately ABOVE behaviour.ts's SLEEP_BELOW:
+ * an untended village should doze and look scruffy, never fall into a
+ * permanent coma it has no way to wake from.
+ */
+export const STAT_FLOOR = 30;
 export const STAT_MAX = 100;
 
 /**
- * Exponential decay with a 12-hour half life puts a creature within about
+ * Exponential relaxation toward STAT_FLOOR with a 12-hour half life puts a creature within about
  * 1.5 points of the floor after three days, which is the spec's "scruffy after
  * roughly three days" without ever crossing into loss.
  */
@@ -26,7 +32,6 @@ export function levelForXp(xp: number): number {
 
 export function decayStat(value: number, hoursAway: number): number {
   if (hoursAway < 0) throw new Error(`decayStat: hoursAway must not be negative, got ${hoursAway}`);
-  if (value <= STAT_FLOOR) return value;
   const remaining = Math.pow(0.5, hoursAway / DECAY_HALF_LIFE_HOURS);
   return STAT_FLOOR + (value - STAT_FLOOR) * remaining;
 }

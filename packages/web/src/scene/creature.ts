@@ -243,7 +243,9 @@ export async function spawnCreature(
   // Not const: `setCreature` re-derives this whenever the server sends new
   // stats, so mood and energy keep selecting behaviours for as long as the
   // page is open rather than only on the frame the creature was first drawn.
-  let behaviour = behaviourFor(creature);
+  let lastCreature = creature;
+  let lastNight = themeStore.current().flags.isNight;
+  let behaviour = behaviourFor(creature, lastNight);
   const phi = phaseFor(creature.id);
   // The audio half of identity, derived once like the phase offset.
   const voice = voiceParamsFor(creature);
@@ -647,6 +649,34 @@ export async function spawnCreature(
   let leash = 0;
   let drift = 0;
 
+  /**
+   * Re-derive the behaviour flags and ring only the *transitions*. Called
+   * both when the server sends new stats and when the sky crosses into or
+   * out of night, so dozing follows the clock as well as the stats.
+   *
+   * The audible flag is false for the nightfall crossing: every villager flips on
+   * the same minute, and seventy-five simultaneous sleep sighs is a wall of
+   * noise rather than a village going to bed.
+   */
+  function applyBehaviour(night: boolean, audible: boolean): void {
+    const prev = behaviour;
+    lastNight = night;
+    behaviour = behaviourFor(lastCreature, night);
+    if (!audible) return;
+    // Transitions ring; states don't. setCreature runs on every server tick,
+    // so comparing against the previous flags is what keeps a sleeping
+    // creature from snoring once per second.
+    if (!prev.asleep && behaviour.asleep) {
+      sound.event({ type: 'sleep-start', x: at.x, voice });
+    }
+    if (prev.fly !== 'roam' && behaviour.fly === 'roam') {
+      sound.event({ type: 'takeoff', x: at.x });
+    }
+    if (prev.fly === 'roam' && behaviour.fly !== 'roam') {
+      sound.event({ type: 'touch-down', x: at.x });
+    }
+  }
+
   return {
     update(t, lookAt, hovered = false) {
       const frameDt = lastT === null ? 0 : Math.min(t - lastT, 0.1);
@@ -655,7 +685,12 @@ export async function spawnCreature(
       // server tick's setCreature) so a flyer settles the instant rain or a
       // storm ramps past half strength, and lifts off again the instant it
       // clears — themeStore.current() is a cheap read, not a subscription.
-      const weatherNow = themeStore.current().weather;
+      const themeNow = themeStore.current();
+      // Nightfall beds the village down. Checked per frame from the same
+      // cheap cached read as the weather below, so dozing follows the sky
+      // without every actor holding its own theme subscription.
+      if (themeNow.flags.isNight !== lastNight) applyBehaviour(themeNow.flags.isNight, false);
+      const weatherNow = themeNow.weather;
       const grounded =
         winged && (weatherNow.kind === 'rain' || weatherNow.kind === 'storm') && weatherNow.ramp > 0.5;
       const fly = grounded ? null : behaviour.fly;
@@ -847,20 +882,8 @@ export async function spawnCreature(
      * swap — is already read per frame in `update`.
      */
     setCreature(next) {
-      const prev = behaviour;
-      behaviour = behaviourFor(next);
-      // Transitions ring; states don't. setCreature runs on every server
-      // tick, so comparing against the previous flags is what keeps a
-      // sleeping creature from snoring once per second.
-      if (!prev.asleep && behaviour.asleep) {
-        sound.event({ type: 'sleep-start', x: at.x, voice });
-      }
-      if (prev.fly !== 'roam' && behaviour.fly === 'roam') {
-        sound.event({ type: 'takeoff', x: at.x });
-      }
-      if (prev.fly === 'roam' && behaviour.fly !== 'roam') {
-        sound.event({ type: 'touch-down', x: at.x });
-      }
+      lastCreature = next;
+      applyBehaviour(lastNight, true);
     },
     /**
      * Guaranteed spacing and per-id-only placement cannot both hold — with a

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Creature, CreatureKind } from '@village/core/visual';
-import { behaviourFor } from './behaviour.js';
+import { behaviourFor, SLEEP_BELOW } from './behaviour.js';
 
 function creature(over: { kind?: CreatureKind; mood?: number; energy?: number } = {}): Creature {
   const kind = over.kind ?? 'skill';
@@ -94,5 +94,52 @@ describe('behaviourFor — determinism', () => {
   it('is a pure function of the creature', () => {
     const c = creature({ mood: 77, energy: 66 });
     expect(behaviourFor(c)).toEqual(behaviourFor(c));
+  });
+});
+
+describe('behaviourFor — the village sleeps at night', () => {
+  it('beds down a wide-awake creature once night falls', () => {
+    const rested = creature({ mood: 85, energy: 90 });
+    expect(behaviourFor(rested, false).asleep).toBe(false);
+    const night = behaviourFor(rested, true);
+    expect(night.asleep).toBe(true);
+    // Sleeping outranks every other posture: nothing hops or flies in its sleep.
+    expect(night.hopper).toBe(false);
+    expect(night.fly).toBeNull();
+  });
+
+  it('grounds a winged agent at night too', () => {
+    const flyer = creature({ kind: 'agent', mood: 80, energy: 90 });
+    expect(behaviourFor(flyer, false).fly).toBe('roam');
+    expect(behaviourFor(flyer, true).fly).toBeNull();
+  });
+
+  it('still naps in daylight when genuinely drained', () => {
+    expect(behaviourFor(creature({ energy: 10 }), false).asleep).toBe(true);
+  });
+
+  it('defaults to daytime when no night flag is passed', () => {
+    expect(behaviourFor(creature({ energy: 90 })).asleep).toBe(false);
+  });
+
+  it('keeps scruffiness independent of sleeping', () => {
+    expect(behaviourFor(creature({ mood: 20, energy: 90 }), true).scruffy).toBe(true);
+    expect(behaviourFor(creature({ mood: 90, energy: 90 }), true).scruffy).toBe(false);
+  });
+});
+
+describe('the resting floor leaves creatures awake', () => {
+  // core owns the decay floor (STAT_FLOOR, currently 30) and web owns the
+  // sleep line, and the boundary rule forbids importing the core barrel
+  // here — so the invariant is pinned from both sides: core asserts the
+  // floor value, and this asserts the sleep line sits below it.
+  const CORE_STAT_FLOOR = 30;
+
+  it('sits below the decay floor, so an untended village dozes but never falls comatose', () => {
+    // The bug this pins: with the sleep line ABOVE the floor, every creature
+    // decays into permanent sleep and — until care verbs exist — can never wake.
+    expect(SLEEP_BELOW).toBeLessThan(CORE_STAT_FLOOR);
+    const resting = creature({ mood: CORE_STAT_FLOOR, energy: CORE_STAT_FLOOR });
+    expect(behaviourFor(resting, false).asleep).toBe(false);
   });
 });
