@@ -31,6 +31,7 @@ branch: clean at 1c5ff39
 - [ ] **USER PLAYTEST** (the gate): sky at ?at=23:00/06:45/12:00/18:45, storm/snow/rainbow/fog, gear menu (modes + time chips), Journey for 2+ waypoint crossings, sun/moon vs horizon at TWO window sizes (coordinate fix needs eyeballs)
 - [ ] Merge decision (suggest --no-ff like M4) — COORDINATE with the peer session first (protocol.ts/zones.ts conflict risk, see Open Questions)
 - [ ] After merge: delete plan workspace + dev-worktree launch entry; remove worktree
+- [ ] **Weather refinement arc (user-requested, next after merge): CLOUDS are missing.** Verified gap: the branch's only clouds are the storm decks (weather-layer.ts drawStormClouds). Never ported from the reference painter (reference/palette-explorations/village-scene.js): (a) fair-weather drifting clouds on clear days/dawns (the reference's `time==='day'||dawn` branch, white/#FFF3E0 blobs, drift `-t*7`), (b) the generic overcast cloud blobs for cloudy/rain/snow/fog (the reference's `else if (overcast)` branch with per-kind cTone). So `cloudy` mode currently grays the sky with NOTHING in it. Port both branches into weather-layer.ts (fair-weather clouds gate on !overcast && day-ish frames; blobs on the four non-storm overcast kinds); plus whatever else the playtest surfaces ("refine the weather" is the user's framing — collect their list first).
 - [ ] M5 implementation plan (writing-plans on the remap spec)
 - [ ] LICENSE decision · Pages refresh (optional) · M4 playtest leftovers (bubble occlusion, meter granularity, trackpad tap)
 
@@ -49,6 +50,7 @@ branch: clean at 1c5ff39
 ## Open Questions
 - Peer-session coordination before merge: who owns packages/web/src/net/protocol.ts's pending refactor (`filterRenderable`) — merge order matters (their changes are uncommitted on main; ours touch neighboring code).
 - Playtest verdicts: journey boundary pops? moon-brightness night modulation (deferred ⅔-done) wanted now?
+- Weather refinement scope beyond clouds — the user named clouds as ONE example; collect their full list before designing (open brief, likely a bounded-to-architectural brainstorm).
 
 ## Coordinate Closet
 - `claude/palette-weather-moon` @ `1c5ff39` (branch HEAD) · base `a5abc19` · merge-blocking none
