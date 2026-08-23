@@ -86,6 +86,11 @@ export function rainDrop(i: number, tSec: number, heavy: boolean): RainDrop {
   return { x: refX, y: refY, len, alpha };
 }
 
+/** Positive-safe modulo: wraps `x` into [0, m), including when `x` is deeply negative. Needed for the cloud drift below — unlike this file's other periodic motion (which only ever adds a `tSec` term), drift subtracts an unbounded one, so plain `%` would go negative once `tSec` grows past the anchor. */
+function wrap(x: number, m: number): number {
+  return ((x % m) + m) % m;
+}
+
 export interface SnowFlake {
   x: number;
   y: number;
@@ -189,6 +194,117 @@ export function rainbowBlocks(width: number, horizonY: number): RainbowBlock[] {
 
 /** [HUES[0], HUES[4], HUES[2], HUES[6], HUES[1]] — the reference's exact band order. */
 const RAINBOW_BAND_COLOURS = [HUES[0], HUES[4], HUES[2], HUES[6], HUES[1]];
+
+// ---------------------------------------------------------------------------
+// Cloud blobs (overcast + fair-weather) — class-2 aspect-critical clusters,
+// same convention as the storm decks above: a drifting reference-space
+// anchor goes through mapX, every intra-cluster offset/size scales by
+// fy(horizonY) on both axes. Every cluster rect here sits in the sky band
+// (refY <= 182), so `r.y * fy(horizonY)` is mapY's sky-band formula inlined —
+// no `height` parameter needed, matching these functions' pure (kind/dawn,
+// night, tSec, width, horizonY) signatures.
+// ---------------------------------------------------------------------------
+
+interface CloudRectDef {
+  dx: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface CloudClusterDef {
+  /** Reference-space x of the cluster's first rect — the class-2 anchor before drift. */
+  baseX: number;
+  rects: CloudRectDef[];
+}
+
+export interface CloudBlobSpec {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  color: string;
+  alpha: number;
+}
+
+/**
+ * Materializes a set of class-2 clusters at one instant: each cluster's
+ * anchor drifts leftward in reference space at `speed` ref px/s, wrapping
+ * over a 560 ref-px period into `[-40, 520)` — the same `(x % 560) - 40`
+ * shape `drawWind`'s flecks use below, but wrapped with `wrap` instead of
+ * raw `%`: `drawWind` always *adds* a `tSec` term (drift rightward), while
+ * this drift *subtracts* an unbounded one (leftward), which would send a
+ * plain `%` negative once `tSec * speed` outgrows the anchor. Plan-over-
+ * reference deviation: the reference paints these clusters static; a
+ * scrolling camera would pin them to one screen spot forever.
+ */
+function driftedClusterRects(
+  clusters: readonly CloudClusterDef[],
+  speed: number,
+  tSec: number,
+  width: number,
+  horizonY: number,
+): { x: number; y: number; w: number; h: number }[] {
+  const s = fy(horizonY);
+  const out: { x: number; y: number; w: number; h: number }[] = [];
+  for (const cluster of clusters) {
+    const driftedRefX = wrap(cluster.baseX + 560 - tSec * speed, 560) - 40;
+    const anchorX = mapX(driftedRefX, width);
+    for (const r of cluster.rects) {
+      out.push({ x: anchorX + r.dx * s, y: r.y * s, w: r.w * s, h: r.h * s });
+    }
+  }
+  return out;
+}
+
+/** The reference's four overcast clusters (village-scene.js lines 300–303), verbatim. */
+const OVERCAST_CLOUD_CLUSTERS: readonly CloudClusterDef[] = [
+  { baseX: 14, rects: [{ dx: 0, y: 18, w: 96, h: 14 }, { dx: 18, y: 10, w: 52, h: 10 }] },
+  { baseX: 150, rects: [{ dx: 0, y: 40, w: 74, h: 12 }] },
+  { baseX: 248, rects: [{ dx: 0, y: 14, w: 112, h: 16 }, { dx: 22, y: 6, w: 62, h: 10 }] },
+  { baseX: 384, rects: [{ dx: 0, y: 42, w: 82, h: 12 }] },
+];
+
+/** Base (day) tone per overcast kind, verbatim from the reference's `cTone` ternary (`storm` excluded — it keeps its own deck clouds, no blobs). */
+const OVERCAST_TONE: Record<'cloudy' | 'rain' | 'snow' | 'fog', string> = {
+  cloudy: '#B4BABE', rain: '#9AA6AE', snow: '#C8D0D6', fog: '#CFCCC0',
+};
+
+/**
+ * Overcast cloud blobs for the four non-storm overcast kinds — the
+ * reference's `else if (overcast)` branch, under which `cloudy` previously
+ * drew nothing. Alpha is the reference's flat 0.85; callers multiply by
+ * `weather.ramp` themselves, since this function has no `ResolvedTheme` to
+ * read it from.
+ */
+export function overcastCloudSpecs(
+  kind: 'cloudy' | 'rain' | 'snow' | 'fog',
+  night: boolean,
+  tSec: number,
+  width: number,
+  horizonY: number,
+): CloudBlobSpec[] {
+  const tone = OVERCAST_TONE[kind];
+  const color = night ? mix(tone, '#1A2028', 0.5) : tone;
+  return driftedClusterRects(OVERCAST_CLOUD_CLUSTERS, 3, tSec, width, horizonY).map((r) => ({ ...r, color, alpha: 0.85 }));
+}
+
+/** The reference's always-on fair-weather cluster (village-scene.js line 307): present at both dawn and full day. */
+const FAIR_CLOUD_ALWAYS: CloudClusterDef = { baseX: 70, rects: [{ dx: 0, y: 42, w: 40, h: 10 }, { dx: 10, y: 34, w: 24, h: 8 }] };
+
+/** The reference's "day only" second cluster (village-scene.js line 308) — withheld at dawn. */
+const FAIR_CLOUD_DAY_ONLY: CloudClusterDef = { baseX: 270, rects: [{ dx: 0, y: 66, w: 34, h: 9 }, { dx: 8, y: 59, w: 20, h: 7 }] };
+
+/**
+ * Fair-weather clouds — the reference's `else if (time==='day'||dawn)`
+ * branch. Sky furniture, not weather: alpha is a flat 0.75 that callers must
+ * NOT multiply by ramp (present on every clear day, not fading in with it).
+ */
+export function fairCloudSpecs(dawn: boolean, tSec: number, width: number, horizonY: number): CloudBlobSpec[] {
+  const color = dawn ? '#FFF3E0' : '#FFFFFF';
+  const clusters = dawn ? [FAIR_CLOUD_ALWAYS] : [FAIR_CLOUD_ALWAYS, FAIR_CLOUD_DAY_ONLY];
+  return driftedClusterRects(clusters, 1.5, tSec, width, horizonY).map((r) => ({ ...r, color, alpha: 0.75 }));
+}
 
 // ---------------------------------------------------------------------------
 // Tint helpers — mirror the reference's own `sc`/`cc` closures.
@@ -338,6 +454,28 @@ function drawStormClouds(
   }
 }
 
+/** Overcast cloud blobs for `cloudy`/`rain`/`snow`/`fog` — drawn before the kind's own precipitation so precip falls in front. `storm` keeps its decks instead (see `drawStormClouds`); no blobs there. */
+function drawOvercastCloudBlobs(
+  k: KAPLAYCtx,
+  kind: 'cloudy' | 'rain' | 'snow' | 'fog',
+  night: boolean,
+  ramp: number,
+  tSec: number,
+  width: number,
+  horizonY: number,
+): void {
+  for (const b of overcastCloudSpecs(kind, night, tSec, width, horizonY)) {
+    rect(k, b.x, b.y, b.w, b.h, b.color, b.alpha * ramp);
+  }
+}
+
+/** Fair-weather clouds — sky furniture, not ramp-scaled (see `fairCloudSpecs`). */
+function drawFairClouds(k: KAPLAYCtx, dawn: boolean, tSec: number, width: number, horizonY: number): void {
+  for (const b of fairCloudSpecs(dawn, tSec, width, horizonY)) {
+    rect(k, b.x, b.y, b.w, b.h, b.color, b.alpha);
+  }
+}
+
 function drawSnow(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number, width: number, height: number, horizonY: number): void {
   const ramp = cur.weather.ramp;
   for (let i = 0; i < 60; i++) {
@@ -474,14 +612,25 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
   const behind = k.add([k.pos(0, 0), k.z(5), k.fixed()]);
   behind.onDraw(() => {
     const cur = current;
-    if (!cur || cur.weather.kind === 'clear' || cur.weather.ramp <= 0.02) return;
+    if (!cur) return;
     const t = liveT();
     const reduced = reducedMotion();
     const width = k.width();
     const height = k.height();
     const horizonY = horizonScreenY(k);
+
+    // Fair-weather clouds are sky furniture, not weather — they draw
+    // whenever the sky itself isn't overcast/night/dusk, which is a wider
+    // gate than the ramp-driven weather switch below (and must run even when
+    // `kind === 'clear'`, which that switch bails out of entirely).
+    if (!cur.flags.overcast && !cur.flags.isNight && !cur.flags.isDusk) {
+      drawFairClouds(k, cur.flags.isDawn, t, width, horizonY);
+    }
+
+    if (cur.weather.kind === 'clear' || cur.weather.ramp <= 0.02) return;
     switch (cur.weather.kind) {
       case 'rain':
+        drawOvercastCloudBlobs(k, 'rain', cur.flags.isNight, cur.weather.ramp, t, width, horizonY);
         drawRainAndSplashes(k, cur, t, reduced, width, height, horizonY);
         break;
       case 'storm':
@@ -489,10 +638,15 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
         drawStormClouds(k, cur, t, reduced, width, height, horizonY);
         break;
       case 'snow':
+        drawOvercastCloudBlobs(k, 'snow', cur.flags.isNight, cur.weather.ramp, t, width, horizonY);
         drawSnow(k, cur, t, width, height, horizonY);
         break;
       case 'fog':
+        drawOvercastCloudBlobs(k, 'fog', cur.flags.isNight, cur.weather.ramp, t, width, horizonY);
         drawFogBehind(k, cur, t, width, height, horizonY);
+        break;
+      case 'cloudy':
+        drawOvercastCloudBlobs(k, 'cloudy', cur.flags.isNight, cur.weather.ramp, t, width, horizonY);
         break;
       case 'wind':
         drawWind(k, cur, t, width, height, horizonY);

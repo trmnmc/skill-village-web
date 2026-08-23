@@ -18,7 +18,7 @@ export interface Tokens {
 export interface ResolvedTheme {
   tokens: Tokens;
   tint: { col: string; sceneryK: number; creatureK: number };
-  flags: { isNight: boolean; isDusk: boolean; lanternsOn: boolean; overcast: boolean; windowsGlow: boolean };
+  flags: { isNight: boolean; isDusk: boolean; isDawn: boolean; lanternsOn: boolean; overcast: boolean; windowsGlow: boolean };
   weather: { kind: WeatherKind; ramp: number };
   sun: { visible: boolean; x01: number; y01: number };
   moonSky: { visible: boolean; x01: number; y01: number; phaseName: string; illumination: number; waxing: boolean; darkness: number };
@@ -232,6 +232,7 @@ export function createThemeStore(deps?: {
 
     const isNight = dominantFrame === 'night';
     const isDusk = dominantFrame === 'dusk';
+    const isDawn = dominantFrame === 'dawn';
     const lanternsOn = isNight || isDusk;
     const overcast = OVERCAST.has(weatherKind) && weatherRamp > 0.5;
     const windowsGlow = lanternsOn || weatherKind === 'storm';
@@ -294,7 +295,7 @@ export function createThemeStore(deps?: {
     return {
       tokens,
       tint,
-      flags: { isNight, isDusk, lanternsOn, overcast, windowsGlow },
+      flags: { isNight, isDusk, isDawn, lanternsOn, overcast, windowsGlow },
       weather: { kind: weatherKind, ramp: weatherRamp },
       sun: { visible: sunVisible, x01: sunX01, y01: sunY01 },
       moonSky: {

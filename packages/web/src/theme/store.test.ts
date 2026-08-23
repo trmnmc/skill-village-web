@@ -200,6 +200,18 @@ describe('dev override — garbage input safety', () => {
   }
 });
 
+describe('isDawn flag', () => {
+  it('a weekday 06:20 is dawn; the same weekday at noon is day', () => {
+    const dawn = createThemeStore({ now: () => new Date(2026, 7, 26, 6, 20), storage: mem() });
+    dawn.tick();
+    expect(dawn.current().flags.isDawn).toBe(true);
+
+    const noon = createThemeStore({ now: () => new Date(2026, 7, 26, 12, 0), storage: mem() });
+    noon.tick();
+    expect(noon.current().flags.isDawn).toBe(false);
+  });
+});
+
 describe('cssVars', () => {
   it('day chrome is cream on ink; night chrome flips dark', () => {
     const day = createThemeStore({ now: at('2026-08-19T12:00:00'), storage: mem() });

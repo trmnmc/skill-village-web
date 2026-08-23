@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { frac, rainDrop, snowFlake, fx, fy, mapX, mapY, rainbowBlocks } from './weather-layer.js';
+import { frac, rainDrop, snowFlake, fx, fy, mapX, mapY, rainbowBlocks, overcastCloudSpecs, fairCloudSpecs } from './weather-layer.js';
+import { mix } from '../theme/palettes.js';
 
 describe('frac', () => {
   it('returns the fractional part for positive numbers', () => {
@@ -223,5 +224,101 @@ describe('rainbowBlocks', () => {
     // where the last step lands relative to the pi..2pi range.
     expect(band0.length).toBeGreaterThanOrEqual(130);
     expect(band0.length).toBeLessThanOrEqual(137);
+  });
+});
+
+describe('overcastCloudSpecs', () => {
+  it('is deterministic: the same (kind, night, t, width, horizonY) always produces the same blobs', () => {
+    expect(overcastCloudSpecs('cloudy', false, 3.2, 800, 180)).toEqual(overcastCloudSpecs('cloudy', false, 3.2, 800, 180));
+  });
+
+  it('returns all 6 rects across the reference\'s 4 clusters (14/32, 150, 248/270, 384)', () => {
+    expect(overcastCloudSpecs('cloudy', false, 0, 480, 182)).toHaveLength(6);
+  });
+
+  it('selects the reference tone per kind', () => {
+    const toneOf = (kind: 'cloudy' | 'rain' | 'snow' | 'fog') => overcastCloudSpecs(kind, false, 0, 480, 182)[0]!.color;
+    expect(toneOf('cloudy')).toBe('#B4BABE');
+    expect(toneOf('rain')).toBe('#9AA6AE');
+    expect(toneOf('snow')).toBe('#C8D0D6');
+    expect(toneOf('fog')).toBe('#CFCCC0');
+  });
+
+  it('mixes the tone 50% toward #1A2028 at night, verbatim from the reference', () => {
+    const dayColor = overcastCloudSpecs('cloudy', false, 0, 480, 182)[0]!.color;
+    const nightColor = overcastCloudSpecs('cloudy', true, 0, 480, 182)[0]!.color;
+    expect(nightColor).toBe(mix(dayColor, '#1A2028', 0.5));
+    expect(nightColor).not.toBe(dayColor);
+  });
+
+  it('uses a flat alpha of 0.85 per blob (ramp is applied by the caller, not this pure function)', () => {
+    for (const b of overcastCloudSpecs('rain', false, 5, 480, 182)) expect(b.alpha).toBe(0.85);
+  });
+
+  it('drift wraps deterministically: 3 ref px/s over a 560 ref-px period repeats every 560/3 seconds', () => {
+    const a = overcastCloudSpecs('fog', false, 12.7, 480, 182);
+    const b = overcastCloudSpecs('fog', false, 12.7 + 560 / 3, 480, 182);
+    for (let i = 0; i < a.length; i++) expect(b[i]!.x).toBeCloseTo(a[i]!.x, 6);
+  });
+
+  it('never produces a NaN or unbounded x once tSec*3 exceeds the wrap period many times over', () => {
+    for (const b of overcastCloudSpecs('cloudy', false, 100_000, 480, 182)) {
+      expect(Number.isFinite(b.x)).toBe(true);
+    }
+  });
+
+  it('scales intra-cluster offsets and sizes by fy(horizonY) on both axes (class-2 cluster)', () => {
+    const base = overcastCloudSpecs('cloudy', false, 0, 480, 182); // fy(182) = 1
+    const doubled = overcastCloudSpecs('cloudy', false, 0, 480, 364); // fy(364) = 2
+    // Cluster A: index 0 is the anchor rect (0 intra offset), index 1 is its
+    // companion rect (18 ref-px intra offset) — the gap between them should
+    // double exactly when fy doubles, while the anchor itself (mapX-driven,
+    // independent of horizonY) stays put.
+    expect(doubled[0]!.x).toBeCloseTo(base[0]!.x, 6);
+    const baseOffset = base[1]!.x - base[0]!.x;
+    const doubledOffset = doubled[1]!.x - doubled[0]!.x;
+    expect(doubledOffset).toBeCloseTo(baseOffset * 2, 6);
+    expect(doubled[0]!.w).toBeCloseTo(base[0]!.w * 2, 6);
+    expect(doubled[0]!.h).toBeCloseTo(base[0]!.h * 2, 6);
+  });
+});
+
+describe('fairCloudSpecs', () => {
+  it('is deterministic: the same (dawn, t, width, horizonY) always produces the same blobs', () => {
+    expect(fairCloudSpecs(false, 3.2, 800, 180)).toEqual(fairCloudSpecs(false, 3.2, 800, 180));
+  });
+
+  it('draws only the always-cluster (2 rects) at dawn', () => {
+    expect(fairCloudSpecs(true, 0, 480, 182)).toHaveLength(2);
+  });
+
+  it('draws both clusters (4 rects) in full day — the "day only" second cluster', () => {
+    expect(fairCloudSpecs(false, 0, 480, 182)).toHaveLength(4);
+  });
+
+  it('is warm cream at dawn, plain white in full day', () => {
+    expect(fairCloudSpecs(true, 0, 480, 182)[0]!.color).toBe('#FFF3E0');
+    expect(fairCloudSpecs(false, 0, 480, 182)[0]!.color).toBe('#FFFFFF');
+  });
+
+  it('alpha is a flat 0.75, NOT ramp-scaled — sky furniture present on clear days', () => {
+    for (const b of fairCloudSpecs(false, 9, 480, 182)) expect(b.alpha).toBe(0.75);
+  });
+
+  it('drift wraps deterministically: 1.5 ref px/s over a 560 ref-px period repeats every 560/1.5 seconds', () => {
+    const a = fairCloudSpecs(false, 4.4, 480, 182);
+    const b = fairCloudSpecs(false, 4.4 + 560 / 1.5, 480, 182);
+    for (let i = 0; i < a.length; i++) expect(b[i]!.x).toBeCloseTo(a[i]!.x, 6);
+  });
+
+  it('scales intra-cluster offsets and sizes by fy(horizonY) on both axes (class-2 cluster)', () => {
+    const base = fairCloudSpecs(false, 0, 480, 182); // fy(182) = 1
+    const doubled = fairCloudSpecs(false, 0, 480, 364); // fy(364) = 2
+    expect(doubled[0]!.x).toBeCloseTo(base[0]!.x, 6);
+    const baseOffset = base[1]!.x - base[0]!.x;
+    const doubledOffset = doubled[1]!.x - doubled[0]!.x;
+    expect(doubledOffset).toBeCloseTo(baseOffset * 2, 6);
+    expect(doubled[0]!.w).toBeCloseTo(base[0]!.w * 2, 6);
+    expect(doubled[0]!.h).toBeCloseTo(base[0]!.h * 2, 6);
   });
 });
