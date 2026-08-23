@@ -600,7 +600,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
       const resident = residentId ? view.creatures.find((c) => c.id === residentId) : undefined;
       robotHouse.setResidentLabel(resident ? displayName(resident) : null);
       const active = view.robotLastTurnAt !== null && Date.now() - view.robotLastTurnAt < 15_000;
-      robotHouse.setPresence(residentId === null ? 'dark' : active ? 'talking' : 'lit');
+      robotHouse.setPresence(resident ? (active ? 'talking' : 'lit') : 'dark');
 
       placements = spots;
       const seen = new Set<string>();

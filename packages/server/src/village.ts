@@ -343,6 +343,7 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
       const present = state.creatures[creatureId] ?? fresh;
       const cared: Creature = { ...present, stats: applyCare(present.stats, 'chat'), lastSeenAt: at };
       const text = reply.ok ? reply.text : pickCannedLine(cared);
+      if (style === 'spoken') robotLastTurnAt = at;
       await commit(
         {
           ...state,
@@ -355,7 +356,6 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
         },
         [{ at, type: 'chatted', creatureId, detail: reply.ok ? 'llm' : 'canned' }],
       );
-      if (style === 'spoken') robotLastTurnAt = at;
       return { text, source: reply.ok ? 'llm' : 'canned' };
     },
 
