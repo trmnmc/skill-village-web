@@ -284,36 +284,48 @@ describe('overcastCloudSpecs', () => {
 });
 
 describe('fairCloudSpecs', () => {
-  it('is deterministic: the same (dawn, t, width, horizonY) always produces the same blobs', () => {
-    expect(fairCloudSpecs(false, 3.2, 800, 180)).toEqual(fairCloudSpecs(false, 3.2, 800, 180));
+  it('is deterministic: the same (dawn, t, width, horizonY, overcastRamp) always produces the same blobs', () => {
+    expect(fairCloudSpecs(false, 3.2, 800, 180, 0)).toEqual(fairCloudSpecs(false, 3.2, 800, 180, 0));
   });
 
   it('draws only the always-cluster (2 rects) at dawn', () => {
-    expect(fairCloudSpecs(true, 0, 480, 182)).toHaveLength(2);
+    expect(fairCloudSpecs(true, 0, 480, 182, 0)).toHaveLength(2);
   });
 
   it('draws both clusters (4 rects) in full day — the "day only" second cluster', () => {
-    expect(fairCloudSpecs(false, 0, 480, 182)).toHaveLength(4);
+    expect(fairCloudSpecs(false, 0, 480, 182, 0)).toHaveLength(4);
   });
 
   it('is warm cream at dawn, plain white in full day', () => {
-    expect(fairCloudSpecs(true, 0, 480, 182)[0]!.color).toBe('#FFF3E0');
-    expect(fairCloudSpecs(false, 0, 480, 182)[0]!.color).toBe('#FFFFFF');
+    expect(fairCloudSpecs(true, 0, 480, 182, 0)[0]!.color).toBe('#FFF3E0');
+    expect(fairCloudSpecs(false, 0, 480, 182, 0)[0]!.color).toBe('#FFFFFF');
   });
 
-  it('alpha is a flat 0.75, NOT ramp-scaled — sky furniture present on clear days', () => {
-    for (const b of fairCloudSpecs(false, 9, 480, 182)) expect(b.alpha).toBe(0.75);
+  it('alpha is 0.75 at overcastRamp 0 (base sky furniture, not weather-ramp-scaled)', () => {
+    for (const b of fairCloudSpecs(false, 9, 480, 182, 0)) expect(b.alpha).toBe(0.75);
+  });
+
+  it('crossfades linearly as overcastRamp rises from 0 to 1: 0.375 at 0.5, 0 at 1', () => {
+    for (const b of fairCloudSpecs(false, 9, 480, 182, 0.5)) expect(b.alpha).toBeCloseTo(0.375, 10);
+    for (const b of fairCloudSpecs(false, 9, 480, 182, 1)) expect(b.alpha).toBe(0);
+  });
+
+  it('non-overcast weather kinds (wind, leaves, heat, rainbow, clear) pass overcastRamp 0 regardless of their own ramp, so fair clouds stay at full alpha', () => {
+    // The caller derives overcastRamp as `OVERCAST.has(kind) ? ramp : 0` — for
+    // a non-overcast kind that's always 0 no matter how high that kind's own
+    // ramp climbs, so this just re-confirms the 0-ramp case at a high tSec.
+    for (const b of fairCloudSpecs(false, 9, 480, 182, 0)) expect(b.alpha).toBe(0.75);
   });
 
   it('drift wraps deterministically: 1.5 ref px/s over a 560 ref-px period repeats every 560/1.5 seconds', () => {
-    const a = fairCloudSpecs(false, 4.4, 480, 182);
-    const b = fairCloudSpecs(false, 4.4 + 560 / 1.5, 480, 182);
+    const a = fairCloudSpecs(false, 4.4, 480, 182, 0);
+    const b = fairCloudSpecs(false, 4.4 + 560 / 1.5, 480, 182, 0);
     for (let i = 0; i < a.length; i++) expect(b[i]!.x).toBeCloseTo(a[i]!.x, 6);
   });
 
   it('scales intra-cluster offsets and sizes by fy(horizonY) on both axes (class-2 cluster)', () => {
-    const base = fairCloudSpecs(false, 0, 480, 182); // fy(182) = 1
-    const doubled = fairCloudSpecs(false, 0, 480, 364); // fy(364) = 2
+    const base = fairCloudSpecs(false, 0, 480, 182, 0); // fy(182) = 1
+    const doubled = fairCloudSpecs(false, 0, 480, 364, 0); // fy(364) = 2
     expect(doubled[0]!.x).toBeCloseTo(base[0]!.x, 6);
     const baseOffset = base[1]!.x - base[0]!.x;
     const doubledOffset = doubled[1]!.x - doubled[0]!.x;

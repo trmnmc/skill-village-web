@@ -2,6 +2,7 @@ import type { KAPLAYCtx, GameObj } from 'kaplay';
 import { HUES } from '@village/core/visual';
 import type { ResolvedTheme } from '../theme/store.js';
 import { mix } from '../theme/palettes.js';
+import { OVERCAST } from '../theme/weather/kinds.js';
 import { horizonScreenY } from './sky.js';
 
 /**
@@ -89,6 +90,11 @@ export function rainDrop(i: number, tSec: number, heavy: boolean): RainDrop {
 /** Positive-safe modulo: wraps `x` into [0, m), including when `x` is deeply negative. Needed for the cloud drift below — unlike this file's other periodic motion (which only ever adds a `tSec` term), drift subtracts an unbounded one, so plain `%` would go negative once `tSec` grows past the anchor. */
 function wrap(x: number, m: number): number {
   return ((x % m) + m) % m;
+}
+
+/** `x` clamped to [0, 1]. Used to turn an unbounded overcast ramp into a crossfade multiplier. */
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
 }
 
 export interface SnowFlake {
@@ -297,13 +303,28 @@ const FAIR_CLOUD_DAY_ONLY: CloudClusterDef = { baseX: 270, rects: [{ dx: 0, y: 6
 
 /**
  * Fair-weather clouds — the reference's `else if (time==='day'||dawn)`
- * branch. Sky furniture, not weather: alpha is a flat 0.75 that callers must
- * NOT multiply by ramp (present on every clear day, not fading in with it).
+ * branch. Sky furniture, not weather: base alpha is 0.75, independent of the
+ * weather switch's own `ramp` gate (present on every clear day).
+ *
+ * `overcastRamp` (the current weather's `ramp` when its kind is in
+ * `OVERCAST`, else 0 — see the caller in `mountWeather`) crossfades these out
+ * as overcast blobs (`overcastCloudSpecs`) fade in, instead of the old binary
+ * `flags.overcast` gate (`ramp > 0.5`) which let both blob sets render at
+ * once during journey-mode transitions and then popped the fair clouds out
+ * in a single frame at the 0.5 threshold. At `overcastRamp >= 1` this
+ * resolves to alpha 0 (fully replaced by overcast blobs).
  */
-export function fairCloudSpecs(dawn: boolean, tSec: number, width: number, horizonY: number): CloudBlobSpec[] {
+export function fairCloudSpecs(
+  dawn: boolean,
+  tSec: number,
+  width: number,
+  horizonY: number,
+  overcastRamp: number,
+): CloudBlobSpec[] {
   const color = dawn ? '#FFF3E0' : '#FFFFFF';
+  const alpha = 0.75 * (1 - clamp01(overcastRamp));
   const clusters = dawn ? [FAIR_CLOUD_ALWAYS] : [FAIR_CLOUD_ALWAYS, FAIR_CLOUD_DAY_ONLY];
-  return driftedClusterRects(clusters, 1.5, tSec, width, horizonY).map((r) => ({ ...r, color, alpha: 0.75 }));
+  return driftedClusterRects(clusters, 1.5, tSec, width, horizonY).map((r) => ({ ...r, color, alpha }));
 }
 
 // ---------------------------------------------------------------------------
@@ -469,9 +490,17 @@ function drawOvercastCloudBlobs(
   }
 }
 
-/** Fair-weather clouds — sky furniture, not ramp-scaled (see `fairCloudSpecs`). */
-function drawFairClouds(k: KAPLAYCtx, dawn: boolean, tSec: number, width: number, horizonY: number): void {
-  for (const b of fairCloudSpecs(dawn, tSec, width, horizonY)) {
+/** Fair-weather clouds — sky furniture, crossfading out via `overcastRamp` (see `fairCloudSpecs`). */
+function drawFairClouds(
+  k: KAPLAYCtx,
+  dawn: boolean,
+  tSec: number,
+  width: number,
+  horizonY: number,
+  overcastRamp: number,
+): void {
+  if (overcastRamp >= 1) return; // fully replaced by overcast blobs — alpha would be 0 anyway
+  for (const b of fairCloudSpecs(dawn, tSec, width, horizonY, overcastRamp)) {
     rect(k, b.x, b.y, b.w, b.h, b.color, b.alpha);
   }
 }
@@ -620,11 +649,17 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
     const horizonY = horizonScreenY(k);
 
     // Fair-weather clouds are sky furniture, not weather — they draw
-    // whenever the sky itself isn't overcast/night/dusk, which is a wider
-    // gate than the ramp-driven weather switch below (and must run even when
-    // `kind === 'clear'`, which that switch bails out of entirely).
-    if (!cur.flags.overcast && !cur.flags.isNight && !cur.flags.isDusk) {
-      drawFairClouds(k, cur.flags.isDawn, t, width, horizonY);
+    // whenever the sky itself isn't night/dusk, which is a wider gate than
+    // the ramp-driven weather switch below (and must run even when
+    // `kind === 'clear'`, which that switch bails out of entirely). They
+    // crossfade out via `overcastRamp` rather than gating on
+    // `flags.overcast` (`ramp > 0.5`): in journey mode `ramp` is continuous,
+    // so a binary gate let overcast blobs (drawn below, from `ramp > 0.02`)
+    // render simultaneously with fair clouds below 0.5 and then pop the fair
+    // clouds out in a single frame at the 0.5 crossing.
+    if (!cur.flags.isNight && !cur.flags.isDusk) {
+      const overcastRamp = OVERCAST.has(cur.weather.kind) ? cur.weather.ramp : 0;
+      drawFairClouds(k, cur.flags.isDawn, t, width, horizonY, overcastRamp);
     }
 
     if (cur.weather.kind === 'clear' || cur.weather.ramp <= 0.02) return;
