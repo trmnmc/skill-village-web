@@ -9,6 +9,8 @@ import {
   HOMES_HOUSE_XS,
   HOMES_TREE_XS,
   HOMES_SIGN_X,
+  HOMES_LO,
+  HOMES_HI,
   homesKeepOutAt,
   personalSpace,
   placeCreatures,
@@ -301,6 +303,39 @@ describe('placeCreatures', () => {
       }
     }
     expect(violations).toEqual([]);
+  });
+
+  it('fills each row evenly: no stretch of open ground dwarfs the average gap', () => {
+    // Hashing positions uniformly at random leaves Poisson voids — stretches
+    // of empty field beside bunched-up stretches, which the eye reads as
+    // "clumps of open space". Placement is stratified instead: a row's free
+    // ground is split into one stratum per villager, each drifting inside
+    // its own, so no free stretch (row ends included) can grow much past two
+    // strata while another stands crowded.
+    const rows = new Map<number, number[]>();
+    for (const { x, y } of placeCreatures(ids).values()) {
+      const row = rows.get(y) ?? [];
+      row.push(x);
+      rows.set(y, row);
+    }
+    for (const [y, xs] of rows) {
+      if (xs.length < 8) continue; // sparse rows are open space by design
+      const bands = homesKeepOutAt(y);
+      // Distance with the band-covered stretches (never standable) removed.
+      const freeBetween = (a: number, b: number) =>
+        b - a - bands.reduce(
+          (sum, band) => sum + Math.max(0, Math.min(b, band.right) - Math.max(a, band.left)),
+          0,
+        );
+      xs.sort((a, b) => a - b);
+      const gaps = [freeBetween(HOMES_LO, xs[0]!), freeBetween(xs.at(-1)!, HOMES_HI)];
+      for (let i = 1; i < xs.length; i++) gaps.push(freeBetween(xs[i - 1]!, xs[i]!));
+      const average = gaps.reduce((sum, g) => sum + g, 0) / gaps.length;
+      const widest = Math.max(...gaps);
+      expect(widest, `row y=${y}: widest ${widest} vs average ${average}`).toBeLessThanOrEqual(
+        2.5 * average,
+      );
+    }
   });
 
   it('does not stack villagers into columns at the band edges', () => {

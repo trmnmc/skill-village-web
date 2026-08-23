@@ -209,8 +209,8 @@ export function personalSpace(id: string): number {
 }
 
 /** The seatable stretch of Homes: inside the zone with MARGIN kept from both ends. */
-const HOMES_LO = HOMES.x + MARGIN;
-const HOMES_HI = HOMES.x + HOMES.w - MARGIN;
+export const HOMES_LO = HOMES.x + MARGIN;
+export const HOMES_HI = HOMES.x + HOMES.w - MARGIN;
 
 /** Everything a row's seating needs, derived once per row. */
 interface RowGround {
@@ -347,6 +347,11 @@ function findNearest(
 
 interface RowMember {
   id: string;
+  /** The id's raw draw in [0, 1): its rank order along the row. */
+  along: number;
+  /** An independent draw in [0, 1): where it drifts inside its own stratum. */
+  jitter: number;
+  /** World x it will ask for — assigned once the row's membership is known. */
   wanted: number;
   r: number;
 }
@@ -412,21 +417,18 @@ function seatRowPacked(members: readonly RowMember[], ground: RowGround): Map<st
 }
 
 /**
- * Deterministic placement inside Homes. A creature asks for the row and the
- * offset its own id hashes to, and gets exactly that unless somebody is
- * already standing there; when somebody is, only the arriving creature moves.
+ * Deterministic placement inside Homes. A creature's id hashes to its depth
+ * row and to its *rank* along that row; the rank picks its stratum of the
+ * row's free ground and a second draw places it inside the stratum.
  *
- * Guaranteed spacing and placement-from-the-id-alone cannot both hold: with a
- * finite number of non-overlapping spots, two ids that hash together mean one
- * of them has to stand somewhere else. So a spot depends on the id *and* on
- * who was seated before it. Seating order is fixed here rather than inherited
- * from the caller — by code unit, which is locale-independent, unlike the
- * `localeCompare` protocol.ts sorts views with — so the layout is a pure
- * function of the *set* of ids. That is the stable-geography promise in the
- * form it can actually keep: the same villagers always produce the same
- * village, however the caller ordered them, on every reload. Membership
- * changes are the exception, and a villager can be nudged along its row to
- * make room; `village.ts` moves the actor to match.
+ * The layout is a pure function of the *set* of ids: seating order is fixed
+ * here rather than inherited from the caller — by code unit, which is
+ * locale-independent, unlike the `localeCompare` protocol.ts sorts views
+ * with — so the same villagers always produce the same village, however the
+ * caller ordered them, on every reload. Membership changes are the
+ * exception: a newcomer widens its row's strata, so its row-mates each
+ * shuffle a step while every other row stands still; `village.ts` moves the
+ * actors to match.
  *
  * Comfort degrades per row, in whole-row steps: everyone's personal margins
  * first; then greedy seating at the MIN_SEPARATION floor (a late arrival
@@ -439,21 +441,39 @@ export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
   const byRow = new Map<number, RowMember[]>();
   for (const id of [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
     const h = hash(id);
-    // Independent draws from the hash: the row, the offset, the personal radius.
+    // Independent draws from the hash: the row, the rank, the stratum drift,
+    // and (inside personalSpace) the radius.
     const row = rowFor(h);
-    const wanted = groundAt(((h >>> 8) % 10000) / 10000, ROW_GROUND[row]!);
     const members = byRow.get(row) ?? [];
-    members.push({ id, wanted, r: personalSpace(id) });
+    members.push({
+      id,
+      along: ((h >>> 8) % 10000) / 10000,
+      jitter: ((h >>> 24) & 0xff) / 256,
+      wanted: 0,
+      r: personalSpace(id),
+    });
     byRow.set(row, members);
   }
 
   const spots = new Map<string, Spot>();
   for (const [row, members] of byRow) {
     const ground = ROW_GROUND[row]!;
+    // Stratified, not uniform: hashing positions independently leaves Poisson
+    // voids — stretches of empty field beside bunched-up stretches. Each
+    // villager instead gets its own slice of the row's free ground, ordered
+    // by its hash draw, and drifts inside it by a second draw. The crowd
+    // fills the row the way a real one does: evenly, but never on a grid.
+    const ordered = [...members].sort(
+      (a, b) => a.along - b.along || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
+    ordered.forEach((member, i) => {
+      member.wanted = groundAt((i + 0.15 + 0.7 * member.jitter) / ordered.length, ground);
+    });
+
     const xs =
-      seatRow(members, ground, (a, other) => other.r + a.r) ??
-      seatRow(members, ground, () => MIN_SEPARATION) ??
-      seatRowPacked(members, ground);
+      seatRow(ordered, ground, (a, other) => other.r + a.r) ??
+      seatRow(ordered, ground, () => MIN_SEPARATION) ??
+      seatRowPacked(ordered, ground);
     for (const [id, x] of xs) spots.set(id, { x, y: rowY(row) });
   }
 
