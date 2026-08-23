@@ -14,6 +14,14 @@ import type { EggView, RareViewFull, ResidentView, ShowroomView } from './protoc
 
 /** One meadow, no zone strip — spec §5's showroom layout. */
 const WORLD_W = 2200;
+/**
+ * Camera zoom. 1:1 framed the whole meadow at once and the creatures read
+ * distant (playtest 2026-08-23); 1.2x brings them close enough to be the
+ * subject. Every screen↔world conversion below must divide by this — the
+ * pan clamp, the pan delta, and the cursor mapping — or clicks land beside
+ * the creature the cursor is on.
+ */
+const ZOOM = 1.2;
 /** Fenced pen; eggs are placed here via placeInRange. */
 const NURSERY = { lo: 160, hi: 520 };
 /**
@@ -563,18 +571,25 @@ export async function startSpectatorVillage(options: SpectatorVillageOptions): P
   // camera stuck mid-pan.
   let panning = false;
   const stopPanning = () => { panning = false; };
+  // Half the world width the zoomed camera can see: the pan clamp keeps the
+  // camera centre this far from the world's edges so the view never shows
+  // past them.
+  const halfView = () => k.width() / (2 * ZOOM);
   k.onMouseDown('left', () => { panning = true; });
   k.onMouseMove((_pos, delta) => {
     if (!panning) return;
-    const next = k.getCamPos().x - delta.x;
-    k.setCamPos(k.clamp(next, k.width() / 2, WORLD_W - k.width() / 2), k.getCamPos().y);
+    // Screen pixels shrink by ZOOM in world terms — divide, or the meadow
+    // slides faster than the hand dragging it.
+    const next = k.getCamPos().x - delta.x / ZOOM;
+    k.setCamPos(k.clamp(next, halfView(), WORLD_W - halfView()), k.getCamPos().y);
   });
   window.addEventListener('mouseup', stopPanning);
   window.addEventListener('pointercancel', stopPanning);
   window.addEventListener('blur', stopPanning);
 
+  k.setCamScale(ZOOM);
   k.setCamPos(
-    k.clamp((COMMONS.lo + COMMONS.hi) / 2, k.width() / 2, WORLD_W - k.width() / 2),
+    k.clamp((COMMONS.lo + COMMONS.hi) / 2, halfView(), WORLD_W - halfView()),
     GROUND_Y - 130,
   );
 
@@ -593,8 +608,8 @@ export async function startSpectatorVillage(options: SpectatorVillageOptions): P
   let lookAt: number | null = null;
   let cursorY: number | null = null;
   k.onMouseMove((pos) => {
-    lookAt = pos.x + k.getCamPos().x - k.width() / 2;
-    cursorY = pos.y + k.getCamPos().y - k.height() / 2;
+    lookAt = k.getCamPos().x + (pos.x - k.width() / 2) / ZOOM;
+    cursorY = k.getCamPos().y + (pos.y - k.height() / 2) / ZOOM;
   });
 
   // Residents (commons + the rare, if one is configured and its appearance
