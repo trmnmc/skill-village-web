@@ -172,18 +172,18 @@ player opts into a mood):
   1. Meadow Blue · day · clear — the summer-blue start
   2. Meadow Blue · day · wind — a breeze picks up
   3. Marigold · day · heat — high-summer shimmer
-  4. Golden Hour · dusk · clear — golden evening
+  4. Marigold · dusk · clear — golden evening
   5. Berry Dusk · dusk · leaves — autumn drifts in
   6. Toasted Oat · day · leaves — amber afternoon
   7. Toasted Oat · dusk · fog — misty evening
   8. Spring Tonic · dawn · fog — cool morning mist
   9. Spring Tonic · day · rain — spring rain
-  10. Meadow Blue · day · rainbow — after the rain
+  10. Berry Dusk · day · rainbow — after the rain
   11. Berry Dusk · night · clear — starry night, fireflies
   12. Meadow Blue · night · snow — quiet winter night
   13. Golden Hour · night · rain — warm rainy night
   14. Meadow Blue · night · storm — the finale
-  15. Golden Hour · dawn · clear — the storm breaks at sunrise → loop
+  15. Meadow Blue · dawn · clear — the storm breaks at dawn → loop
 
   Waypoint position derives from wall-clock time (`(now / 3min) mod 15`), so
   the journey is stateless, reload-stable, and shared by every open tab.
