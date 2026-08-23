@@ -5,8 +5,22 @@ import { themeStore } from '../theme/index.js';
 import type { Tokens, ResolvedTheme } from '../theme/store.js';
 import { mix } from '../theme/palettes.js';
 import { tokenTag, sceneryColor, creatureTintColor } from './retint.js';
-import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, placeCreatures, type Spot } from '../layout/zones.js';
+import {
+  ZONES,
+  WORLD_W,
+  GROUND_Y,
+  GROUND_TOP,
+  HOMES_HOUSE_XS,
+  HOMES_TREE_XS,
+  HOUSE_BASE_Y,
+  TREE_BASE_Y,
+  SIGN_BASE_Y,
+  signLeft,
+  placeCreatures,
+  type Spot,
+} from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
+import { ZOOM, screenToWorld, clampCamX } from './camera.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
 import { sound } from '../sound/player.js';
 import { voiceParamsFor } from '../sound/voice.js';
@@ -186,6 +200,11 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     pixelDensity: Math.min(window.devicePixelRatio || 1, 2),
   });
 
+  // Zoomed in past 1:1 so the frame holds village instead of sky and bare
+  // foreground. Every cursor→world conversion below goes through camera.ts —
+  // raw offsets land wide of their target by exactly this factor.
+  k.setCamScale(ZOOM);
+
   // Ground: a thin dark strip at the horizon over one light field — the
   // trailer's own construction. GROUND_TOP is derived in zones.ts from the
   // depth rows themselves, so the field always reaches back past the furthest
@@ -194,18 +213,28 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   block(k, 0, GROUND_TOP, WORLD_W, 14, 'groundDark', 0);
   block(k, 0, GROUND_TOP + 14, WORLD_W, k.height() * 2, 'ground', 0);
 
+  const homes = ZONES.find((z) => z.id === 'homes')!;
+
+  // Prop positions come from zones.ts, where placeCreatures derives its
+  // keep-out bands from the same anchors — draw them anywhere else and the
+  // villagers would no longer know to stand clear.
   for (const zone of ZONES) {
-    sign(k, zone.x + zone.w / 2 - 50, GROUND_Y - 6, zone.label, pixelFont);
+    sign(k, signLeft(zone), SIGN_BASE_Y, zone.label, pixelFont);
   }
 
-  const homes = ZONES.find((z) => z.id === 'homes')!;
   // House 1 and house 2 each get their own wall/roof pair; house 3 (the old
   // wallSand/roofClay THEME hexes, retired with THEME) reuses house 1's wall
   // with house 2's roof for variety without a third token pair.
-  house(k, homes.x + 180, GROUND_Y - 30, 'houseAWall', 'houseARoof');
-  house(k, homes.x + 900, GROUND_Y - 30, 'houseBWall', 'houseBRoof');
-  house(k, homes.x + 1700, GROUND_Y - 30, 'houseAWall', 'houseBRoof');
-  for (const dx of [60, 620, 1240, 2050, 2420]) tree(k, homes.x + dx, GROUND_Y - 20);
+  const houseStyles: { wall: keyof Tokens; roof: keyof Tokens }[] = [
+    { wall: 'houseAWall', roof: 'houseARoof' },
+    { wall: 'houseBWall', roof: 'houseBRoof' },
+    { wall: 'houseAWall', roof: 'houseBRoof' },
+  ];
+  HOMES_HOUSE_XS.forEach((x, i) => {
+    const style = houseStyles[i % houseStyles.length]!;
+    house(k, x, HOUSE_BASE_Y, style.wall, style.roof);
+  });
+  for (const x of HOMES_TREE_XS) tree(k, x, TREE_BASE_Y);
 
   // Sun/moon/stars/fireflies/lantern glow — mounted after the static
   // scenery it sits in front of (or, for the sky, behind) and before any
@@ -243,8 +272,10 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   });
   k.onMouseMove((_pos, delta) => {
     if (!panning) return;
-    const next = k.getCamPos().x - delta.x;
-    k.setCamPos(k.clamp(next, k.width() / 2, WORLD_W - k.width() / 2), k.getCamPos().y);
+    // Screen pixels shrink to world pixels under the zoom, or the world
+    // would slide faster than the hand dragging it.
+    const next = k.getCamPos().x - delta.x / ZOOM;
+    k.setCamPos(clampCamX(next, k.width()), k.getCamPos().y);
   });
   window.addEventListener('mouseup', stopPanning);
   window.addEventListener('pointercancel', stopPanning);
@@ -287,10 +318,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // world x=0, and frame the field as the lower two thirds rather than
   // centring the camera on the horizon line, which put half the opening
   // frame in the sky and read as the village floating.
-  k.setCamPos(
-    k.clamp(homes.x + homes.w / 2, k.width() / 2, WORLD_W - k.width() / 2),
-    GROUND_Y - 130,
-  );
+  k.setCamPos(clampCamX(homes.x + homes.w / 2, k.width()), GROUND_Y - 130);
 
   const actors = new Map<string, CreatureActor>();
   // Bumped every time setView decides to (re)spawn a given id. A spawn's own
@@ -326,8 +354,8 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   let hoveredId: string | null = null;
 
   k.onMouseMove((pos) => {
-    lookAt = pos.x + k.getCamPos().x - k.width() / 2;
-    cursorY = pos.y + k.getCamPos().y - k.height() / 2;
+    lookAt = screenToWorld(pos.x, k.getCamPos().x, k.width());
+    cursorY = screenToWorld(pos.y, k.getCamPos().y, k.height());
   });
 
   // Idle chirps, spec §3: once a second the scene offers the director its
@@ -345,7 +373,11 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     if (lookAt !== null && cursorY !== null) {
       let best = 90 * 90;
       for (const [id, spot] of placements) {
-        const dx = lookAt - spot.x;
+        // Aim at where the villager is drawn, not its home spot — an ambling
+        // creature can be a full body-width from home. The spot is only the
+        // fallback for an actor whose sprites are still loading.
+        const x = actors.get(id)?.worldX() ?? spot.x;
+        const dx = lookAt - x;
         const dyMid = cursorY - (spot.y - 34);
         const d = dx * dx + dyMid * dyMid;
         if (d < best) {

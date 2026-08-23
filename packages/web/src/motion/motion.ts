@@ -92,6 +92,20 @@ export function wingAngle(t: number, phi: number): number {
   return Math.sin(t * 16 + phi * 3) * 26 - 8;
 }
 
+/**
+ * How far a grounded villager has ambled from its home spot, in pixels along
+ * the row. Two slow incommensurate sines: their sum meanders instead of
+ * metronoming, so the stroll never repeats on a readable beat and never
+ * exceeds the leash the layout granted (the /1.5 normalises the sum's peak
+ * to exactly the amplitude). Frequencies are pixels-per-second slow — the
+ * drift reads as strolling, not sliding.
+ */
+export function wanderOffset(t: number, phi: number, amplitude: number): number {
+  return (
+    (amplitude * (Math.sin(t * 0.19 + phi * 7) + 0.5 * Math.sin(t * 0.311 + phi * 13))) / 1.5
+  );
+}
+
 /** The shadow narrows as the creature rises. This is what sells the hop as real. */
 export function shadowSquash(dy: number): number {
   return clamp(1 + dy / 130, 0.55, 1);

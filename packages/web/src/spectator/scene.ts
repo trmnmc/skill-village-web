@@ -681,7 +681,9 @@ export async function startSpectatorVillage(options: SpectatorVillageOptions): P
     const toRender = rareResident ? [...commons, rareResident] : commons;
 
     const spots = new Map<string, Spot>(placeInRange(commons.map((r) => r.id), COMMONS.lo, COMMONS.hi));
-    if (rareResident) spots.set(rareResident.id, { x: PEDESTAL_X, y: pedestalTopY });
+    // wander 0: the rare resident stands its pedestal — Spot carries a wander
+    // leash for the main village's amblers, which the showroom doesn't use.
+    if (rareResident) spots.set(rareResident.id, { x: PEDESTAL_X, y: pedestalTopY, wander: 0 });
     placements = spots;
 
     const seen = new Set<string>();

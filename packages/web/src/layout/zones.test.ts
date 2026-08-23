@@ -1,5 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, MIN_SEPARATION, placeCreatures } from './zones.js';
+import {
+  ZONES,
+  WORLD_W,
+  GROUND_Y,
+  GROUND_FRONT,
+  GROUND_TOP,
+  MIN_SEPARATION,
+  HOMES_HOUSE_XS,
+  HOMES_TREE_XS,
+  HOMES_SIGN_X,
+  HOMES_LO,
+  HOMES_HI,
+  homesKeepOutAt,
+  personalSpace,
+  placeCreatures,
+} from './zones.js';
 
 const ids = Array.from({ length: 70 }, (_, i) => `skill:s${i}`);
 
@@ -70,6 +85,12 @@ describe('placeCreatures', () => {
 
       const arrivalRow = after.get(newcomer)!.y;
       const rowSize = [...after.values()].filter((s) => s.y === arrivalRow).length;
+      // A displaced villager may also have to hop its row's scenery bands —
+      // nothing may stand inside one — so the reach bound grows by their
+      // width; a packed stretch is at most everyone's personal diameters end
+      // to end.
+      const bandWidth = homesKeepOutAt(arrivalRow).reduce((sum, b) => sum + (b.right - b.left), 0);
+      const maxDiameter = 2 * Math.max(...list.map((id) => personalSpace(id)));
 
       for (const id of ids) {
         const was = before.get(id)!;
@@ -81,7 +102,7 @@ describe('placeCreatures', () => {
         expect(now.y).toBe(arrivalRow);
         // A displaced villager steps clear of the cluster it was standing in.
         // It can never travel further than that row could pack end to end.
-        expect(Math.abs(now.x - was.x)).toBeLessThanOrEqual(rowSize * MIN_SEPARATION);
+        expect(Math.abs(now.x - was.x)).toBeLessThanOrEqual(rowSize * maxDiameter + bandWidth);
       }
 
       // Same membership, same layout: the whole "stable geography" promise.
@@ -123,9 +144,34 @@ describe('placeCreatures', () => {
     // inside the painted band, or a villager floats on the sky-blue clear
     // colour with its shadow drawn in mid-air.
     for (const { y } of placeCreatures(ids).values()) {
-      expect(y).toBeLessThanOrEqual(GROUND_Y);
+      expect(y).toBeLessThanOrEqual(GROUND_FRONT);
       expect(y - 5).toBeGreaterThan(GROUND_TOP);
     }
+  });
+
+  it('fills the field from the back: the closer to the viewer, the fewer villagers', () => {
+    // A depth gradient still sells the composition, but only the row pressed
+    // right against the glass stays sparse — the rest of the foreground
+    // carries its share, or the bottom of the frame reads as empty field.
+    const many = Array.from({ length: 600 }, (_, i) => `skill:many${i}`);
+    const counts = new Map<number, number>();
+    for (const { y } of placeCreatures(many).values()) {
+      counts.set(y, (counts.get(y) ?? 0) + 1);
+    }
+    const front = counts.get(GROUND_FRONT) ?? 0;
+    expect(front).toBeGreaterThan(0);
+    for (const [y, n] of counts) {
+      if (y === GROUND_FRONT) continue;
+      expect(front, `front row vs row y=${y}`).toBeLessThan(n);
+    }
+  });
+
+  it('seats villagers in front of the baseline as well as behind it', () => {
+    // The field reaches toward the viewer, not only toward the horizon: the
+    // front rows stand below GROUND_Y, all the way out to GROUND_FRONT.
+    const ys = [...placeCreatures(ids).values()].map((s) => s.y);
+    expect(Math.max(...ys)).toBe(GROUND_FRONT);
+    expect(GROUND_FRONT).toBeGreaterThan(GROUND_Y);
   });
 
   it('gives the back row real field behind it, not a razor-thin horizon', () => {
@@ -146,6 +192,246 @@ describe('placeCreatures', () => {
 
   it('handles an empty village', () => {
     expect(placeCreatures([]).size).toBe(0);
+  });
+
+  it('grants wander room that can never reach a prop or a neighbour', () => {
+    // Each spot carries how far its villager may amble from home. The leash
+    // is cut from real clearances: full excursions toward a neighbour still
+    // leave MIN_SEPARATION between the pair (both may be at their limits at
+    // once), and no excursion crosses into the row's keep-out bands or past
+    // the row's ends.
+    const spots = placeCreatures(ids);
+    const rows = new Map<number, { x: number; wander: number }[]>();
+    const violations: string[] = [];
+    for (const [id, spot] of spots) {
+      expect(spot.wander).toBeGreaterThanOrEqual(0);
+      if (spot.x - spot.wander < HOMES_LO || spot.x + spot.wander > HOMES_HI) {
+        violations.push(`${id} can leave the row: ${spot.x}±${spot.wander}`);
+      }
+      for (const band of homesKeepOutAt(spot.y)) {
+        const nearEdge = spot.x < band.left ? band.left : band.right;
+        if (spot.x + spot.wander > band.left && spot.x - spot.wander < band.right) {
+          violations.push(`${id} can wander into [${band.left}, ${band.right}] (x=${spot.x}±${spot.wander}, edge ${nearEdge})`);
+        }
+      }
+      const row = rows.get(spot.y) ?? [];
+      row.push({ x: spot.x, wander: spot.wander });
+      rows.set(spot.y, row);
+    }
+    for (const [y, entries] of rows) {
+      entries.sort((a, b) => a.x - b.x);
+      for (let i = 1; i < entries.length; i++) {
+        const a = entries[i - 1]!;
+        const b = entries[i]!;
+        if (b.x - b.wander - (a.x + a.wander) < MIN_SEPARATION) {
+          violations.push(`row y=${y}: leashes collide at ${a.x}+${a.wander} vs ${b.x}-${b.wander}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('lets a good share of the village actually stroll', () => {
+    // A leash of a few pixels is standing still with extra steps. The layout
+    // is loose enough that most villagers should have real room.
+    const wanders = [...placeCreatures(ids).values()].map((s) => s.wander);
+    expect(wanders.filter((w) => w >= 20).length).toBeGreaterThan(wanders.length / 2);
+  });
+
+  it('keeps the middle rows out of every prop, sign included', () => {
+    // The bands are derived from the same anchors village.ts draws from, so
+    // this is the tripwire for someone emptying or narrowing the list: for a
+    // row whose feet land among every prop's pixels, every prop's anchor must
+    // sit strictly inside some band.
+    const bands = homesKeepOutAt(GROUND_Y - 46);
+    for (const x of [...HOMES_HOUSE_XS, ...HOMES_TREE_XS, HOMES_SIGN_X]) {
+      expect(bands.some((b) => b.left < x && x < b.right)).toBe(true);
+    }
+  });
+
+  it('lets villagers mingle with the scenery wherever nothing is covered', () => {
+    // A hard ring around every prop reads as a force field — the emptiness is
+    // as conspicuous as a queue. Exclusion follows what a body would actually
+    // cover: the back rows pass behind the sign (their bodies never reach
+    // down to the board) and the front-most row passes in front below it, so
+    // the sign keeps neighbours; the rows in front of the houses and trees
+    // stroll past them. Only covering is forbidden, and covering the sign
+    // board — the village's navigation — is forbidden from every row.
+    const inBand = (feetY: number, x: number) =>
+      homesKeepOutAt(feetY).some((b) => b.left < x && x < b.right);
+
+    // The sign stays approachable from behind (back rows) and in front below
+    // (the near rows, whose body tops no longer reach the board), and
+    // protected from every row that would cover it.
+    for (const y of [GROUND_Y - 3 * 46, GROUND_Y - 2 * 46, GROUND_Y + 2 * 46, GROUND_FRONT]) {
+      expect(inBand(y, HOMES_SIGN_X), `sign free at y=${y}`).toBe(false);
+    }
+    for (const y of [GROUND_Y - 46, GROUND_Y, GROUND_Y + 46]) {
+      expect(inBand(y, HOMES_SIGN_X), `sign protected at y=${y}`).toBe(true);
+    }
+
+    // Houses and trees: blocked for the rows among their pixels (perched or
+    // covering), open to the rows strolling in front of them.
+    for (const y of [GROUND_Y - 3 * 46, GROUND_Y - 2 * 46, GROUND_Y - 46]) {
+      expect(inBand(y, HOMES_HOUSE_XS[0]!), `house blocked at y=${y}`).toBe(true);
+      expect(inBand(y, HOMES_TREE_XS[0]!), `tree blocked at y=${y}`).toBe(true);
+    }
+    for (const y of [GROUND_Y, GROUND_FRONT - 46, GROUND_FRONT]) {
+      expect(inBand(y, HOMES_HOUSE_XS[0]!), `house open at y=${y}`).toBe(false);
+      expect(inBand(y, HOMES_TREE_XS[0]!), `tree open at y=${y}`).toBe(false);
+    }
+  });
+
+  it('never stands a villager in a keep-out band of its own row', () => {
+    // A villager whose body would cover a prop — or the sign board, from any
+    // distance — is drawn on top of it (creatures z-sort above props), so
+    // placement is the only thing preventing it.
+    const violations: string[] = [];
+    for (const [id, { x, y }] of placeCreatures(ids)) {
+      for (const band of homesKeepOutAt(y)) {
+        if (x > band.left && x < band.right) {
+          violations.push(`${id} at x=${x} inside [${band.left}, ${band.right}]`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('degrades to the body-width floor before overlapping anyone', () => {
+    // When a row can no longer honour everyone's personal space, it packs at
+    // MIN_SEPARATION — villagers stand shoulder to shoulder, never inside
+    // each other. The guarantee holds up to a row's packed capacity (~27 for
+    // today's tightest row); rows crowded past even that may overlap and are
+    // covered by the scenery test below. 26 members is under every row's
+    // capacity, so any row at or below it must hold the floor.
+    const crowd = Array.from({ length: 120 }, (_, i) => `skill:crowd${i}`);
+    const rows = new Map<number, { id: string; x: number }[]>();
+    for (const [id, { x, y }] of placeCreatures(crowd)) {
+      const row = rows.get(y) ?? [];
+      row.push({ id, x });
+      rows.set(y, row);
+    }
+    const violations: string[] = [];
+    let ladderEngaged = false;
+    for (const [y, entries] of rows) {
+      if (entries.length > 26) continue;
+      entries.sort((a, b) => a.x - b.x);
+      for (let i = 1; i < entries.length; i++) {
+        const a = entries[i - 1]!;
+        const b = entries[i]!;
+        const gap = b.x - a.x;
+        if (gap < MIN_SEPARATION) violations.push(`gap ${gap} in row y=${y}`);
+        if (gap < personalSpace(a.id) + personalSpace(b.id)) ladderEngaged = true;
+      }
+    }
+    expect(violations).toEqual([]);
+    // The crowd must actually be past personal-space comfort somewhere, or
+    // this test would pass without exercising the ladder at all.
+    expect(ladderEngaged).toBe(true);
+  });
+
+  it('keeps villagers off the scenery even when rows are past capacity', () => {
+    // Overcrowding degrades creature spacing first (villagers may overlap each
+    // other), never the scenery rule: the fallback seats a creature at the
+    // nearest clear ground, so nobody ever stands on a roof to make room.
+    const crowd = Array.from({ length: 300 }, (_, i) => `skill:crowd${i}`);
+    const violations: string[] = [];
+    for (const [id, { x, y }] of placeCreatures(crowd)) {
+      for (const band of homesKeepOutAt(y)) {
+        if (x > band.left && x < band.right) {
+          violations.push(`${id} at x=${x} inside [${band.left}, ${band.right}]`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('fills each row evenly: no stretch of open ground dwarfs the average gap', () => {
+    // Hashing positions uniformly at random leaves Poisson voids — stretches
+    // of empty field beside bunched-up stretches, which the eye reads as
+    // "clumps of open space". Placement is stratified instead: a row's free
+    // ground is split into one stratum per villager, each drifting inside
+    // its own, so no free stretch (row ends included) can grow much past two
+    // strata while another stands crowded.
+    const rows = new Map<number, number[]>();
+    for (const { x, y } of placeCreatures(ids).values()) {
+      const row = rows.get(y) ?? [];
+      row.push(x);
+      rows.set(y, row);
+    }
+    for (const [y, xs] of rows) {
+      if (xs.length < 8) continue; // sparse rows are open space by design
+      const bands = homesKeepOutAt(y);
+      // Distance with the band-covered stretches (never standable) removed.
+      const freeBetween = (a: number, b: number) =>
+        b - a - bands.reduce(
+          (sum, band) => sum + Math.max(0, Math.min(b, band.right) - Math.max(a, band.left)),
+          0,
+        );
+      xs.sort((a, b) => a - b);
+      const gaps = [freeBetween(HOMES_LO, xs[0]!), freeBetween(xs.at(-1)!, HOMES_HI)];
+      for (let i = 1; i < xs.length; i++) gaps.push(freeBetween(xs[i - 1]!, xs[i]!));
+      const average = gaps.reduce((sum, g) => sum + g, 0) / gaps.length;
+      const widest = Math.max(...gaps);
+      expect(widest, `row y=${y}: widest ${widest} vs average ${average}`).toBeLessThanOrEqual(
+        2.5 * average,
+      );
+    }
+  });
+
+  it('does not stack villagers into columns at the band edges', () => {
+    // A villager whose hash landed inside a scenery band used to snap to the
+    // band's nearest edge — and the edges are the same x in every row, so the
+    // snapped half of the village stood in vertical columns (five creatures
+    // shared one x on the first real screen). The offset hashes onto free
+    // ground directly now, so an identical x across rows is a rare accident,
+    // never a gathering point.
+    const byX = new Map<number, number>();
+    for (const { x } of placeCreatures(ids).values()) {
+      byX.set(x, (byX.get(x) ?? 0) + 1);
+    }
+    for (const [x, count] of byX) {
+      expect(count, `villagers sharing x=${x}`).toBeLessThanOrEqual(2);
+    }
+
+    // A few villagers legitimately pack flush against a band when displaced —
+    // what must never return is the edge as a *gathering point* (25 of 70
+    // stood exactly on edges under the snapping bug). Edges differ per row
+    // now, which itself breaks the columns; count against each row's own.
+    const onEdges = [...placeCreatures(ids).values()].filter(({ x, y }) =>
+      homesKeepOutAt(y).some((b) => b.left === x || b.right === x),
+    ).length;
+    expect(onEdges).toBeLessThanOrEqual(6);
+  });
+
+  it('gives villagers varied personal space, honoured between row neighbours', () => {
+    // Uniform spacing packs displaced villagers into evenly-drilled queues —
+    // the "clumping" read: five creatures exactly one body width apart look
+    // like a bus stop. Each villager draws a personal radius from its own id,
+    // and same-row neighbours stand at least the sum of their radii apart, so
+    // packed stretches breathe unevenly like a real crowd.
+    const radii = new Set(ids.map((id) => personalSpace(id)));
+    expect(radii.size).toBeGreaterThan(3);
+
+    const rows = new Map<number, { id: string; x: number }[]>();
+    for (const [id, { x, y }] of placeCreatures(ids)) {
+      const row = rows.get(y) ?? [];
+      row.push({ id, x });
+      rows.set(y, row);
+    }
+    const violations: string[] = [];
+    for (const entries of rows.values()) {
+      entries.sort((a, b) => a.x - b.x);
+      for (let i = 1; i < entries.length; i++) {
+        const a = entries[i - 1]!;
+        const b = entries[i]!;
+        const need = personalSpace(a.id) + personalSpace(b.id);
+        if (b.x - a.x < need) {
+          violations.push(`${a.id} and ${b.id} are ${b.x - a.x} apart, need ${need}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
   });
 
   it('still seats everyone when a row holds more than it can space out', () => {

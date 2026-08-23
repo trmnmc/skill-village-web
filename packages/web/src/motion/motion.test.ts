@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { phaseFor, breathe, isBlinking, gaze, hopState, wingAngle, shadowSquash, easeOutBack, bubbleScale, bubbleLifetime } from './motion.js';
+import { phaseFor, breathe, isBlinking, gaze, hopState, wingAngle, shadowSquash, easeOutBack, bubbleScale, bubbleLifetime, wanderOffset } from './motion.js';
 
 describe('phaseFor', () => {
   it('is stable for the same id', () => {
@@ -211,5 +211,53 @@ describe('bubbleScale — endless life', () => {
   it('sustains at 1 forever on an Infinity lifetime, so a thinking bubble never shrinks on its own', () => {
     expect(bubbleScale(5, Number.POSITIVE_INFINITY)).toBe(1);
     expect(bubbleScale(600, Number.POSITIVE_INFINITY)).toBe(1);
+  });
+});
+
+describe('wanderOffset', () => {
+  const phis = ['skill:a', 'skill:b', 'skill:review', 'skill:dataviz'].map(phaseFor);
+  const times = Array.from({ length: 600 }, (_, i) => i * 0.5);
+
+  it('never drifts past its amplitude', () => {
+    for (const phi of phis) {
+      for (const t of times) {
+        expect(Math.abs(wanderOffset(t, phi, 60))).toBeLessThanOrEqual(60);
+      }
+    }
+  });
+
+  it('is exactly home at zero amplitude, so a crowded villager stands still', () => {
+    for (const t of times) expect(Math.abs(wanderOffset(t, 0.37, 0))).toBe(0);
+  });
+
+  it('uses its whole range rather than trembling around home', () => {
+    for (const phi of phis) {
+      const reach = Math.max(...times.map((t) => Math.abs(wanderOffset(t, phi, 60))));
+      expect(reach).toBeGreaterThan(45);
+    }
+  });
+
+  it('wanders both ways', () => {
+    for (const phi of phis) {
+      const signs = new Set(times.map((t) => Math.sign(wanderOffset(t, phi, 60))));
+      expect(signs.has(1)).toBe(true);
+      expect(signs.has(-1)).toBe(true);
+    }
+  });
+
+  it('ambles — one frame moves it less than a pixel', () => {
+    // The drift reads as strolling only if it is slow: at 60fps a frame may
+    // move a creature well under a pixel, or the village jitters.
+    for (const phi of phis) {
+      for (const t of times) {
+        const step = Math.abs(wanderOffset(t + 1 / 60, phi, 60) - wanderOffset(t, phi, 60));
+        expect(step).toBeLessThan(0.6);
+      }
+    }
+  });
+
+  it('gives every creature its own stroll', () => {
+    const t = 100;
+    expect(new Set(phis.map((phi) => wanderOffset(t, phi, 60))).size).toBe(phis.length);
   });
 });
