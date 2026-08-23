@@ -14,7 +14,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=__APP_USER__
-Group=__APP_USER__
+Group=__APP_GROUP__
 WorkingDirectory=__APP_HOME__/app
 # HOME is what decides where the village looks for skills (~/.claude) and
 # where it keeps its own state (~/.skill-village). systemd would set it from

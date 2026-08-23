@@ -21,6 +21,9 @@ On the droplet, as root:
     git clone https://github.com/trmnmc/skill-village-web /tmp/sv && cd /tmp/sv
     ./deploy/bootstrap.sh --domain village.example.com
 
+`bootstrap.sh` checks out `main`. While the hosting work is still on a branch,
+clone that branch and pass it on: `--branch <branch>`.
+
 It asks for the password your friend will type, then does the rest: a
 `village` system user, a checkout at `/srv/skill-village/app`, `npm ci`, the
 bundle built and published, the nginx site, the systemd unit, and a health

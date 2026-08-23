@@ -67,10 +67,14 @@ main() {
     useradd --system --user-group --home-dir "$APP_HOME" --create-home --shell /usr/sbin/nologin "$APP_USER"
     say "created system user $APP_USER"
   fi
+  # Its real primary group, not an assumed one: --user-group gives a new user
+  # a group of its own name, but --user can name a pre-existing account whose
+  # group is something else entirely.
+  local app_group; app_group="$(id -gn "$APP_USER")"
   # ~/.claude is where the village looks for villagers; ~/.skill-village is
   # the only place it ever writes. Both exist before the first boot, so it
   # finds an empty field rather than an error.
-  install -d -o "$APP_USER" -g "$APP_USER" -m 755 "$APP_HOME" \
+  install -d -o "$APP_USER" -g "$app_group" -m 755 "$APP_HOME" \
     "$APP_HOME/.claude" "$APP_HOME/.claude/skills" "$APP_HOME/.claude/agents" \
     "$APP_HOME/.skill-village"
 
@@ -108,7 +112,8 @@ main() {
   say "serving $domain from $web_root"
 
   step "service"
-  sed -e "s|__APP_USER__|$APP_USER|g" -e "s|__APP_HOME__|$APP_HOME|g" -e "s|__PORT__|$port|g" \
+  sed -e "s|__APP_USER__|$APP_USER|g" -e "s|__APP_GROUP__|$app_group|g" \
+      -e "s|__APP_HOME__|$APP_HOME|g" -e "s|__PORT__|$port|g" \
       -e "s|__NODE_DIR__|$NODE_DIR|g" \
       "$here/skill-village.service" > /etc/systemd/system/skill-village.service
   systemctl daemon-reload
