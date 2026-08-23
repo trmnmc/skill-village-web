@@ -29,8 +29,10 @@ over stepped phases and a tint overlay).
   dusk — one coherent world ("ui follows along").
 - Weather ships this arc (the user designed the engine); **temperature stays
   a future layer** with an open slot above weather.
-- Weather modes: **Simulated (default) / Real (location-accurate, opt-in) /
-  Off**.
+- Weather modes: **Off (default) / Pick (player chooses the sky) / Journey
+  (curated palette·time·weather tour) / Real (location-accurate, opt-in)**.
+  Random seeded weather spells were considered and replaced by Pick +
+  Journey at the user's direction.
 
 ## 2. The daily timeline
 
@@ -73,8 +75,9 @@ function `(date, planSoFar) → plan`:
    specials; Saturday ≠ Sunday; Saturday ≠ last Saturday.
 3. **Surprise:** a date-seeded hash picks ~one weekday per week and a palette
    from the pool.
-4. **Weather:** §5–6 (modifies tokens and adds a weather state, never
-   replaces the palette).
+4. **Weather:** §5–6. In Off/Pick/Real modes it modifies tokens and adds a
+   weather state without replacing the palette; Journey mode supersedes the
+   whole stack (it drives palette, time, and weather together).
 5. **Temperature:** empty slot, same function shape, reserved for the user's
    future layer.
 
@@ -140,22 +143,50 @@ Ported from the exploration painter into the KAPLAY scene:
 
 ## 6. Weather modes
 
-Setting (gear menu, localStorage, default **Simulated**):
+Setting (gear menu, localStorage, default **Off** — clear skies until the
+player opts into a mood):
 
-- **Simulated:** each date deterministically rolls 0–2 spells (kind, start,
-  a few hours' duration; ~2-minute ramps). Storms rare; season gating by
-  calendar month (snow winter, leaves autumn, heat summer; rain/fog/wind/
-  cloudy anytime); a rainbow may follow rain ending in daylight. No network,
-  no permissions.
+- **Off:** always clear; the clock-driven palette cycle carries the day.
+- **Pick:** a toggle row of the nine weathers — the player chooses the sky
+  and it stays chosen (clock still drives time and palette). Persisted like
+  the mode itself.
+- **Journey:** a cozy premade tour, decoupled from the clock: the village
+  strolls a curated loop of (palette · time · weather) waypoints, ~3 minutes
+  each, every transition a seamless lerp. The loop is authored so each step
+  changes mostly one axis (palette, time, or weather) — that is the
+  cohesion rule, and it is what keeps a snow night from slamming into a
+  heat-shimmer noon. The premade loop, "summer blue → night storm":
+
+  1. Meadow Blue · day · clear — the summer-blue start
+  2. Meadow Blue · day · wind — a breeze picks up
+  3. Marigold · day · heat — high-summer shimmer
+  4. Golden Hour · dusk · clear — golden evening
+  5. Berry Dusk · dusk · leaves — autumn drifts in
+  6. Toasted Oat · day · leaves — amber afternoon
+  7. Toasted Oat · dusk · fog — misty evening
+  8. Spring Tonic · dawn · fog — cool morning mist
+  9. Spring Tonic · day · rain — spring rain
+  10. Meadow Blue · day · rainbow — after the rain
+  11. Berry Dusk · night · clear — starry night, fireflies
+  12. Meadow Blue · night · snow — quiet winter night
+  13. Golden Hour · night · rain — warm rainy night
+  14. Meadow Blue · night · storm — the finale
+  15. Golden Hour · dawn · clear — the storm breaks at sunrise → loop
+
+  Waypoint position derives from wall-clock time (`(now / 3min) mod 15`), so
+  the journey is stateless, reload-stable, and shared by every open tab.
 - **Real:** browser geolocation (prompted only when the user picks this
-  mode; denial → Simulated with a one-line note) + **Open-Meteo** (keyless,
-  CORS, client-side): current WMO code → engine kind (drizzle/rain→rain,
+  mode; denial → Off with a one-line note) + **Open-Meteo** (keyless, CORS,
+  client-side): current WMO code → engine kind (drizzle/rain→rain,
   thunder→storm, snow codes→snow, fog codes→fog, overcast→cloudy, clear+hot→
   heat, high wind→wind), polled ~20 min + on focus, last reading cached; if
-  stale >2h fall back to Simulated. Daily sunrise/sunset from the same call
-  drives §2's solar anchors. Sim-only flourishes (leaves, rainbow) still
-  fire.
-- **Off:** always clear; palette cycle unaffected.
+  stale >2h fall back to Off's clear sky. Daily sunrise/sunset from the same
+  call drives §2's solar anchors. A rainbow may still follow real rain that
+  ends in daylight.
+
+Pick and Journey are the "simulated" family: no network, no permissions.
+Journey overrides the clock's time-of-day and the week's palette schedule
+while active (it IS the schedule); Off, Pick, and Real all stay clock-true.
 
 ## 7. Dev override (the playtest lever)
 
@@ -169,9 +200,12 @@ can review any moment without waiting for the sky.
   blue crossover, plateau holds, midnight cross-palette lerp, weekend
   rotation invariants, surprise determinism, empty temperature slot
   pass-through.
-- Weather: spell seeding determinism + season gating; `GRAYS` pipeline as a
-  pure token transform; WMO→kind table; real/sim/stale fallback ladder with
-  fixture payloads; fetcher faked behind its interface.
+- Weather: the `GRAYS` pipeline as a pure token transform; WMO→kind table;
+  real/stale fallback ladder with fixture payloads; fetcher faked behind its
+  interface; Pick persistence round-trip. Journey: the loop closes (last →
+  first lerps cleanly), every adjacent pair changes at most one-and-a-bit
+  axes (the cohesion invariant, asserted structurally), and the wall-clock
+  position function is stateless and reload-stable.
 - Store: fake clock ticks publish lerped tokens; visibility resume; CSS
   variable output as a pure token→map function with a thin DOM applier.
 - Renderer: tag-updater logic unit-tested; visuals gated by the user's eyes
