@@ -166,10 +166,29 @@ export interface RainbowBlock {
   size: number;
   /** Band index 0..4, outermost to innermost; the caller maps this to a colour. */
   band: number;
+  /**
+   * This block's share of the bow's overall opacity, 0..1 — the product of
+   * where it sits across the band stack and how high up the arc it is. The
+   * caller multiplies by the bow's base alpha and the weather ramp.
+   */
+  alpha: number;
 }
 
 /** How much of the sky's height the outermost band's radius takes up. */
-const RAINBOW_RADIUS = 0.6;
+const RAINBOW_RADIUS = 0.68;
+/**
+ * Opacity across the five bands, outermost to innermost. A real bow has no
+ * hard edge — it feathers into the sky on both sides — so the outer and inner
+ * bands sit well under the middle rather than all five reading as one flat
+ * painted stripe.
+ */
+const RAINBOW_BAND_ALPHA = [0.5, 0.8, 1, 0.8, 0.55];
+/**
+ * How sharply the bow fades toward its feet. Below 1 the fade is gentle near
+ * the apex and steep near the ground, which is the shape a real bow makes as
+ * it thins out into haze instead of stopping dead on the horizon.
+ */
+const RAINBOW_LEG_FADE = 0.75;
 /** Band thickness as a fraction of that radius — the reference's 6-of-170 ratio. */
 const RAINBOW_BAND_RATIO = 6 / 170;
 /** Step along a band as a fraction of one block, so consecutive squares overlap. */
@@ -192,9 +211,13 @@ const RAINBOW_OVERLAP = 0.7;
  * circle at any viewport aspect — a deliberate departure from the mapX/mapY
  * split used elsewhere in this file.
  */
-export function rainbowBlocks(width: number, horizonY: number): RainbowBlock[] {
+export function rainbowBlocks(width: number, horizonY: number, sunX01 = 0.5): RainbowBlock[] {
   const blocks: RainbowBlock[] = [];
-  const centerX = width / 2;
+  // A bow is centred on the antisolar point — directly opposite the sun — so
+  // it swings across the sky as the day turns, and is never the dead-centre
+  // croquet hoop that a fixed width/2 produces. Clamped so a sun near the
+  // horizon cannot drag the arc half out of frame.
+  const centerX = width * Math.min(0.7, Math.max(0.3, 1 - sunX01));
   const centerY = horizonY;
   const outerR = horizonY * RAINBOW_RADIUS;
   const size = outerR * RAINBOW_BAND_RATIO;
@@ -205,7 +228,15 @@ export function rainbowBlocks(width: number, horizonY: number): RainbowBlock[] {
       const y = centerY + Math.sin(a) * rr;
       // The blocks nearest each foot would hang below the horizon line.
       if (y + size > centerY) continue;
-      blocks.push({ x: centerX + Math.cos(a) * rr, y, size, band });
+      // Height up the arc: 1 at the apex, 0 at either foot.
+      const climb = Math.abs(Math.sin(a));
+      blocks.push({
+        x: centerX + Math.cos(a) * rr,
+        y,
+        size,
+        band,
+        alpha: RAINBOW_BAND_ALPHA[band]! * Math.pow(climb, RAINBOW_LEG_FADE),
+      });
     }
   }
   return blocks;
@@ -1136,22 +1167,27 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
   // opacity."
   let rainbowRoot: GameObj | null = null;
   let rainbowBlockObjs: GameObj[] = [];
+  let rainbowBlockAlphas: number[] = [];
   let rainbowBuiltWidth = 0;
   let rainbowBuiltHorizonY = 0;
+  let rainbowBuiltSunX01 = -1;
 
-  function rebuildRainbow(width: number, height: number, horizonY: number): void {
+  function rebuildRainbow(width: number, horizonY: number, sunX01: number): void {
     rainbowRoot?.destroy();
     const root = k.add([k.pos(0, 0), k.z(5), k.fixed()]);
     rainbowBlockObjs = [];
-    for (const blk of rainbowBlocks(width, horizonY)) {
-      if (blk.y > height) continue;
+    rainbowBlockAlphas = [];
+    for (const blk of rainbowBlocks(width, horizonY, sunX01)) {
       const obj = root.add([
         k.rect(blk.size, blk.size),
         k.pos(blk.x, blk.y),
-        k.color(k.Color.fromHex(RAINBOW_BAND_COLOURS[blk.band]!)),
+        // Lifted toward white: the reference's creature hues are poster
+        // paint at full strength, and a bow is light, not pigment.
+        k.color(k.Color.fromHex(mix(RAINBOW_BAND_COLOURS[blk.band]!, '#FFFFFF', 0.25))),
         k.opacity(1),
       ]);
       rainbowBlockObjs.push(obj);
+      rainbowBlockAlphas.push(blk.alpha);
     }
     rainbowRoot = root;
   }
@@ -1167,19 +1203,33 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
       const wantsRainbow = t.weather.kind === 'rainbow' && !t.flags.isNight;
       if (wantsRainbow) {
         const width = k.width();
-        const height = k.height();
         const horizonY = horizonScreenY(k);
-        if (!rainbowRoot || Math.abs(width - rainbowBuiltWidth) > 1 || Math.abs(horizonY - rainbowBuiltHorizonY) > 1) {
-          rebuildRainbow(width, height, horizonY);
+        // The bow tracks the antisolar point, so it drifts as the sun moves;
+        // a below-horizon sun leaves it centred. Rebuilding on every publish
+        // would rebuild ~600 objects a minute for a sub-pixel shift, so the
+        // sun only counts once it has moved a visible amount.
+        const sunX01 = t.sun.visible ? t.sun.x01 : 0.5;
+        if (
+          !rainbowRoot ||
+          Math.abs(width - rainbowBuiltWidth) > 1 ||
+          Math.abs(horizonY - rainbowBuiltHorizonY) > 1 ||
+          Math.abs(sunX01 - rainbowBuiltSunX01) > 0.02
+        ) {
+          rebuildRainbow(width, horizonY, sunX01);
           rainbowBuiltWidth = width;
           rainbowBuiltHorizonY = horizonY;
+          rainbowBuiltSunX01 = sunX01;
         }
-        const alpha = 0.85 * t.weather.ramp;
-        for (const obj of rainbowBlockObjs) obj.opacity = alpha;
+        const alpha = 0.9 * t.weather.ramp;
+        for (let i = 0; i < rainbowBlockObjs.length; i++) {
+          rainbowBlockObjs[i]!.opacity = alpha * rainbowBlockAlphas[i]!;
+        }
       } else if (rainbowRoot) {
         rainbowRoot.destroy();
         rainbowRoot = null;
         rainbowBlockObjs = [];
+        rainbowBlockAlphas = [];
+        rainbowBuiltSunX01 = -1;
       }
 
       // Umbrellas: creature.ts seeds ownership per id and creates the 5

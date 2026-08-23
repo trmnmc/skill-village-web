@@ -841,3 +841,52 @@ describe('flickerActive', () => {
     expect(found).toBe(true);
   });
 });
+
+describe('rainbowBlocks — light, not paint', () => {
+  it('dissolves toward the legs: the apex is strongest, the feet fade out', () => {
+    const blocks = rainbowBlocks(1600, 500).filter((b) => b.band === 2);
+    const apex = blocks.reduce((hi, b) => (b.y < hi.y ? b : hi));
+    const lowest = blocks.reduce((lo, b) => (b.y > lo.y ? b : lo));
+    expect(apex.alpha).toBeGreaterThan(lowest.alpha * 2);
+    expect(lowest.alpha).toBeLessThan(0.25);
+    for (const b of blocks) expect(b.alpha).toBeGreaterThanOrEqual(0);
+  });
+
+  it('softens both edges of the band stack, so it feathers into the sky', () => {
+    const apexOf = (band: number) => {
+      const inBand = rainbowBlocks(1600, 500).filter((b) => b.band === band);
+      return inBand.reduce((hi, b) => (b.y < hi.y ? b : hi));
+    };
+    const middle = apexOf(2).alpha;
+    expect(apexOf(0).alpha).toBeLessThan(middle);
+    expect(apexOf(4).alpha).toBeLessThan(middle);
+  });
+
+  it('sits opposite the sun, the way a real bow is centred on the antisolar point', () => {
+    const centreOf = (sunX01: number) => {
+      const xs = rainbowBlocks(1600, 500, sunX01).map((b) => b.x);
+      return (Math.min(...xs) + Math.max(...xs)) / 2;
+    };
+    // Morning sun in the east puts the bow to the west, and vice versa.
+    expect(centreOf(0.2)).toBeGreaterThan(centreOf(0.8));
+    // A sun straight overhead leaves it centred.
+    expect(Math.abs(centreOf(0.5) - 800)).toBeLessThan(1);
+  });
+
+  it('keeps the bow on screen even with the sun at the horizon', () => {
+    for (const sunX01 of [0, 1]) {
+      const xs = rainbowBlocks(1600, 500, sunX01).map((b) => b.x);
+      const centre = (Math.min(...xs) + Math.max(...xs)) / 2;
+      expect(centre).toBeGreaterThan(1600 * 0.25);
+      expect(centre).toBeLessThan(1600 * 0.75);
+    }
+  });
+
+  it('still never paints below the horizon, whatever the sun is doing', () => {
+    for (const sunX01 of [0, 0.35, 0.5, 1]) {
+      for (const b of rainbowBlocks(1600, 500, sunX01)) {
+        expect(b.y + b.size).toBeLessThanOrEqual(500 + 1e-9);
+      }
+    }
+  });
+});
