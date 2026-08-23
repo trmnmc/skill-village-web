@@ -223,23 +223,49 @@ export function createThemeStore(deps?: {
       ground: groundTinted.ground, groundDark: groundTinted.groundDark,
     };
 
-    // Sun/moon arcs: real minute-of-day against the solar anchors.
-    const r = anchors.sunriseMin, s = anchors.sunsetMin;
-    const m = minuteOfDay;
-    const sunVisible = m > r && m < s;
-    let sunX01 = 0, sunY01 = 0;
-    if (sunVisible) {
-      sunX01 = (m - r) / (s - r);
-      sunY01 = Math.sin(sunX01 * Math.PI);
-    }
+    // Sun/moon arcs. In journey mode the sky is owned by the journey's own
+    // dominant frame (a night waypoint must never show a real-noon sun); every
+    // other mode derives the arc from the real minute-of-day and solar anchors.
+    let sunVisible: boolean, sunX01: number, sunY01: number;
+    let moonVisible: boolean, moonX01: number, moonY01: number;
 
-    const moonVisible = !sunVisible && !overcast;
-    let moonX01 = 0, moonY01 = 0;
-    if (moonVisible) {
-      const nightSpan = (r + 1440) - s;
-      const mAdj = m >= s ? m : m + 1440;
-      moonX01 = nightSpan > 0 ? (mAdj - s) / nightSpan : 0;
-      moonY01 = Math.sin(moonX01 * Math.PI);
+    if (useJourney) {
+      switch (dominantFrame) {
+        case 'day':
+          sunVisible = true; sunX01 = 0.5; sunY01 = 1;
+          moonVisible = false; moonX01 = 0; moonY01 = 0;
+          break;
+        case 'dawn':
+          sunVisible = true; sunX01 = 0.08; sunY01 = Math.sin(0.08 * Math.PI);
+          moonVisible = false; moonX01 = 0; moonY01 = 0;
+          break;
+        case 'dusk':
+          sunVisible = true; sunX01 = 0.92; sunY01 = Math.sin(0.92 * Math.PI);
+          moonVisible = false; moonX01 = 0; moonY01 = 0;
+          break;
+        default: // 'night'
+          sunVisible = false; sunX01 = 0; sunY01 = 0;
+          moonVisible = !overcast; moonX01 = 0.5; moonY01 = 1;
+          break;
+      }
+    } else {
+      const r = anchors.sunriseMin, s = anchors.sunsetMin;
+      const m = minuteOfDay;
+      sunVisible = m > r && m < s;
+      sunX01 = 0; sunY01 = 0;
+      if (sunVisible) {
+        sunX01 = (m - r) / (s - r);
+        sunY01 = Math.sin(sunX01 * Math.PI);
+      }
+
+      moonVisible = !sunVisible && !overcast;
+      moonX01 = 0; moonY01 = 0;
+      if (moonVisible) {
+        const nightSpan = (r + 1440) - s;
+        const mAdj = m >= s ? m : m + 1440;
+        moonX01 = nightSpan > 0 ? (mAdj - s) / nightSpan : 0;
+        moonY01 = Math.sin(moonX01 * Math.PI);
+      }
     }
     const moon = moonForDate(n);
     const darkness = nightDarkness(moon.illumination);

@@ -60,6 +60,27 @@ describe('modes', () => {
     // NOT the clock's own resolution by checking the store reports journey weather
     expect(['clear', 'wind', 'heat', 'leaves', 'fog', 'rain', 'rainbow', 'snow', 'storm']).toContain(s.current().weather.kind);
   });
+
+  it('journey night waypoint owns the sky', () => {
+    // Land exactly on waypoint 10 ('1e night clear' — its neighbor at 11 is
+    // also frame 'night', so the dominant frame is 'night' regardless of the
+    // in-between blend fraction), while local wall-clock time stays within
+    // ~45 min of noon — the real sun would otherwise say "visible".
+    const base = new Date('2026-08-18T12:00:00');
+    const pos = Math.floor(base.getTime() / 180_000) % 15;
+    const nowMs = base.getTime() + ((10 - pos + 15) % 15) * 180_000;
+
+    const journey = createThemeStore({ now: () => new Date(nowMs), storage: mem() });
+    journey.setMode('journey'); journey.tick();
+    expect(journey.current().sun.visible).toBe(false);
+    expect(journey.current().moonSky.visible).toBe(true);
+
+    // Companion: same instant, off mode — proves the journey branch actually
+    // diverges from the clock's own (correct, real-sun-up) resolution.
+    const off = createThemeStore({ now: () => new Date(nowMs), storage: mem() });
+    off.tick();
+    expect(off.current().sun.visible).toBe(true);
+  });
 });
 
 describe('dev override', () => {
