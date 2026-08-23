@@ -7,6 +7,7 @@ import { spawnCreature, type CreatureActor } from './creature.js';
 import { sound } from '../sound/player.js';
 import { voiceParamsFor } from '../sound/voice.js';
 import { viewSoundEvents, type CreatureSnapshot } from '../sound/arrivals.js';
+import { HAPPY_ABOVE, SLEEP_BELOW } from '../motion/behaviour.js';
 
 export interface VillageScene {
   k: KAPLAYCtx;
@@ -41,6 +42,14 @@ function hex(k: KAPLAYCtx, value: string) {
 
 /** Token counts at a glance: 483000 reads as "483k". */
 const fmt = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+
+/**
+ * Both the stage-diff snapshot and the prevStages map that feeds the next
+ * one's diff need to read the same field the same defensive way — two
+ * different reads of `c.stage` here previously could (in principle) diverge
+ * and either miss a stage-up chime or fire a phantom one.
+ */
+const stageOf = (c: Creature): string => String((c as { stage?: unknown }).stage ?? 'adult');
 
 /**
  * Ten cells of remaining budget. Clamped rather than trusted: an empty bar is
@@ -296,7 +305,10 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         const c = known.get(id);
         if (!c) continue;
         if (Math.abs(spot.x - camX) > halfW) continue;
-        if (c.stats.mood <= 75 || c.stats.energy < 25) continue;
+        // Same "happy and awake" bar behaviourFor uses to decide who hops
+        // (motion/behaviour.ts) — one pair of thresholds, not two that can
+        // drift apart.
+        if (!(c.stats.mood > HAPPY_ABOVE && c.stats.energy >= SLEEP_BELOW)) continue;
         candidates.push({ id, x: spot.x, voice: voiceParamsFor(c) });
       }
       if (candidates.length > 0) sound.event({ type: 'idle-tick', candidates });
@@ -421,12 +433,12 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
 
       const snapshots: CreatureSnapshot[] = view.creatures.map((c) => ({
         id: c.id,
-        stage: String((c as { stage?: unknown }).stage ?? 'adult'),
+        stage: stageOf(c),
         x: spots.get(c.id)!.x,
         voice: voiceParamsFor(c),
       }));
       for (const ev of viewSoundEvents(prevStages, snapshots)) sound.event(ev);
-      prevStages = new Map(view.creatures.map((c) => [c.id, c.stage]));
+      prevStages = new Map(view.creatures.map((c) => [c.id, stageOf(c)]));
 
       known = new Map(view.creatures.map((c) => [c.id, c]));
     },

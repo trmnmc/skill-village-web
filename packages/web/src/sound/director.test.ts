@@ -113,6 +113,17 @@ describe('direct', () => {
     expect(nextState.voiceEnds.length).toBe(8);
   });
 
+  it('chat babble is never dropped at the voice cap, unlike greeting — spec §7', () => {
+    // Build state with 8 active voices, same as the greeting-cap test above.
+    let state = initialDirectorState();
+    for (let i = 0; i < 8; i++) {
+      state = { ...state, voiceEnds: [...state.voiceEnds, ctx().now + 1] };
+    }
+    const { commands } = direct(state, { type: 'speak', x: 1000, voice, textLength: 100, canned: false }, ctx());
+    expect(commands.length).toBeGreaterThan(0);
+    expect(commands.every((c) => c.patch === 'syllable' && c.bus === 'voices')).toBe(true);
+  });
+
   it('idle chirp is dropped (and rearmed) at the voice cap', () => {
     // Build state with 8 active voices and an armed candidate past deadline and gap
     let state = initialDirectorState();
@@ -145,6 +156,26 @@ describe('direct', () => {
     expect(commands[1]!.patch).toBe('boxNote');
     // voiceEnds should not change (no syllables tracked)
     expect(nextState.voiceEnds.length).toBe(8);
+  });
+
+  it('a chime backlog past 3s is dropped rather than queued — spec §4 amendment', () => {
+    // 70 arrivals at the same instant: chimeDelay's cooldown pushes each
+    // successive chime 0.6s later than the last, so only the first
+    // ceil(3/0.6)+1 = 6 land inside the 3s horizon; the rest must emit []
+    // and must not push the cooldown out any further than that horizon.
+    let state = initialDirectorState();
+    let chimeBearing = 0;
+    for (let i = 0; i < 70; i++) {
+      const result = direct(state, { type: 'moved-in', x: 1000, voice }, ctx());
+      state = result.state;
+      if (result.commands.length > 0) {
+        chimeBearing++;
+        expect(result.commands[0]!.patch).toBe('boxNote');
+      } else {
+        expect(result.commands).toEqual([]);
+      }
+    }
+    expect(chimeBearing).toBe(6);
   });
 
   describe('event type sweep', () => {

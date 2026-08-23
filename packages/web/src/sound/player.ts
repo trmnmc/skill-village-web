@@ -38,13 +38,18 @@ function applySettings(): void {
   }
 }
 
-/** Every one-shot routes source → (filter) → envelope → panner → bus. */
-function route(c: AudioContext, bus: BusName, pan: number): GainNode {
-  const dest = c.createGain();
+/**
+ * Every one-shot routes source → (filter) → envelope → panner → dest.
+ * `dest` defaults to the named bus, but the bar scheduler (tick(), below)
+ * passes musicLevelGain instead so it can reuse playBoxNote rather than
+ * re-implementing its envelope inline.
+ */
+function route(c: AudioContext, bus: BusName, pan: number, dest: AudioNode = buses![bus]): GainNode {
+  const entry = c.createGain();
   const panner = new StereoPannerNode(c, { pan });
-  dest.connect(panner);
-  panner.connect(buses![bus]);
-  return dest;
+  entry.connect(panner);
+  panner.connect(dest);
+  return entry;
 }
 
 function playSyllable(c: AudioContext, t0: number, cmd: Extract<SoundCommand, { patch: 'syllable' }>): void {
@@ -124,16 +129,38 @@ function playBreathSwell(c: AudioContext, t0: number, cmd: Extract<SoundCommand,
   }
 }
 
-function playBoxNote(c: AudioContext, t0: number, cmd: Extract<SoundCommand, { patch: 'boxNote' }>): void {
+function playBoxNote(
+  c: AudioContext, t0: number, cmd: Extract<SoundCommand, { patch: 'boxNote' }>, dest?: AudioNode,
+): void {
   // §10: sine at f plus sine at 4f (12%), sharp attack, 1.4s decay.
-  const dest = route(c, cmd.bus, cmd.pan);
+  const entry = route(c, cmd.bus, cmd.pan, dest);
   for (const [mult, gm] of [[1, 1], [4, 0.12]] as const) {
     const o = c.createOscillator(); o.type = 'sine'; o.frequency.value = cmd.freq * mult;
     const g = c.createGain();
     g.gain.setValueAtTime(cmd.gain * gm, t0);
     g.gain.exponentialRampToValueAtTime(0.0008, t0 + 1.4);
-    o.connect(g); g.connect(dest);
+    o.connect(g); g.connect(entry);
     o.start(t0); o.stop(t0 + 1.45);
+  }
+}
+
+/**
+ * The lo-fi pad bed: a detuned sawtooth pair with a slow rise/hold/fall.
+ * Only the bar scheduler (tick(), below) plays these, but it is pulled out
+ * to a helper for the same reason playBoxNote is reused there — one place
+ * owns the envelope instead of tick() re-deriving it inline.
+ */
+function playPad(c: AudioContext, t0: number, freq: number, gain: number, dest: AudioNode): void {
+  for (const cents of [-6, 6]) {
+    const o = c.createOscillator(); o.type = 'sawtooth';
+    o.frequency.value = freq * Math.pow(2, cents / 1200);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + 2.5);
+    g.gain.setValueAtTime(gain, t0 + 5);
+    g.gain.linearRampToValueAtTime(0, t0 + 8);
+    o.connect(g); g.connect(dest);
+    o.start(t0); o.stop(t0 + 8.1);
   }
 }
 
@@ -288,6 +315,12 @@ function startAmbience(c: AudioContext): void {
   let nextBarAt = 0;
   let barIndex = 0;
   const crackle = () => {
+    const wait = 60 + Math.random() * 320;
+    // A hidden tab hears nothing (visibilitychange ducks both masters to 0),
+    // so don't keep allocating oscillator/filter/gain nodes into that silent
+    // graph — spec §2's "no sound from a tab you are not watching" extends
+    // to not spending cycles pretending to make it, either.
+    if (document.hidden) { setTimeout(crackle, wait); return; }
     const now = new Date();
     const secs = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
     if (musicGate(secs) && mixAt(now).musicLevel > 0) {
@@ -300,7 +333,7 @@ function startAmbience(c: AudioContext): void {
       s.connect(hp); hp.connect(g); g.connect(musicLevelGain!);
       s.start(t); s.stop(t + 0.02);
     }
-    setTimeout(crackle, 60 + Math.random() * 320);
+    setTimeout(crackle, wait);
   };
   crackle();
 
@@ -319,33 +352,21 @@ function startAmbience(c: AudioContext): void {
     musicLevelGain!.gain.setTargetAtTime(mix.musicLevel, c.currentTime, 3);
 
     // Bar scheduling rides the same tick: when a passage is on and the last
-    // bar has elapsed, lay down the next one.
+    // bar has elapsed, lay down the next one. Skipped while the tab is
+    // hidden — nothing above this line (the retarget block) is skipped,
+    // since that's what keeps the mix current for whenever the tab returns.
     const secs = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-    if (musicGate(secs) && mix.musicLevel > 0 && c.currentTime >= nextBarAt) {
+    if (!document.hidden && musicGate(secs) && mix.musicLevel > 0 && c.currentTime >= nextBarAt) {
       const t0 = Math.max(nextBarAt, c.currentTime + 0.05);
       for (const note of musicBar(daySeedFor(now), barIndex)) {
         if (note.kind === 'pad') {
-          for (const cents of [-6, 6]) {
-            const o = c.createOscillator(); o.type = 'sawtooth';
-            o.frequency.value = note.freq * Math.pow(2, cents / 1200);
-            const g = c.createGain();
-            g.gain.setValueAtTime(0, t0 + note.at);
-            g.gain.linearRampToValueAtTime(note.gain, t0 + note.at + 2.5);
-            g.gain.setValueAtTime(note.gain, t0 + note.at + 5);
-            g.gain.linearRampToValueAtTime(0, t0 + note.at + 8);
-            o.connect(g); g.connect(padLp);
-            o.start(t0 + note.at); o.stop(t0 + note.at + 8.1);
-          }
+          playPad(c, t0 + note.at, note.freq, note.gain, padLp);
         } else {
-          for (const [mult, gm] of [[1, 1], [4, 0.12]] as const) {
-            const o = c.createOscillator(); o.type = 'sine';
-            o.frequency.value = note.freq * mult;
-            const g = c.createGain();
-            g.gain.setValueAtTime(note.gain * gm, t0 + note.at);
-            g.gain.exponentialRampToValueAtTime(0.0008, t0 + note.at + 1.4);
-            o.connect(g); g.connect(musicLevelGain!);
-            o.start(t0 + note.at); o.stop(t0 + note.at + 1.45);
-          }
+          playBoxNote(
+            c, t0 + note.at,
+            { patch: 'boxNote', bus: 'music', at: 0, pan: 0, gain: note.gain, freq: note.freq },
+            musicLevelGain!,
+          );
         }
       }
       nextBarAt = t0 + BAR_SECONDS;
@@ -370,14 +391,31 @@ function unlock(): void {
   startAmbience(ctx);
 }
 
+/**
+ * "Unlocked" means the context is actually producing sound, not merely
+ * constructed. A gesture that does not carry browser user-activation (a
+ * bare Escape keydown, say) still creates the context — `unlock()` — but
+ * leaves it `suspended` forever unless something calls `resume()`. Without
+ * this stricter check, the HUD dot would clear and the director would treat
+ * the village as unlocked while nothing can actually play.
+ */
+function isRunning(): boolean {
+  return ctx !== null && ctx.state === 'running';
+}
+
 export const sound = {
   init(): void {
     if (inited) return;
     inited = true;
     // The browser requires a gesture anyway, spec §6 — the first click of
     // any kind is the switch. { once: false } + the ctx guard rather than
-    // { once: true }: a keydown and a pointerdown can race.
-    const onGesture = () => unlock();
+    // { once: true }: a keydown and a pointerdown can race. Every gesture,
+    // not just the first, also nudges a still-suspended context toward
+    // resume() — the first gesture may not have carried user-activation.
+    const onGesture = () => {
+      unlock();
+      if (ctx && ctx.state === 'suspended') void ctx.resume();
+    };
     window.addEventListener('pointerdown', onGesture);
     window.addEventListener('keydown', onGesture);
     document.addEventListener('visibilitychange', () => {
@@ -392,10 +430,12 @@ export const sound = {
   event(ev: GameSoundEvent): void {
     // Spec §7: a muted bus is the player multiplying by zero, but a locked
     // context is a director decision — direct() drops on unlocked: false,
-    // keeping "never queued" in the tested layer.
+    // keeping "never queued" in the tested layer. A context that exists but
+    // is still suspended is exactly that "locked" case — scheduling into it
+    // would just be commands queuing up behind a clock that never advances.
     const now = ctx ? ctx.currentTime : 0;
     const result = direct(dirState, ev, {
-      now, camX: cam.x, viewW: cam.w, unlocked: ctx !== null, rand: Math.random,
+      now, camX: cam.x, viewW: cam.w, unlocked: isRunning(), rand: Math.random,
     });
     dirState = result.state;
     execute(result.commands);
@@ -412,6 +452,6 @@ export const sound = {
     applySettings();
   },
   unlocked(): boolean {
-    return ctx !== null;
+    return isRunning();
   },
 };

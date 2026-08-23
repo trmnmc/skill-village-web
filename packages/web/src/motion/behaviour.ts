@@ -11,8 +11,11 @@ export interface Behaviour {
   scruffy: boolean;
 }
 
-const SLEEP_BELOW = 25;
-const HAPPY_ABOVE = 75;
+// Exported: village.ts's idle-tick candidate filter (spec §3) reuses these
+// two thresholds so "happy and awake enough to chirp" can't quietly drift
+// away from "happy and rested enough to hop" defined here.
+export const SLEEP_BELOW = 25;
+export const HAPPY_ABOVE = 75;
 const RESTED_ABOVE = 70;
 const SCRUFFY_BELOW = 35;
 const ROAM_ENERGY = 60;

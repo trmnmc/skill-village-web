@@ -47,6 +47,13 @@ export function panFor(x: number, camX: number, viewW: number): { pan: number; a
 }
 
 const CHIME_SPACING = 0.6;
+/**
+ * Spec §4 amendment: a chime queued more than 3s out is not "a moment later",
+ * it is a backlog. Past this horizon the chime (and any greeting riding with
+ * it) is dropped outright rather than queued — a burst of 70 arrivals should
+ * sound like a handful of chimes, not a chime train stretching a minute long.
+ */
+const CHIME_QUEUE_HORIZON = 3;
 const VOICE_CAP = 8;
 const IDLE_VILLAGE_GAP = 8;
 const IDLE_MEAN_WAIT = 45;
@@ -79,10 +86,17 @@ export function direct(
   if (!ctx.unlocked) return { state, commands: [] };
 
   const spatial = (x: number) => panFor(x, ctx.camX, ctx.viewW);
-  /** Push a chime-group emission out past the last one, spec §4's cooldown. */
-  const chimeDelay = (): { at: number; next: DirectorState } => {
+  /**
+   * Push a chime-group emission out past the last one, spec §4's cooldown.
+   * `null` means the queue is already backed up past CHIME_QUEUE_HORIZON:
+   * the caller drops the chime entirely and must not advance the cooldown,
+   * so a dropped chime leaves no trace in state — the next arrival sees the
+   * same backlog and drops too, rather than the horizon sliding forever.
+   */
+  const chimeDelay = (): { at: number; next: DirectorState } | null => {
     const last = state.lastAt['chime'] ?? -Infinity;
     const at = Math.max(0, last + CHIME_SPACING - ctx.now);
+    if (at > CHIME_QUEUE_HORIZON) return null;
     return { at, next: { ...state, lastAt: { ...state.lastAt, chime: ctx.now + at } } };
   };
   const activeVoices = state.voiceEnds.filter((end) => end > ctx.now).length;
@@ -188,7 +202,11 @@ export function direct(
     case 'moved-in': {
       const { pan, attenuation } = spatial(ev.x);
       if (attenuation === 0) return { state, commands: [] };
-      const { at, next } = chimeDelay();
+      const delay = chimeDelay();
+      // Backed up past the horizon: drop the chime and the greeting with
+      // it, cooldown untouched — spec §4 amendment.
+      if (delay === null) return { state, commands: [] };
+      const { at, next } = delay;
       // §10: E5 then B5 120ms apart, then the newcomer introduces itself.
       // The chime always plays; the greeting is droppable when the cap is reached.
       const chimeCommands = [
@@ -210,7 +228,9 @@ export function direct(
     case 'stage-up': {
       const { pan, attenuation } = spatial(ev.x);
       if (attenuation === 0) return { state, commands: [] };
-      const { at, next } = chimeDelay();
+      const delay = chimeDelay();
+      if (delay === null) return { state, commands: [] };
+      const { at, next } = delay;
       // §10: C5–E5–G5, 140ms apart.
       return {
         state: next,

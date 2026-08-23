@@ -56,12 +56,29 @@ export function mountSoundHud(): void {
   }
   root.addEventListener('mouseenter', () => { popover.hidden = false; });
   root.addEventListener('mouseleave', () => { popover.hidden = true; });
-  // The unlock dot clears on the same first gesture that unlocks audio.
-  // player.ts unlocks on pointerdown OR keydown, so the HUD has to listen
-  // for both — a keyboard-only first gesture would otherwise leave the
-  // dot stuck. Both may fire once each; the double render is harmless.
-  const onFirstGesture = () => setTimeout(render, 0);
-  window.addEventListener('pointerdown', onFirstGesture, { once: true });
-  window.addEventListener('keydown', onFirstGesture, { once: true });
+  // Keyboard parity for the hover reveal: tabbing onto the mute button (or
+  // any slider) should show the popover exactly like a mouseenter would,
+  // and tabbing back out should hide it like a mouseleave. Touch press-hold
+  // stays out of scope.
+  root.addEventListener('focusin', () => { popover.hidden = false; });
+  root.addEventListener('focusout', () => { popover.hidden = true; });
+  // The unlock dot clears once audio is actually unlocked — not necessarily
+  // on the very first gesture, spec §2 fix: a gesture without browser
+  // user-activation (a bare Escape keydown) leaves the context suspended,
+  // and player.ts only resolves that on a *later* gesture's resume() call.
+  // So keep re-rendering after every pointerdown/keydown, deferred a tick to
+  // land after player.ts's own same-event listener, until sound.unlocked()
+  // finally reports true — then stop listening.
+  const onGesture = () => {
+    setTimeout(() => {
+      render();
+      if (sound.unlocked()) {
+        window.removeEventListener('pointerdown', onGesture);
+        window.removeEventListener('keydown', onGesture);
+      }
+    }, 0);
+  };
+  window.addEventListener('pointerdown', onGesture);
+  window.addEventListener('keydown', onGesture);
   render();
 }
