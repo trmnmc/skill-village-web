@@ -181,6 +181,8 @@ function execute(commands: SoundCommand[]): void {
 /** The visibility ramp's handles: all continuous sound hangs off these two. */
 let ambienceMaster: GainNode | null = null;
 let musicMaster: GainNode | null = null;
+/** The daypart's own fader — owned solely by tick(), never by unlock/visibility. */
+let musicLevelGain: GainNode | null = null;
 
 function startAmbience(c: AudioContext): void {
   ambienceMaster = c.createGain();
@@ -191,6 +193,13 @@ function startAmbience(c: AudioContext): void {
   musicMaster.gain.value = 0;
   musicMaster.gain.setTargetAtTime(1, c.currentTime, 0.7);
   musicMaster.connect(buses!.music);
+  // [padLp, box notes, crackle] → musicLevelGain → musicMaster → buses.music.
+  // musicLevelGain carries only mix.musicLevel (tick()); musicMaster carries
+  // only the unlock fade and the visibility duck — the two concerns no
+  // longer fight over one node.
+  musicLevelGain = c.createGain();
+  musicLevelGain.gain.value = mixAt(new Date()).musicLevel;
+  musicLevelGain.connect(musicMaster);
 
   // Wind: looped noise → lowpass → gain, with a slow LFO breathing ±40%.
   // The engine tick below retargets freq and gain toward the current mix,
@@ -227,7 +236,12 @@ function startAmbience(c: AudioContext): void {
         setTimeout(gate, onMs + offMs + Math.random() * 120);
       };
       gate();
-      return { setLevel(total: number) { level = total * share; amGain.gain.value = level * 0.5; } };
+      return {
+        setLevel(total: number) {
+          level = total * share;
+          amGain.gain.setTargetAtTime(level * 0.5, c.currentTime, 3);
+        },
+      };
     },
   );
 
@@ -264,11 +278,13 @@ function startAmbience(c: AudioContext): void {
   };
   birdLoop();
 
-  // Music: pad + box notes from music.ts through one warmth-following
-  // lowpass, plus the §10 crackle while a passage is on.
+  // Music: the pad from music.ts runs through one warmth-following lowpass
+  // (the box notes stay off it — their brightness is the deliberate chip
+  // crossover, spec §10); both, plus the crackle, feed musicLevelGain, the
+  // daypart's own fader, kept separate from musicMaster's unlock/visibility fade.
   const padLp = c.createBiquadFilter();
   padLp.type = 'lowpass'; padLp.frequency.value = 700; padLp.Q.value = 0.4;
-  padLp.connect(musicMaster);
+  padLp.connect(musicLevelGain);
   let nextBarAt = 0;
   let barIndex = 0;
   const crackle = () => {
@@ -281,7 +297,7 @@ function startAmbience(c: AudioContext): void {
       const g = c.createGain();
       g.gain.setValueAtTime(0.012, t);
       g.gain.exponentialRampToValueAtTime(0.0006, t + 0.015);
-      s.connect(hp); hp.connect(g); g.connect(musicMaster!);
+      s.connect(hp); hp.connect(g); g.connect(musicLevelGain!);
       s.start(t); s.stop(t + 0.02);
     }
     setTimeout(crackle, 60 + Math.random() * 320);
@@ -300,7 +316,7 @@ function startAmbience(c: AudioContext): void {
     for (const cr of crickets) cr.setLevel(mix.cricketGain);
     birdRate = mix.birdRate;
     padLp.frequency.setTargetAtTime(700 - mix.musicWarmth * 150, c.currentTime, 3);
-    musicMaster!.gain.setTargetAtTime(mix.musicLevel, c.currentTime, 3);
+    musicLevelGain!.gain.setTargetAtTime(mix.musicLevel, c.currentTime, 3);
 
     // Bar scheduling rides the same tick: when a passage is on and the last
     // bar has elapsed, lay down the next one.
@@ -327,7 +343,7 @@ function startAmbience(c: AudioContext): void {
             const g = c.createGain();
             g.gain.setValueAtTime(note.gain * gm, t0 + note.at);
             g.gain.exponentialRampToValueAtTime(0.0008, t0 + note.at + 1.4);
-            o.connect(g); g.connect(musicMaster!);
+            o.connect(g); g.connect(musicLevelGain!);
             o.start(t0 + note.at); o.stop(t0 + note.at + 1.45);
           }
         }
