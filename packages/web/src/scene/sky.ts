@@ -113,7 +113,7 @@ function screenX(k: KAPLAYCtx, x01: number): number {
  * moves `k.height()/2`, and so the transform) self-corrects on the very next
  * `update()` rather than needing a reload.
  */
-function horizonScreenY(k: KAPLAYCtx): number {
+export function horizonScreenY(k: KAPLAYCtx): number {
   return k.toScreen(k.vec2(0, GROUND_TOP)).y;
 }
 

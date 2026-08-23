@@ -1,44 +1,53 @@
-import type { KAPLAYCtx } from 'kaplay';
+import type { KAPLAYCtx, GameObj } from 'kaplay';
 import { HUES } from '@village/core/visual';
 import type { ResolvedTheme } from '../theme/store.js';
 import { mix } from '../theme/palettes.js';
-import { WORLD_W, GROUND_TOP } from '../layout/zones.js';
+import { horizonScreenY } from './sky.js';
 
 /**
  * Transcribed from `reference/palette-explorations/village-scene.js`'s
  * `drawScene` — the weather branches, from the `/* --- weather layers... *\/`
  * comment through the storm bolt and fog veil. That file is a 480x270
- * <canvas> preview with sky rows [0,182) and ground rows [182,270); the game
- * draws a WORLD_W-wide strip with sky [0, GROUND_TOP) and ground below it.
+ * <canvas> preview with sky rows [0,182) and ground rows [182,270); this
+ * layer paints entirely in **screen space** on `k.fixed()` objects, the same
+ * pattern sky.ts already uses for its sun/moon/stars — the 480x270 reference
+ * scene is scaled to whatever the viewport happens to be, not to the
+ * WORLD_W-wide scrollable strip (of which the camera only ever shows a
+ * slice).
  *
- * Scaling convention used throughout this file, matching the task brief:
- *  - POSITIONS scale: every x is multiplied by SCALE_X, every y by SCALE_Y
- *    (or, for the ground-band splash ticks, by the explicit groundBandY
- *    map) — computed on the *final* reference-space coordinate, after every
- *    modulo/formula constant has been applied verbatim, so speeds and
- *    periods carry through correctly for free (scaling a wrapped value by a
- *    positive constant is the same as scaling the value and its period
- *    before wrapping).
- *  - SIZES of individual "confetti" particles (a raindrop streak, a
- *    snowflake, a splash tick, a wind fleck, a leaf, a heat-shimmer dash)
- *    stay literal/unscaled — the same choice sky.ts already made for stars
- *    and fireflies, so a rain streak reads as a small fixed pixel mark
- *    regardless of how wide the world strip is.
- *  - SIZES of background "panel" shapes that are meant to span a proportion
- *    of the scene (storm cloud decks, rain shafts, fog bands, the ground
- *    mist strip, wind gust streaks) scale on both axes like a position, the
- *    same way village.ts's own sky/ground bands use WORLD_W directly.
+ * Coordinate contract — `fx`, `fy`, `mapX`, `mapY` below — and the three
+ * scaling classes used throughout the draw functions:
+ *  1. CONFETTI particles (rain streaks, snowflakes, splash ticks, wind
+ *     flecks, leaves, heat dashes): positions through mapX/mapY, sizes stay
+ *     literal pixels — the same choice sky.ts made for its stars.
+ *  2. ASPECT-CRITICAL CLUSTERS (storm cloud decks + rims, the in-cloud
+ *     flicker rect, the bolt): the cluster's anchor x goes through mapX;
+ *     every intra-cluster x offset and every width/height scales by
+ *     `fy(horizonY)` on BOTH axes, so the shape keeps its reference aspect
+ *     instead of smearing sideways with the viewport's width. Y positions go
+ *     through mapY.
+ *  3. DIFFUSE VEILS (storm rain shafts, fog bands/overlay/front veil, the
+ *     ground-mist band, wind gust streaks): x/width through mapX (full-width
+ *     veils just use `k.width()`), y/height through mapY endpoints — a veil
+ *     spanning reference y A..B becomes screen y `mapY(A,…)` with height
+ *     `mapY(B,…) - mapY(A,…)`.
  *
- * All numeric constants (speeds, alphas, phase windows, the rainbow's
- * radius steps) are ported verbatim except the rainbow arc's angle-step
- * (reference: 0.025 rad, ~630 rects/frame across 5 bands) — coarsened to
- * 0.12 rad to fit this layer's own "keep it under ~150 drawRect calls per
- * frame" budget; a blocky 4x4-pixel arc is not visibly different at this
- * lower sample density.
+ * Wrap/modulo arithmetic stays in reference space: periods and drift speeds
+ * are computed on the reference-space value first, then mapped, so scaling a
+ * wrapped value by a positive constant is the same as scaling the value and
+ * its period before wrapping.
+ *
+ * `width`, `height`, and the live horizon screen y are re-derived at the top
+ * of every `onDraw` call (see `horizonScreenY`, imported from sky.ts) — never
+ * cached across frames, so a window resize self-corrects on the very next
+ * frame, same as sky.ts's own fixed objects.
+ *
+ * The rainbow is the one exception to "redraw every frame": its ~670 blocks
+ * are built once into a retained `k.fixed()` object when the weather enters
+ * `rainbow` (rebuilt only if the viewport moves by more than a pixel), not
+ * regenerated from scratch every frame — see `rainbowBlocks` and its call
+ * site in `update()` below.
  */
-
-const SCALE_X = WORLD_W / 480;
-const SCALE_Y = GROUND_TOP / 182;
 
 /** The reference painter's `staticFrame` instant — frozen time under reduced motion. */
 const REDUCED_MOTION_T = 1.3;
@@ -60,9 +69,10 @@ export interface RainDrop {
 }
 
 /**
- * One rain streak, verbatim from the reference's rain loop (`heavy` selects
- * the storm variant: faster, longer, steeper slant). `i` is the drop index
- * (0..rn), `tSec` the animation clock.
+ * One rain streak, in raw reference space (480x270), verbatim from the
+ * reference's rain loop (`heavy` selects the storm variant: faster, longer,
+ * steeper slant). `i` is the drop index (0..rn), `tSec` the animation clock.
+ * Draw sites map `x`/`y` through mapX/mapY; `len` stays a literal pixel size.
  */
 export function rainDrop(i: number, tSec: number, heavy: boolean): RainDrop {
   const r1 = frac(i * 0.6180339);
@@ -73,7 +83,7 @@ export function rainDrop(i: number, tSec: number, heavy: boolean): RainDrop {
   const refY = (((r1 * 900) + tSec * speed) % 290) - 12;
   const refX = r2 * 500 + (heavy ? -refY * 0.28 : -refY * 0.08);
   const alpha = 0.14 + r3 * 0.18;
-  return { x: refX * SCALE_X, y: refY * SCALE_Y, len, alpha };
+  return { x: refX, y: refY, len, alpha };
 }
 
 export interface SnowFlake {
@@ -83,7 +93,7 @@ export interface SnowFlake {
   alpha: number;
 }
 
-/** One snowflake, verbatim from the reference's snow loop. */
+/** One snowflake, in raw reference space, verbatim from the reference's snow loop. */
 export function snowFlake(i: number, tSec: number): SnowFlake {
   const s1 = frac(i * 0.6180339);
   const s2 = frac(i * 0.7548776);
@@ -93,19 +103,92 @@ export function snowFlake(i: number, tSec: number): SnowFlake {
   const refX = s2 * 480 + Math.sin(tSec * (0.35 + s3 * 0.5) + i) * (6 + s1 * 10);
   const size = s1 < 0.15 ? 3 : 2;
   const alpha = 0.3 + s3 * 0.5;
-  return { x: refX * SCALE_X, y: refY * SCALE_Y, size, alpha };
+  return { x: refX, y: refY, size, alpha };
+}
+
+// ---------------------------------------------------------------------------
+// The coordinate contract: reference space (480x270, sky [0,182), ground
+// [182,270)) to screen space. `horizonY` is always the *live* screen y of
+// GROUND_TOP (see `horizonScreenY`), recomputed every frame by callers.
+// ---------------------------------------------------------------------------
+
+/** Horizontal scale: the viewport is `width` px wide where the reference is 480. */
+export function fx(width: number): number {
+  return width / 480;
+}
+
+/** Vertical scale for the sky band: the horizon sits at `horizonY` where the reference has it at 182. */
+export function fy(horizonY: number): number {
+  return horizonY / 182;
+}
+
+/** Maps a reference-space x (or an x-magnitude, e.g. a width) onto screen space. */
+export function mapX(refX: number, width: number): number {
+  return refX * fx(width);
 }
 
 /**
- * Reference y 194..264 (the splash band, just below the ground line) mapped
- * onto world y [GROUND_TOP+14, GROUND_TOP+250] — the brief's explicit
- * ground-band mapping, distinct from the constant SCALE_Y used for
- * sky-space effects.
+ * Maps a reference-space y onto screen space. Sky rows (`refY <= 182`) scale
+ * linearly by `fy(horizonY)`; ground rows interpolate linearly from the live
+ * horizon down to the bottom of the screen, so `mapY(182,h,H) === h` and
+ * `mapY(270,h,H) === H` regardless of viewport size.
  */
-function groundBandY(refY: number): number {
-  const t = (refY - 194) / (264 - 194);
-  return GROUND_TOP + 14 + t * (250 - 14);
+export function mapY(refY: number, horizonY: number, height: number): number {
+  return refY <= 182 ? refY * fy(horizonY) : horizonY + ((refY - 182) / 88) * (height - horizonY);
 }
+
+/**
+ * Class-3 veil helper: maps a reference y-range [refY0, refY1] to a screen
+ * [y, height] pair via mapY's endpoints, so a veil from ref y A to ref y B
+ * spans exactly `mapY(A,…)` to `mapY(B,…)` on screen.
+ */
+function vSpan(refY0: number, refY1: number, horizonY: number, height: number): [y: number, h: number] {
+  const y0 = mapY(refY0, horizonY, height);
+  const y1 = mapY(refY1, horizonY, height);
+  return [y0, y1 - y0];
+}
+
+export interface RainbowBlock {
+  x: number;
+  y: number;
+  size: number;
+  /** Band index 0..4, outermost to innermost; the caller maps this to a colour. */
+  band: number;
+}
+
+/**
+ * Geometry for the rainbow's retained arc: five concentric bands of square
+ * blocks, angle-stepped in reference space (`4/rr` radians, `rr` the
+ * reference-space band radius) so each band stays contiguous however many
+ * blocks that works out to (~134 for the outermost band). Both the radius
+ * and the block size scale uniformly by `fy(horizonY)` — a deliberate
+ * departure from the mapX/mapY split used elsewhere in this file, so the arc
+ * stays a true circle instead of stretching into an ellipse with the
+ * viewport's aspect ratio. Center x is `width/2` (the reference's own centre,
+ * 240, is exactly half of 480). This function has no `height` parameter —
+ * clipping blocks that fall below the visible screen happens at the call
+ * site, which has `k.height()`.
+ */
+export function rainbowBlocks(width: number, horizonY: number): RainbowBlock[] {
+  const blocks: RainbowBlock[] = [];
+  const scale = fy(horizonY);
+  const centerX = width / 2;
+  const centerY = 265 * scale;
+  const size = 4 * scale;
+  for (let band = 0; band < 5; band++) {
+    const rr = 170 - band * 6;
+    const step = 4 / rr;
+    for (let a = Math.PI; a <= Math.PI * 2; a += step) {
+      const x = centerX + Math.cos(a) * rr * scale;
+      const y = centerY + Math.sin(a) * rr * scale;
+      blocks.push({ x, y, size, band });
+    }
+  }
+  return blocks;
+}
+
+/** [HUES[0], HUES[4], HUES[2], HUES[6], HUES[1]] — the reference's exact band order. */
+const RAINBOW_BAND_COLOURS = [HUES[0], HUES[4], HUES[2], HUES[6], HUES[1]];
 
 // ---------------------------------------------------------------------------
 // Tint helpers — mirror the reference's own `sc`/`cc` closures.
@@ -145,10 +228,20 @@ function isBoltOn(tSec: number, reduced: boolean): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Per-weather draw branches — behind the creatures.
+// Per-weather draw branches — behind the creatures. Each takes the frame's
+// `width`/`height`/`horizonY`, re-derived once by the caller (see onDraw
+// below), never cached across frames.
 // ---------------------------------------------------------------------------
 
-function drawRainAndSplashes(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number, reduced: boolean): void {
+function drawRainAndSplashes(
+  k: KAPLAYCtx,
+  cur: ResolvedTheme,
+  tSec: number,
+  reduced: boolean,
+  width: number,
+  height: number,
+  horizonY: number,
+): void {
   const { weather, tokens, flags } = cur;
   const ramp = weather.ramp;
   const heavy = weather.kind === 'storm';
@@ -156,7 +249,7 @@ function drawRainAndSplashes(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number, red
   const dropColour = flags.isNight ? '#AEC2D2' : mix(tokens.sky1, '#FFFFFF', 0.45);
   for (let i = 0; i < rn; i++) {
     const d = rainDrop(i, tSec, heavy);
-    rect(k, d.x, d.y, 2, d.len, dropColour, d.alpha * ramp);
+    rect(k, mapX(d.x, width), mapY(d.y, horizonY, height), 2, d.len, dropColour, d.alpha * ramp);
   }
 
   const splashColour = flags.isNight ? '#C3D4E2' : mix(tokens.sky1, '#FFFFFF', 0.55);
@@ -167,13 +260,21 @@ function drawRainAndSplashes(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number, red
     const sxRef = frac(i * 0.6180339) * 466 + 4;
     const syRef = 194 + frac(i * 0.7548776) * 70;
     const alpha = (reduced ? 0.35 : 0.4 * (1 - cyc / 0.28)) * ramp;
-    const sy = groundBandY(syRef);
-    rect(k, (sxRef - 3) * SCALE_X, sy, 2, 2, splashColour, alpha);
-    rect(k, (sxRef + 3) * SCALE_X, sy, 2, 2, splashColour, alpha);
+    const sy = mapY(syRef, horizonY, height);
+    rect(k, mapX(sxRef - 3, width), sy, 2, 2, splashColour, alpha);
+    rect(k, mapX(sxRef + 3, width), sy, 2, 2, splashColour, alpha);
   }
 }
 
-function drawStormClouds(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number, reduced: boolean): void {
+function drawStormClouds(
+  k: KAPLAYCtx,
+  cur: ResolvedTheme,
+  tSec: number,
+  reduced: boolean,
+  width: number,
+  height: number,
+  horizonY: number,
+): void {
   const { weather, flags } = cur;
   const ramp = weather.ramp;
   const night = flags.isNight;
@@ -182,56 +283,77 @@ function drawStormClouds(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number, reduced
   const deckRim = night ? '#39424B' : '#7E888F';
   const drift1 = (tSec * 3) % 520;
   const drift2 = (tSec * 6) % 520;
+  const s = fy(horizonY);
 
+  // Far deck: class-2 clusters, anchor cfx.
   for (let cf = 0; cf < 3; cf++) {
     const cfx = ((cf * 190 + drift1) % 660) - 90;
-    rect(k, cfx * SCALE_X, 2 * SCALE_Y, 168 * SCALE_X, 20 * SCALE_Y, deckFar, ramp);
-    rect(k, (cfx + 24) * SCALE_X, 20 * SCALE_Y, 120 * SCALE_X, 8 * SCALE_Y, deckFar, ramp);
+    const anchorX = mapX(cfx, width);
+    rect(k, anchorX, mapY(2, horizonY, height), 168 * s, 20 * s, deckFar, ramp);
+    rect(k, anchorX + 24 * s, mapY(20, horizonY, height), 120 * s, 8 * s, deckFar, ramp);
   }
 
+  // Distant rain shafts hanging from the far deck: class-3 veils.
   const shaftColour = night ? '#4A5862' : '#8C9AA4';
+  const [shaftY, shaftH] = vSpan(30, 180, horizonY, height);
   for (let sh = 0; sh < 3; sh++) {
     const shx = ((sh * 176 + drift1 * 0.6) % 520) - 20;
     for (let sk = 0; sk < 5; sk++) {
       const alpha = (0.1 - sk * 0.016) * ramp;
-      rect(k, (shx + sk * 3) * SCALE_X, 30 * SCALE_Y, (30 - sk * 4) * SCALE_X, 150 * SCALE_Y, shaftColour, alpha);
+      rect(k, mapX(shx + sk * 3, width), shaftY, mapX(30 - sk * 4, width), shaftH, shaftColour, alpha);
     }
   }
 
+  // In-cloud flicker on its own beat, offset from the bolt: class-2 cluster.
   const ph2 = tSec % 4.5;
   if (!reduced && ph2 > 1.7 && ph2 < 1.88) {
-    rect(k, 96 * SCALE_X, 12 * SCALE_Y, 84 * SCALE_X, 34 * SCALE_Y, '#E8DFA8', 0.3 * ramp);
+    rect(k, mapX(96, width), mapY(12, horizonY, height), 84 * s, 34 * s, '#E8DFA8', 0.3 * ramp);
   }
 
+  // Near deck: heavier, lower, lit rims on top — class-2 clusters, anchor cnx.
   for (let cn = 0; cn < 4; cn++) {
     const cnx = ((cn * 150 + drift2) % 640) - 100;
+    const anchorX = mapX(cnx, width);
     const cny = 24 + (cn % 2) * 12;
-    rect(k, (cnx + 8) * SCALE_X, (cny - 3) * SCALE_Y, 118 * SCALE_X, 3 * SCALE_Y, deckRim, ramp);
-    rect(k, cnx * SCALE_X, cny * SCALE_Y, 134 * SCALE_X, 24 * SCALE_Y, deckNear, ramp);
-    rect(k, (cnx + 18) * SCALE_X, (cny + 24) * SCALE_Y, 96 * SCALE_X, 9 * SCALE_Y, deckNear, ramp);
+    rect(k, anchorX + 8 * s, mapY(cny - 3, horizonY, height), 118 * s, 3 * s, deckRim, ramp);
+    rect(k, anchorX, mapY(cny, horizonY, height), 134 * s, 24 * s, deckNear, ramp);
+    rect(k, anchorX + 18 * s, mapY(cny + 24, horizonY, height), 96 * s, 9 * s, deckNear, ramp);
   }
 
-  rect(k, 0, 172 * SCALE_Y, WORLD_W, 16 * SCALE_Y, '#FFFFFF', 0.08 * ramp);
+  // Low ground mist whipped up by the rain: class-3 full-width veil.
+  const [mistY, mistH] = vSpan(172, 188, horizonY, height);
+  rect(k, 0, mistY, width, mistH, '#FFFFFF', 0.08 * ramp);
 
+  // The bolt: unchanged timing/rect count from before this wave (Task 3
+  // replaces the whole mechanism); only its coordinates move through the
+  // class-2 rules, anchored at mapX(312, width).
   if (isBoltOn(tSec, reduced)) {
-    rect(k, 312 * SCALE_X, 14 * SCALE_Y, 16 * SCALE_X, 110 * SCALE_Y, '#FFEFA0', 0.18 * ramp);
-    rect(k, 318 * SCALE_X, 14 * SCALE_Y, 5 * SCALE_X, 28 * SCALE_Y, '#FFE896', ramp);
-    rect(k, 312 * SCALE_X, 40 * SCALE_Y, 5 * SCALE_X, 22 * SCALE_Y, '#FFE896', ramp);
-    rect(k, 320 * SCALE_X, 60 * SCALE_Y, 5 * SCALE_X, 26 * SCALE_Y, '#FFE896', ramp);
-    rect(k, 315 * SCALE_X, 84 * SCALE_Y, 4 * SCALE_X, 18 * SCALE_Y, '#FFE896', ramp);
-    rect(k, 326 * SCALE_X, 46 * SCALE_Y, 8 * SCALE_X, 4 * SCALE_Y, '#FFE896', ramp);
+    const anchorX = mapX(312, width);
+    rect(k, anchorX, mapY(14, horizonY, height), 16 * s, 110 * s, '#FFEFA0', 0.18 * ramp);
+    rect(k, anchorX + 6 * s, mapY(14, horizonY, height), 5 * s, 28 * s, '#FFE896', ramp);
+    rect(k, anchorX, mapY(40, horizonY, height), 5 * s, 22 * s, '#FFE896', ramp);
+    rect(k, anchorX + 8 * s, mapY(60, horizonY, height), 5 * s, 26 * s, '#FFE896', ramp);
+    rect(k, anchorX + 3 * s, mapY(84, horizonY, height), 4 * s, 18 * s, '#FFE896', ramp);
+    rect(k, anchorX + 14 * s, mapY(46, horizonY, height), 8 * s, 4 * s, '#FFE896', ramp);
   }
 }
 
-function drawSnow(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number): void {
+function drawSnow(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number, width: number, height: number, horizonY: number): void {
   const ramp = cur.weather.ramp;
   for (let i = 0; i < 60; i++) {
     const f = snowFlake(i, tSec);
-    rect(k, f.x, f.y, f.size, f.size, '#FFFFFF', f.alpha * ramp);
+    rect(k, mapX(f.x, width), mapY(f.y, horizonY, height), f.size, f.size, '#FFFFFF', f.alpha * ramp);
   }
 }
 
-function drawFogBehind(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number): void {
+function drawFogBehind(
+  k: KAPLAYCtx,
+  cur: ResolvedTheme,
+  tSec: number,
+  width: number,
+  height: number,
+  horizonY: number,
+): void {
   const ramp = cur.weather.ramp;
   const fogTone = cur.flags.isNight ? '#8E8C80' : '#EDEBDF';
   const bandAlphas = [0.09, 0.18, 0.24, 0.18, 0.09];
@@ -241,21 +363,24 @@ function drawFogBehind(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number): void {
     const fbx = ((tSec * fsp + fb * 210) % 760) - 260;
     for (let fs = 0; fs < 5; fs++) {
       const x = fbx + Math.sin(fb * 3 + fs * 1.7) * 14;
-      rect(k, x * SCALE_X, (fby + fs * 5) * SCALE_Y, 500 * SCALE_X, 6 * SCALE_Y, fogTone, bandAlphas[fs]! * ramp);
+      const [y, h] = vSpan(fby + fs * 5, fby + fs * 5 + 6, horizonY, height);
+      rect(k, mapX(x, width), y, mapX(500, width), h, fogTone, bandAlphas[fs]! * ramp);
     }
   }
-  rect(k, 0, 60 * SCALE_Y, WORLD_W, 210 * SCALE_Y, fogTone, 0.13 * ramp);
+  const [overlayY, overlayH] = vSpan(60, 270, horizonY, height);
+  rect(k, 0, overlayY, width, overlayH, fogTone, 0.13 * ramp);
 }
 
 /** The one front-of-creatures touch: a faint veil low in the frame. */
-function drawFogFront(k: KAPLAYCtx, cur: ResolvedTheme): void {
+function drawFogFront(k: KAPLAYCtx, cur: ResolvedTheme, width: number, height: number, horizonY: number): void {
   const ramp = cur.weather.ramp;
   const fogTone = cur.flags.isNight ? '#8E8C80' : '#EDEBDF';
   const alpha = (cur.flags.isNight ? 0.1 : 0.08) * ramp;
-  rect(k, 0, 150 * SCALE_Y, WORLD_W, 120 * SCALE_Y, fogTone, alpha);
+  const [y, h] = vSpan(150, 270, horizonY, height);
+  rect(k, 0, y, width, h, fogTone, alpha);
 }
 
-function drawWind(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number): void {
+function drawWind(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number, width: number, height: number, horizonY: number): void {
   const ramp = cur.weather.ramp;
   const foliage = sc(cur, cur.tokens.foliage);
   const foliageLite = sc(cur, cur.tokens.foliageLite);
@@ -265,15 +390,18 @@ function drawWind(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number): void {
     const colour = i % 2 ? foliageLite : foliage;
     const wx = ((w1 * 560 + tSec * (120 + w2 * 70)) % 560) - 40;
     const wy = 54 + w2 * 170 + Math.sin(tSec * 2 + i) * 6;
-    rect(k, wx * SCALE_X, wy * SCALE_Y, 6, 3, colour, 0.85 * ramp);
+    rect(k, mapX(wx, width), mapY(wy, horizonY, height), 6, 3, colour, 0.85 * ramp);
   }
   const base = (tSec * 150) % 480;
-  rect(k, base * SCALE_X, 90 * SCALE_Y, 70 * SCALE_X, 3 * SCALE_Y, '#FFFFFF', 0.16 * ramp);
-  rect(k, ((base + 200) % 480) * SCALE_X, 140 * SCALE_Y, 54 * SCALE_X, 3 * SCALE_Y, '#FFFFFF', 0.16 * ramp);
-  rect(k, ((base + 340) % 480) * SCALE_X, 200 * SCALE_Y, 60 * SCALE_X, 3 * SCALE_Y, '#FFFFFF', 0.16 * ramp);
+  const [gy1, gh1] = vSpan(90, 93, horizonY, height);
+  rect(k, mapX(base, width), gy1, mapX(70, width), gh1, '#FFFFFF', 0.16 * ramp);
+  const [gy2, gh2] = vSpan(140, 143, horizonY, height);
+  rect(k, mapX((base + 200) % 480, width), gy2, mapX(54, width), gh2, '#FFFFFF', 0.16 * ramp);
+  const [gy3, gh3] = vSpan(200, 203, horizonY, height);
+  rect(k, mapX((base + 340) % 480, width), gy3, mapX(60, width), gh3, '#FFFFFF', 0.16 * ramp);
 }
 
-function drawLeaves(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number): void {
+function drawLeaves(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number, width: number, height: number, horizonY: number): void {
   const ramp = cur.weather.ramp;
   const lc = ['#D97757', '#E2B45E', '#C96A4A', '#E58C68'];
   for (let i = 0; i < 20; i++) {
@@ -283,46 +411,24 @@ function drawLeaves(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number): void {
     const lx = l1 * 480 + Math.sin(tSec * (0.5 + l2 * 0.4) + i) * 18;
     const ly = (((l2 * 900) + tSec * (18 + l1 * 22)) % 300) - 10;
     const w = i % 3 ? 6 : 5;
-    rect(k, lx * SCALE_X, ly * SCALE_Y, w, 3, colour, 0.9 * ramp);
+    rect(k, mapX(lx, width), mapY(ly, horizonY, height), w, 3, colour, 0.9 * ramp);
   }
 }
 
-/** [HUES[0], HUES[4], HUES[2], HUES[6], HUES[1]] — the reference's exact band order. */
-function rainbowBands(): string[] {
-  return [HUES[0], HUES[4], HUES[2], HUES[6], HUES[1]];
-}
-
-/**
- * Angle step coarsened from the reference's 0.025 rad to 0.12 rad — see the
- * file header comment on the rect-count budget.
- */
-const RAINBOW_STEP = 0.12;
-
-function drawRainbow(k: KAPLAYCtx, cur: ResolvedTheme): void {
-  if (cur.flags.isNight) return;
-  const ramp = cur.weather.ramp;
-  const alpha = 0.72 * ramp;
-  const bands = rainbowBands();
-  for (let b = 0; b < 5; b++) {
-    const rr = 170 - b * 6;
-    for (let a = Math.PI; a <= Math.PI * 2; a += RAINBOW_STEP) {
-      const ax = 240 + Math.cos(a) * rr;
-      const ay = 265 + Math.sin(a) * rr;
-      if (ay < 0) continue;
-      const px = Math.round(ax / 4) * 4;
-      const py = Math.round(ay / 4) * 4;
-      rect(k, px * SCALE_X, py * SCALE_Y, 4, 4, bands[b]!, alpha);
-    }
-  }
-}
-
-function drawHeatShimmer(k: KAPLAYCtx, cur: ResolvedTheme, tSec: number): void {
+function drawHeatShimmer(
+  k: KAPLAYCtx,
+  cur: ResolvedTheme,
+  tSec: number,
+  width: number,
+  height: number,
+  horizonY: number,
+): void {
   if (cur.flags.isNight) return;
   const ramp = cur.weather.ramp;
   for (let hl = 0; hl < 3; hl++) {
     for (let hxp = 0; hxp < 480; hxp += 12) {
       const hy = 170 - hl * 13 + Math.sin(hxp * 0.08 + tSec * 2.5 + hl * 2) * 3;
-      rect(k, hxp * SCALE_X, hy * SCALE_Y, 7, 2, '#FFF6D8', 0.3 * ramp);
+      rect(k, mapX(hxp, width), mapY(hy, horizonY, height), 7, 2, '#FFF6D8', 0.3 * ramp);
     }
   }
 }
@@ -336,11 +442,13 @@ export interface WeatherLayer {
 }
 
 /**
- * Two world-space draw objects (`behind` the creatures, `front` of them) plus
- * one fixed screen-space object for the storm's white flash. `onDraw` is the
- * one deliberately per-frame path in this scene — everywhere else prefers
- * retained KAPLAY objects — so each branch below is kept to a modest handful
- * of `k.drawRect` calls; see the file header for the rect-count budget.
+ * Two screen-fixed draw objects (`behind` the creatures, `front` of them)
+ * plus one fixed screen-space object for the storm's white flash, plus the
+ * rainbow's own retained root (built/destroyed from `update()`, see below).
+ * `onDraw` is the one deliberately per-frame path in this scene — everywhere
+ * else prefers retained KAPLAY objects — so each branch below is kept to a
+ * modest handful of `k.drawRect` calls; see the file header for the
+ * coordinate contract and scaling classes each branch uses.
  *
  * `update()` is called from village.ts's `applyTheme` walker, which only
  * runs when the resolved theme actually changes (a tick crossing a minute, a
@@ -363,48 +471,50 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
 
   let current: ResolvedTheme | null = null;
 
-  const behind = k.add([k.pos(0, 0), k.z(5)]);
+  const behind = k.add([k.pos(0, 0), k.z(5), k.fixed()]);
   behind.onDraw(() => {
     const cur = current;
     if (!cur || cur.weather.kind === 'clear' || cur.weather.ramp <= 0.02) return;
     const t = liveT();
     const reduced = reducedMotion();
+    const width = k.width();
+    const height = k.height();
+    const horizonY = horizonScreenY(k);
     switch (cur.weather.kind) {
       case 'rain':
-        drawRainAndSplashes(k, cur, t, reduced);
+        drawRainAndSplashes(k, cur, t, reduced, width, height, horizonY);
         break;
       case 'storm':
-        drawRainAndSplashes(k, cur, t, reduced);
-        drawStormClouds(k, cur, t, reduced);
+        drawRainAndSplashes(k, cur, t, reduced, width, height, horizonY);
+        drawStormClouds(k, cur, t, reduced, width, height, horizonY);
         break;
       case 'snow':
-        drawSnow(k, cur, t);
+        drawSnow(k, cur, t, width, height, horizonY);
         break;
       case 'fog':
-        drawFogBehind(k, cur, t);
+        drawFogBehind(k, cur, t, width, height, horizonY);
         break;
       case 'wind':
-        drawWind(k, cur, t);
+        drawWind(k, cur, t, width, height, horizonY);
         break;
       case 'leaves':
-        drawLeaves(k, cur, t);
-        break;
-      case 'rainbow':
-        drawRainbow(k, cur);
+        drawLeaves(k, cur, t, width, height, horizonY);
         break;
       case 'heat':
-        drawHeatShimmer(k, cur, t);
+        drawHeatShimmer(k, cur, t, width, height, horizonY);
         break;
       default:
         break;
     }
   });
 
-  const front = k.add([k.pos(0, 0), k.z(10000)]);
+  const front = k.add([k.pos(0, 0), k.z(10000), k.fixed()]);
   front.onDraw(() => {
     const cur = current;
     if (!cur || cur.weather.kind === 'clear' || cur.weather.ramp <= 0.02) return;
-    if (cur.weather.kind === 'fog') drawFogFront(k, cur);
+    if (cur.weather.kind === 'fog') {
+      drawFogFront(k, cur, k.width(), k.height(), horizonScreenY(k));
+    }
   });
 
   // The storm flash is a screen effect, not a world one — a bolt should
@@ -425,9 +535,59 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
     });
   });
 
+  // --- Rainbow: retained object, rebuilt only when the weather enters
+  // `rainbow` or the viewport moves. KAPLAY does not cascade a parent's
+  // opacity down to its children (only pos/scale/rotation compose through
+  // the render transform stack), so each block's own opacity is what gets
+  // updated on publish, even though conceptually this is "the root's
+  // opacity."
+  let rainbowRoot: GameObj | null = null;
+  let rainbowBlockObjs: GameObj[] = [];
+  let rainbowBuiltWidth = 0;
+  let rainbowBuiltHorizonY = 0;
+
+  function rebuildRainbow(width: number, height: number, horizonY: number): void {
+    rainbowRoot?.destroy();
+    const root = k.add([k.pos(0, 0), k.z(5), k.fixed()]);
+    rainbowBlockObjs = [];
+    for (const blk of rainbowBlocks(width, horizonY)) {
+      if (blk.y > height) continue;
+      const obj = root.add([
+        k.rect(blk.size, blk.size),
+        k.pos(blk.x, blk.y),
+        k.color(k.Color.fromHex(RAINBOW_BAND_COLOURS[blk.band]!)),
+        k.opacity(1),
+      ]);
+      rainbowBlockObjs.push(obj);
+    }
+    rainbowRoot = root;
+  }
+
   return {
     update(t: ResolvedTheme) {
       current = t;
+
+      // Rainbow: built/destroyed here (not in onDraw) per the retained-object
+      // design — the arc is expensive to regenerate every frame and doesn't
+      // need to be, since it only depends on the weather kind, night flag,
+      // and viewport geometry, all of which only change on a publish.
+      const wantsRainbow = t.weather.kind === 'rainbow' && !t.flags.isNight;
+      if (wantsRainbow) {
+        const width = k.width();
+        const height = k.height();
+        const horizonY = horizonScreenY(k);
+        if (!rainbowRoot || Math.abs(width - rainbowBuiltWidth) > 1 || Math.abs(horizonY - rainbowBuiltHorizonY) > 1) {
+          rebuildRainbow(width, height, horizonY);
+          rainbowBuiltWidth = width;
+          rainbowBuiltHorizonY = horizonY;
+        }
+        const alpha = 0.72 * t.weather.ramp;
+        for (const obj of rainbowBlockObjs) obj.opacity = alpha;
+      } else if (rainbowRoot) {
+        rainbowRoot.destroy();
+        rainbowRoot = null;
+        rainbowBlockObjs = [];
+      }
 
       // Umbrellas: creature.ts seeds ownership per id and creates the 5
       // rects (1 stick + 4 canopy) hidden by default, all tagged
