@@ -164,7 +164,10 @@ The full visual treatment — palette tables, creature grids, staging compositio
 motion bible with timings, and the hatch sequence timeline (wobble → crack → shell
 burst → pop-in with confetti in the eight creature hues → name-sign stamp) — lives in
 the design brief and the approved mockup generation, which are the visual source of
-truth for implementation.
+truth for implementation. **The approved generation is the vendored trailer at
+`reference/swarm-village-trailer/`** (imported from Claude Design 2026-08-23, runnable
+locally — see its README): its `swarm-village-scene.jsx` carries the day/night palette
+cycle, the grounding constants, the motion constants, and both ceremonies.
 
 ## 6. Interactions
 

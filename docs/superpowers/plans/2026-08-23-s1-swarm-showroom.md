@@ -2326,6 +2326,8 @@ git commit -m "feat(web): egg baking + placeInRange extraction for the spectator
 
 This is the KAPLAY-and-DOM glue task: deliberately thin, verified by running it, with all decisions already made in Tasks 9–11. Read `packages/web/src/scene/village.ts` and `packages/web/src/scene/creature.ts` before starting — the spectator scene copies their boot pattern (kaplay init, font loading via the existing pattern, pixelDensity + TEXT_SS, drag-to-pan camera with CLICK_SLOP) and reuses `spawnCreature(k, creature, spot, fonts): Promise<CreatureActor>` for residents.
 
+**Visual source of truth:** `reference/swarm-village-trailer/swarm-village-scene.jsx` (the user-approved Claude Design generation — see that folder's README). Copy its constants rather than inventing: contact-shadow treatment, house base rows + dirt lines, egg wobble-burst vs shiver timings, breath/blink/hop parameters, the hatch ceremony timeline, and the flat-band day/night palettes for the eventual theme hookup. Where this plan's behavior text and the trailer disagree on a visual constant, the trailer wins.
+
 **Files:**
 - Create: `packages/web/spectator.html`
 - Create: `packages/web/vite.spectator.config.ts`
