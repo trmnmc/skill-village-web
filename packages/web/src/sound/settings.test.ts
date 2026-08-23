@@ -24,4 +24,10 @@ describe('settings', () => {
     expect(parsed.master).toBe(1);
     expect(parsed.buses.voices).toBe(0);
   });
+
+  it('fallbacks hand out copies, not the default itself', () => {
+    const parsed = parseSettings(null);
+    expect(parsed).not.toBe(DEFAULT_SETTINGS);
+    expect(parsed.buses).not.toBe(DEFAULT_SETTINGS.buses);
+  });
 });

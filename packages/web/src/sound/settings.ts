@@ -22,8 +22,13 @@ export const STORAGE_KEY = 'skill-village:sound';
 const clamp01 = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : null;
 
+const freshDefaults = (): SoundSettings => ({
+  ...DEFAULT_SETTINGS,
+  buses: { ...DEFAULT_SETTINGS.buses },
+});
+
 export function parseSettings(raw: string | null): SoundSettings {
-  if (raw === null) return DEFAULT_SETTINGS;
+  if (raw === null) return freshDefaults();
   try {
     const p = JSON.parse(raw) as Record<string, unknown>;
     const buses = (p.buses ?? {}) as Record<string, unknown>;
@@ -34,7 +39,7 @@ export function parseSettings(raw: string | null): SoundSettings {
       ambience: clamp01(buses.ambience),
       music: clamp01(buses.music),
     };
-    if (master === null || typeof p.muted !== 'boolean') return DEFAULT_SETTINGS;
+    if (master === null || typeof p.muted !== 'boolean') return freshDefaults();
     return {
       muted: p.muted,
       master,
@@ -46,7 +51,7 @@ export function parseSettings(raw: string | null): SoundSettings {
       },
     };
   } catch {
-    return DEFAULT_SETTINGS;
+    return freshDefaults();
   }
 }
 
@@ -59,7 +64,7 @@ export function loadSettings(): SoundSettings {
     return parseSettings(localStorage.getItem(STORAGE_KEY));
   } catch {
     // Storage can throw outright (privacy modes); silence is not worth a crash.
-    return DEFAULT_SETTINGS;
+    return freshDefaults();
   }
 }
 
