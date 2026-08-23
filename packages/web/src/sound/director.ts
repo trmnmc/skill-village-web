@@ -7,7 +7,7 @@ import { babble, signaturePhrase, type Syllable, type VoiceParams } from './voic
  * without Web Audio API dependencies.
  */
 export interface DirectorCtx {
-  /** The player's clock (in seconds), for scheduling audio events. */
+  /** The Web Audio clock (currentTime in seconds), never wall time—cooldown math depends on it. */
   now: number;
   camX: number;
   viewW: number;
