@@ -156,6 +156,7 @@ export function direct(
       const { pan, attenuation } = spatial(ev.x);
       if (attenuation === 0) return { state, commands: [] };
       // §10: two syllables of the creature's own voice, an octave down, quiet.
+      // Untracked and uncapped — this is chat-bound UI feedback, at most one per open chat.
       const blip: Syllable[] = [
         { at: 0, freq: ev.voice.basePitch * 0.5, gain: 0.06 },
         { at: 0.07, freq: ev.voice.basePitch * 0.5, gain: 0.06 },
@@ -189,12 +190,19 @@ export function direct(
       if (attenuation === 0) return { state, commands: [] };
       const { at, next } = chimeDelay();
       // §10: E5 then B5 120ms apart, then the newcomer introduces itself.
+      // The chime always plays; the greeting is droppable when the cap is reached.
+      const chimeCommands = [
+        { patch: 'boxNote' as const, bus: 'sfx' as const, at, pan, gain: 0.05 * attenuation, freq: 659.25 },
+        { patch: 'boxNote' as const, bus: 'sfx' as const, at: at + 0.12, pan, gain: 0.045 * attenuation, freq: 987.77 },
+      ];
+      if (activeVoices >= VOICE_CAP) {
+        return { state: next, commands: chimeCommands };
+      }
       const phrase = signaturePhrase(ev.voice);
       return {
         state: trackVoice(next, phraseEnd(phrase, ctx.now, at + 0.45)),
         commands: [
-          { patch: 'boxNote', bus: 'sfx', at, pan, gain: 0.05 * attenuation, freq: 659.25 },
-          { patch: 'boxNote', bus: 'sfx', at: at + 0.12, pan, gain: 0.045 * attenuation, freq: 987.77 },
+          ...chimeCommands,
           ...syllableCommands(phrase, ev.voice, pan, attenuation, 1, at + 0.45),
         ],
       };
