@@ -13,6 +13,8 @@
     "dev:showroom": "tsx packages/server/src/showroom/main.ts",
     "dev:web": "vite --config packages/web/vite.config.ts",
     "dev": "concurrently -n server,web -c green,cyan \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:spectator": "vite --config packages/web/vite.spectator.config.ts --open /spectator.html",
+    "build:spectator": "vite build --config packages/web/vite.spectator.config.ts",
     "contact-sheet": "tsx packages/core/scripts/contact-sheet.ts contact-sheet.html"
   },
   "devDependencies": {
