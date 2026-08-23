@@ -18,12 +18,12 @@ export interface Zone {
  */
 export const ZONES: readonly Zone[] = Object.freeze([
   { id: 'hatchery', label: 'Hatchery', x: 0, w: 520 },
-  { id: 'homes', label: 'Homes', x: 520, w: 2600 },
-  { id: 'adoption', label: 'Adoption Center', x: 3120, w: 760 },
-  { id: 'notice', label: 'Notice Board', x: 3880, w: 420 },
+  { id: 'homes', label: 'Homes', x: 520, w: 3200 },
+  { id: 'adoption', label: 'Adoption Center', x: 3720, w: 760 },
+  { id: 'notice', label: 'Notice Board', x: 4480, w: 420 },
 ]);
 
-export const WORLD_W = 4300;
+export const WORLD_W = 4900;
 /** Baseline the props are anchored around; depth rows reach both ways from it. */
 export const GROUND_Y = 620;
 
@@ -47,6 +47,25 @@ export const GROUND_FRONT = GROUND_Y + FRONT_ROWS * ROW_DEPTH;
 
 /** Feet height for a depth row: row 0 is the front-most, each next one steps back. */
 const rowY = (row: number) => GROUND_FRONT - row * ROW_DEPTH;
+
+/**
+ * The row lottery, front-most first — one entry per row. The field fills
+ * from the back: most villagers mill about the baseline and the far field,
+ * and coming near the camera is the exception, so the front row draws the
+ * fewest tickets and the second row is still shy of the rest.
+ */
+const ROW_WEIGHTS: readonly number[] = [1, 2, 3, 3, 3, 3];
+const TOTAL_WEIGHT = ROW_WEIGHTS.reduce((sum, w) => sum + w, 0);
+
+/** Weighted row draw from a creature's hash; ROW_WEIGHTS must cover every row. */
+function rowFor(h: number): number {
+  let draw = h % TOTAL_WEIGHT;
+  for (let row = 0; row < ROWS; row++) {
+    draw -= ROW_WEIGHTS[row]!;
+    if (draw < 0) return row;
+  }
+  return ROWS - 1;
+}
 
 /**
  * Clearance between the furthest row and the horizon. A creature's contact
@@ -77,8 +96,8 @@ const HOMES = ZONES.find((z) => z.id === 'homes')!;
  * these and placeCreatures derives its keep-out bands from them, so a moved
  * tree moves its keep-out with it — the two can never drift apart.
  */
-export const HOMES_HOUSE_XS: readonly number[] = [180, 900, 1700].map((dx) => HOMES.x + dx);
-export const HOMES_TREE_XS: readonly number[] = [60, 620, 1240, 2050, 2420].map((dx) => HOMES.x + dx);
+export const HOMES_HOUSE_XS: readonly number[] = [200, 1100, 2150].map((dx) => HOMES.x + dx);
+export const HOMES_TREE_XS: readonly number[] = [80, 750, 1500, 2500, 3000].map((dx) => HOMES.x + dx);
 
 /** Baselines the props are drawn on; village.ts anchors its draw calls here. */
 export const HOUSE_BASE_Y = GROUND_Y - 30;
@@ -90,36 +109,22 @@ export const SIGN_W = 100;
 export const signLeft = (zone: Zone) => zone.x + zone.w / 2 - SIGN_W / 2;
 
 /**
- * Body-edge air between a villager and a prop, matching the 6px MIN_SEPARATION
- * leaves between two touching widest bodies.
+ * Body-edge air between a villager and a prop. Wider than the 6px between
+ * two touching villagers on purpose: a creature brushing a canopy still read
+ * as "in the tree" to the playtest eye, so the props get double the margin.
  */
-const PROP_AIR = 6;
+const PROP_AIR = 12;
 
 export interface KeepOut {
   left: number;
   right: number;
 }
 
-interface Prop {
-  /** Visual x-footprint in world pixels — for a house that includes the roof eaves. */
-  left: number;
-  right: number;
-  /** Vertical extent of the drawn pixels; heights mirror the draw functions in village.ts. */
-  top: number;
-  base: number;
-}
-
-const PROPS: readonly Prop[] = [
-  ...HOMES_HOUSE_XS.map((x) => ({
-    left: x - 8, right: x + 94, top: HOUSE_BASE_Y - 102, base: HOUSE_BASE_Y,
-  })),
-  ...HOMES_TREE_XS.map((x) => ({
-    left: x, right: x + 40, top: TREE_BASE_Y - 110, base: TREE_BASE_Y,
-  })),
-  {
-    left: signLeft(HOMES), right: signLeft(HOMES) + SIGN_W,
-    top: SIGN_BASE_Y - 62, base: SIGN_BASE_Y,
-  },
+/** Visual x-footprints in world pixels — a house's includes the roof eaves. */
+const PROPS: readonly KeepOut[] = [
+  ...HOMES_HOUSE_XS.map((x) => ({ left: x - 8, right: x + 94 })),
+  ...HOMES_TREE_XS.map((x) => ({ left: x, right: x + 40 })),
+  { left: signLeft(HOMES), right: signLeft(HOMES) + SIGN_W },
 ];
 
 /** Overlapping or touching bands folded together, so a band edge is always standable ground. */
@@ -135,29 +140,36 @@ function mergeBands(bands: readonly KeepOut[]): readonly KeepOut[] {
 }
 
 /**
- * Where a villager standing at `feetY` may not put its *centre*: each prop
- * whose pixels its feet would land among, widened by half the widest body
- * plus air. Depth decides membership, not the x-band alone: a front-row
- * villager (feet below every prop's base) stands *in front of* the scenery
- * and reads that way, and the back row's feet clear even the rooflines — so
- * only the rows whose feet fall inside a prop's vertical span are kept off
- * it. That is also what keeps the rows' capacity: the two middle rows carry
- * the bands, the front and back rows keep their full width.
+ * Where a villager may not put its *centre*, whatever its depth row: every
+ * prop footprint widened by half the widest body plus air. Depth once
+ * exempted the front and back rows (their pixels genuinely clear the props),
+ * but the eye disagreed — a villager in front of a house hides it, one just
+ * above a roofline reads as perched on it — so every row keeps clear, and
+ * the Homes strip is wide enough to afford that.
  */
-export function homesKeepOutAt(feetY: number): readonly KeepOut[] {
-  return mergeBands(
-    PROPS.filter((p) => feetY >= p.top && feetY <= p.base).map((p) => ({
-      left: p.left - WIDEST_BODY / 2 - PROP_AIR,
-      right: p.right + WIDEST_BODY / 2 + PROP_AIR,
-    })),
-  );
+export const HOMES_KEEP_OUT: readonly KeepOut[] = mergeBands(
+  PROPS.map((p) => ({
+    left: p.left - WIDEST_BODY / 2 - PROP_AIR,
+    right: p.right + WIDEST_BODY / 2 + PROP_AIR,
+  })),
+);
+
+/**
+ * Half the breathing room a villager claims for itself, in pixels — at least
+ * half a body width, plus a personal margin drawn from the id. Two villagers
+ * stand no closer than the sum of their radii, so a packed stretch reads as
+ * a crowd with uneven gaps rather than an evenly-drilled queue.
+ */
+export function personalSpace(id: string): number {
+  return WIDEST_BODY / 2 + 3 + ((hash(id) >>> 16) % 22);
 }
 
 /**
- * How far apart two villagers in the same depth row must stand. Two of the
- * widest bodies need WIDEST_BODY between their centres just to stop touching,
- * so this is that plus the air that keeps them reading as two creatures.
- * Derived from the catalogue: add a wider body and the village spreads to suit.
+ * The floor on how far apart two villagers in the same depth row stand: two
+ * of the widest bodies need WIDEST_BODY between their centres just to stop
+ * touching, plus the air that keeps them reading as two creatures. The
+ * actual required gap for a given pair is the sum of their personalSpace
+ * radii, which is never below this floor.
  */
 export const MIN_SEPARATION = WIDEST_BODY + 6;
 
@@ -176,12 +188,23 @@ export interface Spot {
   y: number;
 }
 
+/** A villager already seated in a row: its centre and the radius it claims. */
+interface Occupant {
+  x: number;
+  r: number;
+}
+
 function onScenery(x: number, blocked: readonly KeepOut[]): boolean {
   return blocked.some((band) => x > band.left && x < band.right);
 }
 
-function clears(x: number, taken: readonly number[], blocked: readonly KeepOut[]): boolean {
-  return !onScenery(x, blocked) && taken.every((other) => Math.abs(x - other) >= MIN_SEPARATION);
+function clears(
+  x: number,
+  r: number,
+  taken: readonly Occupant[],
+  blocked: readonly KeepOut[],
+): boolean {
+  return !onScenery(x, blocked) && taken.every((other) => Math.abs(x - other.x) >= other.r + r);
 }
 
 /**
@@ -202,8 +225,9 @@ function nearestGround(wanted: number, lo: number, hi: number, blocked: readonly
 }
 
 /**
- * The spot nearest `wanted` that lies inside [lo, hi] and keeps
- * MIN_SEPARATION from everyone already standing in this row.
+ * The spot nearest `wanted` that lies inside [lo, hi] and keeps every seated
+ * occupant's personal space (the sum of the pair's radii) from everyone
+ * already standing in this row.
  *
  * Only the creature being placed ever moves; the ones already there keep
  * their x. That is what makes a newcomer harmless — it steps aside rather
@@ -213,25 +237,25 @@ function nearestGround(wanted: number, lo: number, hi: number, blocked: readonly
  * occupied creature's exclusion zone, the edges of each scenery band, and the
  * row's own ends: any other clear position has one of those between it and
  * `wanted`, so it is never the nearest. If the row is so crowded that nothing
- * clears (over ~21 villagers in one row of Homes once the scenery bands are
- * subtracted), the creature takes the nearest clear ground and overlaps its
+ * clears, the creature takes the nearest clear ground and overlaps its
  * neighbours rather than going missing or standing on a prop.
  */
 function nearestClearSpot(
   wanted: number,
-  taken: readonly number[],
+  r: number,
+  taken: readonly Occupant[],
   lo: number,
   hi: number,
   blocked: readonly KeepOut[],
 ): number {
   const candidates = [wanted, lo, hi];
-  for (const other of taken) candidates.push(other - MIN_SEPARATION, other + MIN_SEPARATION);
+  for (const other of taken) candidates.push(other.x - other.r - r, other.x + other.r + r);
   for (const band of blocked) candidates.push(band.left, band.right);
 
   let best: number | null = null;
   for (const candidate of candidates) {
     if (candidate < lo || candidate > hi) continue;
-    if (!clears(candidate, taken, blocked)) continue;
+    if (!clears(candidate, r, taken, blocked)) continue;
     if (best === null) { best = candidate; continue; }
     const gap = Math.abs(candidate - wanted);
     const bestGap = Math.abs(best - wanted);
@@ -263,22 +287,22 @@ export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
   const lo = homes.x + MARGIN;
   const hi = homes.x + homes.w - MARGIN;
   const spots = new Map<string, Spot>();
-  /** x values already handed out, per row. */
-  const occupied = new Map<number, number[]>();
+  /** Who already stands where, per row. */
+  const occupied = new Map<number, Occupant[]>();
 
   const seating = [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  const bandsByRow = Array.from({ length: ROWS }, (_, row) => homesKeepOutAt(rowY(row)));
 
   for (const id of seating) {
     const h = hash(id);
-    const row = h % ROWS;
-    // Two independent draws from the hash: one for the row, one for the offset.
+    const row = rowFor(h);
+    // Independent draws from the hash: the row, the offset, the personal radius.
     const along = ((h >>> 8) % 10000) / 10000;
     const wanted = Math.round(lo + along * (hi - lo));
+    const r = personalSpace(id);
 
     const taken = occupied.get(row) ?? [];
-    const x = nearestClearSpot(wanted, taken, lo, hi, bandsByRow[row]!);
-    taken.push(x);
+    const x = nearestClearSpot(wanted, r, taken, lo, hi, HOMES_KEEP_OUT);
+    taken.push({ x, r });
     occupied.set(row, taken);
 
     spots.set(id, { x, y: rowY(row) });
