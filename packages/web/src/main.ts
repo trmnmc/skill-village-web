@@ -1,5 +1,5 @@
 import { startVillage } from './scene/village.js';
-import { connect } from './net/client.js';
+import { connect, setRobotResident } from './net/client.js';
 import { createChatPanel } from './chat/panel.js';
 import { displayName } from './render/label.js';
 import { sound } from './sound/player.js';
@@ -29,6 +29,10 @@ const scene = await startVillage({
     // Its audible name, spec §3: the signature phrase on meeting.
     scene.greetFor(creature.id);
   },
+  // Fire-and-forget: the next state frame moves the creature to the porch,
+  // which is the only confirmation that means anything.
+  onRobotDrop: (creatureId) => void setRobotResident(creatureId),
+  onRobotEvict: () => void setRobotResident(null),
 });
 
 sound.init();
