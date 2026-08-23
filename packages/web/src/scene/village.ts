@@ -16,6 +16,7 @@ import {
   type Spot,
 } from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
+import { ZOOM, screenToWorld, clampCamX } from './camera.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
 
 export interface VillageScene {
@@ -141,6 +142,11 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     pixelDensity: Math.min(window.devicePixelRatio || 1, 2),
   });
 
+  // Zoomed in past 1:1 so the frame holds village instead of sky and bare
+  // foreground. Every cursor→world conversion below goes through camera.ts —
+  // raw offsets land wide of their target by exactly this factor.
+  k.setCamScale(ZOOM);
+
   // Ground: a thin dark strip at the horizon over one light field — the
   // trailer's own construction. GROUND_TOP is derived in zones.ts from the
   // depth rows themselves, so the field always reaches back past the furthest
@@ -195,8 +201,10 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   });
   k.onMouseMove((_pos, delta) => {
     if (!panning) return;
-    const next = k.getCamPos().x - delta.x;
-    k.setCamPos(k.clamp(next, k.width() / 2, WORLD_W - k.width() / 2), k.getCamPos().y);
+    // Screen pixels shrink to world pixels under the zoom, or the world
+    // would slide faster than the hand dragging it.
+    const next = k.getCamPos().x - delta.x / ZOOM;
+    k.setCamPos(clampCamX(next, k.width()), k.getCamPos().y);
   });
   window.addEventListener('mouseup', stopPanning);
   window.addEventListener('pointercancel', stopPanning);
@@ -236,10 +244,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // world x=0, and frame the field as the lower two thirds rather than
   // centring the camera on the horizon line, which put half the opening
   // frame in the sky and read as the village floating.
-  k.setCamPos(
-    k.clamp(homes.x + homes.w / 2, k.width() / 2, WORLD_W - k.width() / 2),
-    GROUND_Y - 130,
-  );
+  k.setCamPos(clampCamX(homes.x + homes.w / 2, k.width()), GROUND_Y - 130);
 
   const actors = new Map<string, CreatureActor>();
   // Bumped every time setView decides to (re)spawn a given id. A spawn's own
@@ -272,8 +277,8 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   let hoveredId: string | null = null;
 
   k.onMouseMove((pos) => {
-    lookAt = pos.x + k.getCamPos().x - k.width() / 2;
-    cursorY = pos.y + k.getCamPos().y - k.height() / 2;
+    lookAt = screenToWorld(pos.x, k.getCamPos().x, k.width());
+    cursorY = screenToWorld(pos.y, k.getCamPos().y, k.height());
   });
 
   k.onUpdate(() => {
