@@ -152,6 +152,18 @@ Ported from the exploration painter into the KAPLAY scene:
 - `prefers-reduced-motion`: twinkle, drift, flicker, and particles freeze to
   their static-frame variants (the engine's `staticFrame` flag); nothing
   disappears.
+- **Ambient volumetric-feel clouds** (design delta, approved 2026-08-23,
+  supersedes the reference's day-only static clouds): fair-weather clouds
+  are sky furniture at *every* phase — white by day, warm at dawn, ember at
+  dusk, moonlit slate at night — so the Off-mode sky is never a void. Three
+  upgrades carry the depth: (1) clusters live on three parallax layers
+  (far/mid/near) that track the camera's pan by rising fractions
+  (0.1/0.18/0.3) and drift at rising speeds, so panning reads the sky as
+  deep; (2) each cluster shades in three tones — lit cap, body, darker
+  belly — so blobs read as mass, not flat stamps; (3) rect sizes billow on
+  slow incommensurate sines (the village-wander trick), bounded to a breath
+  (±11%) so clusters breathe without morphing. The overcast blobs share all
+  three mechanisms; fair clouds still crossfade out under `overcastRamp`.
 
 ## 6. Weather modes
 

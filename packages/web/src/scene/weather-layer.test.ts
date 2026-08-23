@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { frac, rainDrop, snowFlake, fx, fy, mapX, mapY, rainbowBlocks, overcastCloudSpecs, fairCloudSpecs } from './weather-layer.js';
+import { frac, rainDrop, snowFlake, fx, fy, mapX, mapY, rainbowBlocks, overcastCloudSpecs, fairCloudSpecs, CLOUD_LAYERS } from './weather-layer.js';
 import { mix } from '../theme/palettes.js';
 
 describe('frac', () => {
@@ -227,110 +227,183 @@ describe('rainbowBlocks', () => {
   });
 });
 
+describe('CLOUD_LAYERS', () => {
+  it('orders three depth layers far to near: parallax, drift, and alpha all rise together', () => {
+    expect(CLOUD_LAYERS).toHaveLength(3);
+    for (let i = 1; i < CLOUD_LAYERS.length; i++) {
+      expect(CLOUD_LAYERS[i]!.parallax).toBeGreaterThan(CLOUD_LAYERS[i - 1]!.parallax);
+      expect(CLOUD_LAYERS[i]!.speed).toBeGreaterThan(CLOUD_LAYERS[i - 1]!.speed);
+      expect(CLOUD_LAYERS[i]!.alpha).toBeGreaterThan(CLOUD_LAYERS[i - 1]!.alpha);
+    }
+  });
+});
+
 describe('overcastCloudSpecs', () => {
-  it('is deterministic: the same (kind, night, t, width, horizonY) always produces the same blobs', () => {
-    expect(overcastCloudSpecs('cloudy', false, 3.2, 800, 180)).toEqual(overcastCloudSpecs('cloudy', false, 3.2, 800, 180));
+  it('is deterministic: the same (kind, night, t, camRefX, width, horizonY) always produces the same blobs', () => {
+    expect(overcastCloudSpecs('cloudy', false, 3.2, 120, 800, 180)).toEqual(overcastCloudSpecs('cloudy', false, 3.2, 120, 800, 180));
   });
 
-  it('returns all 6 rects across the reference\'s 4 clusters (14/32, 150, 248/270, 384)', () => {
-    expect(overcastCloudSpecs('cloudy', false, 0, 480, 182)).toHaveLength(6);
+  it('returns 8 rects: the reference\'s 4 clusters, the two big ones grown a belly strip', () => {
+    expect(overcastCloudSpecs('cloudy', false, 0, 0, 480, 182)).toHaveLength(8);
   });
 
-  it('selects the reference tone per kind', () => {
-    const toneOf = (kind: 'cloudy' | 'rain' | 'snow' | 'fog') => overcastCloudSpecs(kind, false, 0, 480, 182)[0]!.color;
+  it('keeps the reference tone per kind as the body colour (far clusters are single body rects)', () => {
+    const toneOf = (kind: 'cloudy' | 'rain' | 'snow' | 'fog') => overcastCloudSpecs(kind, false, 0, 0, 480, 182)[0]!.color;
     expect(toneOf('cloudy')).toBe('#B4BABE');
     expect(toneOf('rain')).toBe('#9AA6AE');
     expect(toneOf('snow')).toBe('#C8D0D6');
     expect(toneOf('fog')).toBe('#CFCCC0');
   });
 
-  it('mixes the tone 50% toward #1A2028 at night, verbatim from the reference', () => {
-    const dayColor = overcastCloudSpecs('cloudy', false, 0, 480, 182)[0]!.color;
-    const nightColor = overcastCloudSpecs('cloudy', true, 0, 480, 182)[0]!.color;
-    expect(nightColor).toBe(mix(dayColor, '#1A2028', 0.5));
-    expect(nightColor).not.toBe(dayColor);
+  it('shades each near cluster in three tones: a lit cap, the body, a darker belly', () => {
+    const colours = new Set(overcastCloudSpecs('cloudy', false, 0, 0, 480, 182).map((b) => b.color));
+    expect(colours.size).toBe(3);
+    expect(colours.has(mix('#B4BABE', '#FFFFFF', 0.3))).toBe(true);
+    expect(colours.has(mix('#B4BABE', '#1A2028', 0.28))).toBe(true);
   });
 
-  it('uses a flat alpha of 0.85 per blob (ramp is applied by the caller, not this pure function)', () => {
-    for (const b of overcastCloudSpecs('rain', false, 5, 480, 182)) expect(b.alpha).toBe(0.85);
+  it('mixes every tone 50% toward #1A2028 at night, extending the reference\'s body rule to the caps and bellies', () => {
+    const day = overcastCloudSpecs('cloudy', false, 0, 0, 480, 182);
+    const night = overcastCloudSpecs('cloudy', true, 0, 0, 480, 182);
+    for (let i = 0; i < day.length; i++) {
+      expect(night[i]!.color).toBe(mix(day[i]!.color, '#1A2028', 0.5));
+    }
   });
 
-  it('drift wraps deterministically: 3 ref px/s over a 560 ref-px period repeats every 560/3 seconds', () => {
-    const a = overcastCloudSpecs('fog', false, 12.7, 480, 182);
-    const b = overcastCloudSpecs('fog', false, 12.7 + 560 / 3, 480, 182);
-    for (let i = 0; i < a.length; i++) expect(b[i]!.x).toBeCloseTo(a[i]!.x, 6);
+  it('dims the far layer: near-cluster rects keep the reference 0.85, far ones sit below it', () => {
+    const blobs = overcastCloudSpecs('rain', false, 5, 0, 480, 182);
+    const alphas = new Set(blobs.map((b) => b.alpha));
+    expect(Math.max(...alphas)).toBeCloseTo(0.85, 6);
+    expect(Math.min(...alphas)).toBeLessThan(0.85);
+    for (const b of blobs) expect(b.alpha).toBeGreaterThan(0);
   });
 
-  it('never produces a NaN or unbounded x once tSec*3 exceeds the wrap period many times over', () => {
-    for (const b of overcastCloudSpecs('cloudy', false, 100_000, 480, 182)) {
+  it('parallaxes by depth: a camera pan shifts near clusters further than far ones', () => {
+    // Shifts are measured modulo the 560 ref-px drift period — a pan can
+    // carry a cloud across the wrap boundary, which reads as re-entering
+    // from the other side, not as a huge shift.
+    const period = mapX(560, 480);
+    const shift = (a: number, b: number) => {
+      const d = Math.abs(a - b);
+      return Math.min(d, period - d);
+    };
+    const still = overcastCloudSpecs('cloudy', false, 0, 0, 480, 182);
+    const panned = overcastCloudSpecs('cloudy', false, 0, 400, 480, 182);
+    const farShift = shift(panned[0]!.x, still[0]!.x); // far cluster body
+    const nearShift = shift(panned[2]!.x, still[2]!.x); // near cluster body
+    expect(farShift).toBeCloseTo(mapX(400 * CLOUD_LAYERS[0]!.parallax, 480), 4);
+    expect(nearShift).toBeCloseTo(mapX(400 * CLOUD_LAYERS[2]!.parallax, 480), 4);
+    expect(nearShift).toBeGreaterThan(farShift);
+  });
+
+  it('drifts the near layer faster than the far layer', () => {
+    const a = overcastCloudSpecs('cloudy', false, 0, 0, 480, 182);
+    const b = overcastCloudSpecs('cloudy', false, 30, 0, 480, 182);
+    // Anchors drift leftward, wrapping over 560 ref px; 30s is far below any
+    // wrap for either layer speed, so raw deltas compare cleanly.
+    const farDelta = Math.abs(b[0]!.x - a[0]!.x);
+    const nearDelta = Math.abs(b[2]!.x - a[2]!.x);
+    expect(nearDelta).toBeGreaterThan(farDelta);
+  });
+
+  it('never produces a NaN or unbounded x once tSec outgrows the wrap period many times over', () => {
+    for (const b of overcastCloudSpecs('cloudy', false, 100_000, 3000, 480, 182)) {
       expect(Number.isFinite(b.x)).toBe(true);
     }
   });
 
+  it('billows: rect sizes breathe slowly around their authored dimensions', () => {
+    const at = (t: number) => overcastCloudSpecs('cloudy', false, t, 0, 480, 182)[2]!;
+    const widths = [0, 7, 14, 21, 28].map((t) => at(t).w);
+    expect(new Set(widths).size).toBeGreaterThan(1); // it moves
+    for (const w of widths) {
+      expect(w).toBeGreaterThan(96 * 0.85); // this near cluster's body is 96 ref px wide
+      expect(w).toBeLessThan(96 * 1.15); // ...and billow stays a breath, not a morph
+    }
+    // One frame at 60fps changes the width imperceptibly — billow never jitters.
+    expect(Math.abs(at(10 + 1 / 60).w - at(10).w)).toBeLessThan(0.1);
+  });
+
   it('scales intra-cluster offsets and sizes by fy(horizonY) on both axes (class-2 cluster)', () => {
-    const base = overcastCloudSpecs('cloudy', false, 0, 480, 182); // fy(182) = 1
-    const doubled = overcastCloudSpecs('cloudy', false, 0, 480, 364); // fy(364) = 2
-    // Cluster A: index 0 is the anchor rect (0 intra offset), index 1 is its
-    // companion rect (18 ref-px intra offset) — the gap between them should
-    // double exactly when fy doubles, while the anchor itself (mapX-driven,
-    // independent of horizonY) stays put.
-    expect(doubled[0]!.x).toBeCloseTo(base[0]!.x, 6);
-    const baseOffset = base[1]!.x - base[0]!.x;
-    const doubledOffset = doubled[1]!.x - doubled[0]!.x;
+    const base = overcastCloudSpecs('cloudy', false, 0, 0, 480, 182); // fy(182) = 1
+    const doubled = overcastCloudSpecs('cloudy', false, 0, 0, 480, 364); // fy(364) = 2
+    // Index 2 is the first near cluster's body, index 3 its lit cap. Every
+    // intra-cluster distance — authored dx plus the billow sway — doubles
+    // exactly when fy doubles, as do the rect sizes.
+    const baseOffset = base[3]!.x - base[2]!.x;
+    const doubledOffset = doubled[3]!.x - doubled[2]!.x;
     expect(doubledOffset).toBeCloseTo(baseOffset * 2, 6);
-    expect(doubled[0]!.w).toBeCloseTo(base[0]!.w * 2, 6);
-    expect(doubled[0]!.h).toBeCloseTo(base[0]!.h * 2, 6);
+    expect(doubled[2]!.w).toBeCloseTo(base[2]!.w * 2, 6);
+    expect(doubled[2]!.h).toBeCloseTo(base[2]!.h * 2, 6);
   });
 });
 
 describe('fairCloudSpecs', () => {
-  it('is deterministic: the same (dawn, t, width, horizonY, overcastRamp) always produces the same blobs', () => {
-    expect(fairCloudSpecs(false, 3.2, 800, 180, 0)).toEqual(fairCloudSpecs(false, 3.2, 800, 180, 0));
+  it('is deterministic: the same (phase, t, camRefX, width, horizonY, overcastRamp) always produces the same blobs', () => {
+    expect(fairCloudSpecs('day', 3.2, 120, 800, 180, 0)).toEqual(fairCloudSpecs('day', 3.2, 120, 800, 180, 0));
   });
 
-  it('draws only the always-cluster (2 rects) at dawn', () => {
-    expect(fairCloudSpecs(true, 0, 480, 182, 0)).toHaveLength(2);
+  it('fills the sky in full day: every layer, day-only clusters included', () => {
+    expect(fairCloudSpecs('day', 0, 0, 480, 182, 0)).toHaveLength(12);
   });
 
-  it('draws both clusters (4 rects) in full day — the "day only" second cluster', () => {
-    expect(fairCloudSpecs(false, 0, 480, 182, 0)).toHaveLength(4);
+  it('withholds the day-only cluster outside full day', () => {
+    const dayCount = fairCloudSpecs('day', 0, 0, 480, 182, 0).length;
+    for (const phase of ['dawn', 'dusk', 'night'] as const) {
+      const count = fairCloudSpecs(phase, 0, 0, 480, 182, 0).length;
+      expect(count).toBeGreaterThan(0); // ambient: the sky is never cloudless
+      expect(count).toBeLessThan(dayCount);
+    }
   });
 
-  it('is warm cream at dawn, plain white in full day', () => {
-    expect(fairCloudSpecs(true, 0, 480, 182, 0)[0]!.color).toBe('#FFF3E0');
-    expect(fairCloudSpecs(false, 0, 480, 182, 0)[0]!.color).toBe('#FFFFFF');
+  it('tones follow the phase: white by day, warm at dawn, ember at dusk, moonlit slate at night', () => {
+    const bodyOf = (phase: 'dawn' | 'day' | 'dusk' | 'night') =>
+      new Set(fairCloudSpecs(phase, 0, 0, 480, 182, 0).map((b) => b.color));
+    expect(bodyOf('day').has('#FFFFFF')).toBe(true);
+    expect(bodyOf('dawn').has('#FFF3E0')).toBe(true);
+    expect(bodyOf('dusk').has('#E2C9B4')).toBe(true);
+    expect(bodyOf('night').has('#37414D')).toBe(true);
   });
 
-  it('alpha is 0.75 at overcastRamp 0 (base sky furniture, not weather-ramp-scaled)', () => {
-    for (const b of fairCloudSpecs(false, 9, 480, 182, 0)) expect(b.alpha).toBe(0.75);
+  it('shades each cluster in more than one tone — lit cap over body reads as mass, not a flat stamp', () => {
+    expect(new Set(fairCloudSpecs('day', 0, 0, 480, 182, 0).map((b) => b.color)).size).toBeGreaterThanOrEqual(3);
   });
 
-  it('crossfades linearly as overcastRamp rises from 0 to 1: 0.375 at 0.5, 0 at 1', () => {
-    for (const b of fairCloudSpecs(false, 9, 480, 182, 0.5)) expect(b.alpha).toBeCloseTo(0.375, 10);
-    for (const b of fairCloudSpecs(false, 9, 480, 182, 1)) expect(b.alpha).toBe(0);
+  it('is quieter at night than by day: lower peak alpha, never zero', () => {
+    const peak = (phase: 'day' | 'night') =>
+      Math.max(...fairCloudSpecs(phase, 9, 0, 480, 182, 0).map((b) => b.alpha));
+    expect(peak('night')).toBeGreaterThan(0);
+    expect(peak('night')).toBeLessThan(peak('day'));
   });
 
-  it('non-overcast weather kinds (wind, leaves, heat, rainbow, clear) pass overcastRamp 0 regardless of their own ramp, so fair clouds stay at full alpha', () => {
-    // The caller derives overcastRamp as `OVERCAST.has(kind) ? ramp : 0` — for
-    // a non-overcast kind that's always 0 no matter how high that kind's own
-    // ramp climbs, so this just re-confirms the 0-ramp case at a high tSec.
-    for (const b of fairCloudSpecs(false, 9, 480, 182, 0)) expect(b.alpha).toBe(0.75);
+  it('crossfades out linearly as overcastRamp rises: half alpha at 0.5, gone at 1', () => {
+    const at = (ramp: number) => fairCloudSpecs('day', 9, 0, 480, 182, ramp);
+    const full = at(0);
+    const half = at(0.5);
+    for (let i = 0; i < full.length; i++) expect(half[i]!.alpha).toBeCloseTo(full[i]!.alpha / 2, 10);
+    for (const b of at(1)) expect(b.alpha).toBe(0);
   });
 
-  it('drift wraps deterministically: 1.5 ref px/s over a 560 ref-px period repeats every 560/1.5 seconds', () => {
-    const a = fairCloudSpecs(false, 4.4, 480, 182, 0);
-    const b = fairCloudSpecs(false, 4.4 + 560 / 1.5, 480, 182, 0);
-    for (let i = 0; i < a.length; i++) expect(b[i]!.x).toBeCloseTo(a[i]!.x, 6);
+  it('parallaxes by depth: a camera pan shifts near clusters further than far ones', () => {
+    const still = fairCloudSpecs('day', 0, 0, 480, 182, 0);
+    const panned = fairCloudSpecs('day', 0, 400, 480, 182, 0);
+    const shifts = still.map((b, i) => Math.abs(panned[i]!.x - b.x));
+    // Far clusters lead the sorted output, near ones close it.
+    expect(shifts.at(-1)!).toBeGreaterThan(shifts[0]!);
   });
 
-  it('scales intra-cluster offsets and sizes by fy(horizonY) on both axes (class-2 cluster)', () => {
-    const base = fairCloudSpecs(false, 0, 480, 182, 0); // fy(182) = 1
-    const doubled = fairCloudSpecs(false, 0, 480, 364, 0); // fy(364) = 2
-    expect(doubled[0]!.x).toBeCloseTo(base[0]!.x, 6);
-    const baseOffset = base[1]!.x - base[0]!.x;
-    const doubledOffset = doubled[1]!.x - doubled[0]!.x;
-    expect(doubledOffset).toBeCloseTo(baseOffset * 2, 6);
-    expect(doubled[0]!.w).toBeCloseTo(base[0]!.w * 2, 6);
-    expect(doubled[0]!.h).toBeCloseTo(base[0]!.h * 2, 6);
+  it('never produces a NaN or unbounded x at large tSec and camRefX', () => {
+    for (const b of fairCloudSpecs('day', 100_000, 5000, 480, 182, 0)) {
+      expect(Number.isFinite(b.x)).toBe(true);
+    }
+  });
+
+  it('billows: sizes breathe slowly and stay near their authored dimensions', () => {
+    const widths = [0, 9, 18, 27].map((t) => fairCloudSpecs('day', t, 0, 480, 182, 0).at(-3)!.w);
+    expect(new Set(widths).size).toBeGreaterThan(1);
+    for (const w of widths) {
+      expect(w).toBeGreaterThan(40 * 0.85); // the near cluster's 40 ref-px body
+      expect(w).toBeLessThan(40 * 1.15);
+    }
   });
 });

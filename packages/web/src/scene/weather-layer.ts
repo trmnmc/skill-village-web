@@ -211,18 +211,42 @@ const RAINBOW_BAND_COLOURS = [HUES[0], HUES[4], HUES[2], HUES[6], HUES[1]];
 // night, tSec, width, horizonY) signatures.
 // ---------------------------------------------------------------------------
 
+/** Which of a cluster's rects this is — the caller maps tones to colours. */
+type CloudTone = 'lit' | 'body' | 'belly';
+
 interface CloudRectDef {
   dx: number;
   y: number;
   w: number;
   h: number;
+  tone: CloudTone;
 }
 
 interface CloudClusterDef {
   /** Reference-space x of the cluster's first rect — the class-2 anchor before drift. */
   baseX: number;
+  /** Index into CLOUD_LAYERS: 0 far, 1 mid, 2 near. */
+  layer: number;
+  /** Withheld outside full day, following the reference's dawn rule. */
+  dayOnly?: boolean;
   rects: CloudRectDef[];
 }
+
+/** One cloud depth layer. Everything rises together toward the camera: near clouds follow the pan harder, drift faster, and draw brighter. */
+export interface CloudLayer {
+  /** Fraction of the camera's x this layer tracks — the parallax that makes the sky read deep. */
+  parallax: number;
+  /** Multiplier on the cloud set's base drift speed. */
+  speed: number;
+  /** Multiplier on the cloud set's base alpha. */
+  alpha: number;
+}
+
+export const CLOUD_LAYERS: readonly CloudLayer[] = [
+  { parallax: 0.1, speed: 0.6, alpha: 0.55 },
+  { parallax: 0.18, speed: 1, alpha: 0.8 },
+  { parallax: 0.3, speed: 1.6, alpha: 1 },
+];
 
 export interface CloudBlobSpec {
   x: number;
@@ -234,41 +258,88 @@ export interface CloudBlobSpec {
 }
 
 /**
- * Materializes a set of class-2 clusters at one instant: each cluster's
- * anchor drifts leftward in reference space at `speed` ref px/s, wrapping
- * over a 560 ref-px period into `[-40, 520)` — the same `(x % 560) - 40`
- * shape `drawWind`'s flecks use below, but wrapped with `wrap` instead of
- * raw `%`: `drawWind` always *adds* a `tSec` term (drift rightward), while
- * this drift *subtracts* an unbounded one (leftward), which would send a
- * plain `%` negative once `tSec * speed` outgrows the anchor. Plan-over-
- * reference deviation: the reference paints these clusters static; a
- * scrolling camera would pin them to one screen spot forever.
+ * Slow billow: a rect's size breathes around its authored dimensions on two
+ * incommensurate sines (the same trick the village's wander uses), seeded
+ * per rect so no two breathe together. Bounded to ±11% and slow enough that
+ * one frame's change is invisible — a breath, never a morph or a jitter.
+ */
+function billow(tSec: number, seed: number): number {
+  return 1 + 0.07 * Math.sin(tSec * 0.09 + seed * 7) + 0.04 * Math.sin(tSec * 0.157 + seed * 3);
+}
+
+/**
+ * Materializes clusters at one instant. Each cluster's anchor drifts
+ * leftward in reference space at `baseSpeed` scaled by its layer's `speed`,
+ * wrapping over a 560 ref-px period into `[-40, 520)` (wrapped with `wrap`,
+ * not raw `%` — drift and parallax both *subtract* unbounded terms). Two
+ * plan-over-reference deviations, both deliberate: the reference paints
+ * these static (a scrolling camera would pin them to one screen spot), and
+ * it knows nothing of depth — the parallax term (`camRefX` scaled by the
+ * layer's fraction) plus the per-layer drift speeds are what make the sky
+ * read as volume instead of a backdrop. Output is ordered far layer first,
+ * so painting in order stacks near clouds over far ones.
  */
 function driftedClusterRects(
   clusters: readonly CloudClusterDef[],
-  speed: number,
+  baseSpeed: number,
   tSec: number,
+  camRefX: number,
   width: number,
   horizonY: number,
-): { x: number; y: number; w: number; h: number }[] {
+): { x: number; y: number; w: number; h: number; tone: CloudTone; layer: CloudLayer }[] {
   const s = fy(horizonY);
-  const out: { x: number; y: number; w: number; h: number }[] = [];
-  for (const cluster of clusters) {
-    const driftedRefX = wrap(cluster.baseX + 560 - tSec * speed, 560) - 40;
+  const out: { x: number; y: number; w: number; h: number; tone: CloudTone; layer: CloudLayer }[] = [];
+  const ordered = [...clusters].sort((a, b) => a.layer - b.layer);
+  for (const cluster of ordered) {
+    const layer = CLOUD_LAYERS[cluster.layer]!;
+    const driftedRefX = wrap(
+      cluster.baseX + 560 - tSec * baseSpeed * layer.speed - camRefX * layer.parallax,
+      560,
+    ) - 40;
     const anchorX = mapX(driftedRefX, width);
-    for (const r of cluster.rects) {
-      out.push({ x: anchorX + r.dx * s, y: r.y * s, w: r.w * s, h: r.h * s });
-    }
+    cluster.rects.forEach((r, ri) => {
+      const seed = frac(cluster.baseX * 0.317 + ri * 0.611);
+      const bw = billow(tSec, seed);
+      const bh = 1 + 0.05 * Math.sin(tSec * 0.11 + seed * 5);
+      const sway = 3 * Math.sin(tSec * 0.073 + seed * 11);
+      out.push({
+        x: anchorX + (r.dx + sway) * s,
+        y: r.y * s,
+        w: r.w * bw * s,
+        h: r.h * bh * s,
+        tone: r.tone,
+        layer,
+      });
+    });
   }
   return out;
 }
 
-/** The reference's four overcast clusters (village-scene.js lines 300–303), verbatim. */
+/**
+ * The reference's four overcast clusters (village-scene.js lines 300–303) —
+ * geometry verbatim, each grown a tone role and a depth layer: the two big
+ * low-y clusters read as the near deck (lit caps, new belly strips), the two
+ * small high-y ones hang back as the far layer.
+ */
 const OVERCAST_CLOUD_CLUSTERS: readonly CloudClusterDef[] = [
-  { baseX: 14, rects: [{ dx: 0, y: 18, w: 96, h: 14 }, { dx: 18, y: 10, w: 52, h: 10 }] },
-  { baseX: 150, rects: [{ dx: 0, y: 40, w: 74, h: 12 }] },
-  { baseX: 248, rects: [{ dx: 0, y: 14, w: 112, h: 16 }, { dx: 22, y: 6, w: 62, h: 10 }] },
-  { baseX: 384, rects: [{ dx: 0, y: 42, w: 82, h: 12 }] },
+  {
+    baseX: 14, layer: 2,
+    rects: [
+      { dx: 0, y: 18, w: 96, h: 14, tone: 'body' },
+      { dx: 18, y: 10, w: 52, h: 10, tone: 'lit' },
+      { dx: 8, y: 32, w: 78, h: 4, tone: 'belly' },
+    ],
+  },
+  { baseX: 150, layer: 0, rects: [{ dx: 0, y: 40, w: 74, h: 12, tone: 'body' }] },
+  {
+    baseX: 248, layer: 2,
+    rects: [
+      { dx: 0, y: 14, w: 112, h: 16, tone: 'body' },
+      { dx: 22, y: 6, w: 62, h: 10, tone: 'lit' },
+      { dx: 10, y: 30, w: 92, h: 4, tone: 'belly' },
+    ],
+  },
+  { baseX: 384, layer: 0, rects: [{ dx: 0, y: 42, w: 82, h: 12, tone: 'body' }] },
 ];
 
 /** Base (day) tone per overcast kind, verbatim from the reference's `cTone` ternary (`storm` excluded — it keeps its own deck clouds, no blobs). */
@@ -276,35 +347,98 @@ const OVERCAST_TONE: Record<'cloudy' | 'rain' | 'snow' | 'fog', string> = {
   cloudy: '#B4BABE', rain: '#9AA6AE', snow: '#C8D0D6', fog: '#CFCCC0',
 };
 
+/** A kind's body tone shaded into the three-tone set that reads as mass. */
+function cloudTones(body: string): Record<CloudTone, string> {
+  return { lit: mix(body, '#FFFFFF', 0.3), body, belly: mix(body, '#1A2028', 0.28) };
+}
+
 /**
  * Overcast cloud blobs for the four non-storm overcast kinds — the
  * reference's `else if (overcast)` branch, under which `cloudy` previously
- * drew nothing. Alpha is the reference's flat 0.85; callers multiply by
- * `weather.ramp` themselves, since this function has no `ResolvedTheme` to
- * read it from.
+ * drew nothing. The reference's flat 0.85 alpha is now the *near layer's*
+ * alpha; far clusters dim by their layer. Callers multiply by `weather.ramp`
+ * themselves, since this function has no `ResolvedTheme` to read it from.
  */
 export function overcastCloudSpecs(
   kind: 'cloudy' | 'rain' | 'snow' | 'fog',
   night: boolean,
   tSec: number,
+  camRefX: number,
   width: number,
   horizonY: number,
 ): CloudBlobSpec[] {
-  const tone = OVERCAST_TONE[kind];
-  const color = night ? mix(tone, '#1A2028', 0.5) : tone;
-  return driftedClusterRects(OVERCAST_CLOUD_CLUSTERS, 3, tSec, width, horizonY).map((r) => ({ ...r, color, alpha: 0.85 }));
+  const tones = cloudTones(OVERCAST_TONE[kind]);
+  return driftedClusterRects(OVERCAST_CLOUD_CLUSTERS, 3, tSec, camRefX, width, horizonY).map((r) => ({
+    x: r.x, y: r.y, w: r.w, h: r.h,
+    color: night ? mix(tones[r.tone], '#1A2028', 0.5) : tones[r.tone],
+    alpha: 0.85 * r.layer.alpha,
+  }));
 }
 
-/** The reference's always-on fair-weather cluster (village-scene.js line 307): present at both dawn and full day. */
-const FAIR_CLOUD_ALWAYS: CloudClusterDef = { baseX: 70, rects: [{ dx: 0, y: 42, w: 40, h: 10 }, { dx: 10, y: 34, w: 24, h: 8 }] };
+/**
+ * The fair-weather sky: the reference's two clusters (village-scene.js lines
+ * 307–308, geometry recognizable in the near and mid entries) grown into a
+ * three-layer ambient set — small far puffs low near the horizon, mid
+ * clusters, the big near cluster riding high. `dayOnly` keeps the
+ * reference's dawn rule: the second cluster sits out everything but full day.
+ */
+const FAIR_CLOUD_CLUSTERS: readonly CloudClusterDef[] = [
+  {
+    baseX: 70, layer: 2,
+    rects: [
+      { dx: 0, y: 42, w: 40, h: 10, tone: 'body' },
+      { dx: 10, y: 34, w: 24, h: 8, tone: 'lit' },
+      { dx: 6, y: 52, w: 30, h: 3, tone: 'belly' },
+    ],
+  },
+  {
+    baseX: 270, layer: 1, dayOnly: true,
+    rects: [
+      { dx: 0, y: 66, w: 34, h: 9, tone: 'body' },
+      { dx: 8, y: 59, w: 20, h: 7, tone: 'lit' },
+      { dx: 5, y: 75, w: 24, h: 3, tone: 'belly' },
+    ],
+  },
+  {
+    baseX: 470, layer: 1,
+    rects: [
+      { dx: 0, y: 78, w: 30, h: 8, tone: 'body' },
+      { dx: 7, y: 72, w: 18, h: 6, tone: 'lit' },
+      { dx: 4, y: 86, w: 22, h: 2, tone: 'belly' },
+    ],
+  },
+  {
+    baseX: 180, layer: 0,
+    rects: [
+      { dx: 0, y: 118, w: 30, h: 7, tone: 'body' },
+      { dx: 8, y: 113, w: 16, h: 5, tone: 'lit' },
+    ],
+  },
+  { baseX: 420, layer: 0, rects: [{ dx: 0, y: 138, w: 26, h: 6, tone: 'body' }] },
+];
 
-/** The reference's "day only" second cluster (village-scene.js line 308) — withheld at dawn. */
-const FAIR_CLOUD_DAY_ONLY: CloudClusterDef = { baseX: 270, rects: [{ dx: 0, y: 66, w: 34, h: 9 }, { dx: 8, y: 59, w: 20, h: 7 }] };
+/** The sky phase fair clouds are drawn under — derived from the theme flags by the caller. */
+export type SkyPhase = 'dawn' | 'day' | 'dusk' | 'night';
 
 /**
- * Fair-weather clouds — the reference's `else if (time==='day'||dawn)`
- * branch. Sky furniture, not weather: base alpha is 0.75, independent of the
- * weather switch's own `ramp` gate (present on every clear day).
+ * Fair-cloud tone sets per phase. Day and dawn bodies keep the reference's
+ * exact colours; dusk and night are new — ambient clouds no longer vanish
+ * outside daylight, they dim into embers and moonlit slate (design delta to
+ * spec §5: sky furniture is always on).
+ */
+const FAIR_TONES: Record<SkyPhase, Record<CloudTone, string>> = {
+  day: { lit: '#FFFFFF', body: '#F5F8FA', belly: '#D9E3EB' },
+  dawn: { lit: '#FFFAF0', body: '#FFF3E0', belly: '#EAD9C4' },
+  dusk: { lit: '#F3DFCE', body: '#E2C9B4', belly: '#C7AD97' },
+  night: { lit: '#4A5666', body: '#37414D', belly: '#252D37' },
+};
+
+/** Base alpha per phase — night clouds are company for the moon, not a ceiling. */
+const FAIR_ALPHA: Record<SkyPhase, number> = { day: 0.75, dawn: 0.75, dusk: 0.6, night: 0.45 };
+
+/**
+ * Fair-weather clouds — sky furniture, not weather: always present, at every
+ * phase of the sky, independent of the weather switch's own `ramp` gate.
  *
  * `overcastRamp` (the current weather's `ramp` when its kind is in
  * `OVERCAST`, else 0 — see the caller in `mountWeather`) crossfades these out
@@ -315,16 +449,21 @@ const FAIR_CLOUD_DAY_ONLY: CloudClusterDef = { baseX: 270, rects: [{ dx: 0, y: 6
  * resolves to alpha 0 (fully replaced by overcast blobs).
  */
 export function fairCloudSpecs(
-  dawn: boolean,
+  phase: SkyPhase,
   tSec: number,
+  camRefX: number,
   width: number,
   horizonY: number,
   overcastRamp: number,
 ): CloudBlobSpec[] {
-  const color = dawn ? '#FFF3E0' : '#FFFFFF';
-  const alpha = 0.75 * (1 - clamp01(overcastRamp));
-  const clusters = dawn ? [FAIR_CLOUD_ALWAYS] : [FAIR_CLOUD_ALWAYS, FAIR_CLOUD_DAY_ONLY];
-  return driftedClusterRects(clusters, 1.5, tSec, width, horizonY).map((r) => ({ ...r, color, alpha }));
+  const tones = FAIR_TONES[phase];
+  const alpha = FAIR_ALPHA[phase] * (1 - clamp01(overcastRamp));
+  const clusters = phase === 'day' ? FAIR_CLOUD_CLUSTERS : FAIR_CLOUD_CLUSTERS.filter((c) => !c.dayOnly);
+  return driftedClusterRects(clusters, 1.5, tSec, camRefX, width, horizonY).map((r) => ({
+    x: r.x, y: r.y, w: r.w, h: r.h,
+    color: tones[r.tone],
+    alpha: alpha * r.layer.alpha,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -482,25 +621,27 @@ function drawOvercastCloudBlobs(
   night: boolean,
   ramp: number,
   tSec: number,
+  camRefX: number,
   width: number,
   horizonY: number,
 ): void {
-  for (const b of overcastCloudSpecs(kind, night, tSec, width, horizonY)) {
+  for (const b of overcastCloudSpecs(kind, night, tSec, camRefX, width, horizonY)) {
     rect(k, b.x, b.y, b.w, b.h, b.color, b.alpha * ramp);
   }
 }
 
-/** Fair-weather clouds — sky furniture, crossfading out via `overcastRamp` (see `fairCloudSpecs`). */
+/** Fair-weather clouds — ambient sky furniture at every phase, crossfading out via `overcastRamp` (see `fairCloudSpecs`). */
 function drawFairClouds(
   k: KAPLAYCtx,
-  dawn: boolean,
+  phase: SkyPhase,
   tSec: number,
+  camRefX: number,
   width: number,
   horizonY: number,
   overcastRamp: number,
 ): void {
   if (overcastRamp >= 1) return; // fully replaced by overcast blobs — alpha would be 0 anyway
-  for (const b of fairCloudSpecs(dawn, tSec, width, horizonY, overcastRamp)) {
+  for (const b of fairCloudSpecs(phase, tSec, camRefX, width, horizonY, overcastRamp)) {
     rect(k, b.x, b.y, b.w, b.h, b.color, b.alpha);
   }
 }
@@ -647,25 +788,38 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
     const width = k.width();
     const height = k.height();
     const horizonY = horizonScreenY(k);
+    // The camera's x expressed in reference px — the parallax input. Screen-
+    // fixed objects never move with the camera on their own, so this is the
+    // one place the world's pan reaches the sky, scaled per depth layer
+    // inside the cloud materializer.
+    const camRefX = k.getCamPos().x / fx(width);
 
-    // Fair-weather clouds are sky furniture, not weather — they draw
-    // whenever the sky itself isn't night/dusk, which is a wider gate than
-    // the ramp-driven weather switch below (and must run even when
-    // `kind === 'clear'`, which that switch bails out of entirely). They
-    // crossfade out via `overcastRamp` rather than gating on
+    // Fair-weather clouds are ambient sky furniture, not weather — they draw
+    // at every phase of the sky (design delta to spec §5: dusk gets embers,
+    // night gets moonlit slate, instead of a cloudless void), which is a
+    // wider gate than the ramp-driven weather switch below (and must run
+    // even when `kind === 'clear'`, which that switch bails out of
+    // entirely). They crossfade out via `overcastRamp` rather than gating on
     // `flags.overcast` (`ramp > 0.5`): in journey mode `ramp` is continuous,
     // so a binary gate let overcast blobs (drawn below, from `ramp > 0.02`)
     // render simultaneously with fair clouds below 0.5 and then pop the fair
     // clouds out in a single frame at the 0.5 crossing.
-    if (!cur.flags.isNight && !cur.flags.isDusk) {
+    {
+      const phase: SkyPhase = cur.flags.isNight
+        ? 'night'
+        : cur.flags.isDusk
+          ? 'dusk'
+          : cur.flags.isDawn
+            ? 'dawn'
+            : 'day';
       const overcastRamp = OVERCAST.has(cur.weather.kind) ? cur.weather.ramp : 0;
-      drawFairClouds(k, cur.flags.isDawn, t, width, horizonY, overcastRamp);
+      drawFairClouds(k, phase, t, camRefX, width, horizonY, overcastRamp);
     }
 
     if (cur.weather.kind === 'clear' || cur.weather.ramp <= 0.02) return;
     switch (cur.weather.kind) {
       case 'rain':
-        drawOvercastCloudBlobs(k, 'rain', cur.flags.isNight, cur.weather.ramp, t, width, horizonY);
+        drawOvercastCloudBlobs(k, 'rain', cur.flags.isNight, cur.weather.ramp, t, camRefX, width, horizonY);
         drawRainAndSplashes(k, cur, t, reduced, width, height, horizonY);
         break;
       case 'storm':
@@ -673,15 +827,15 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
         drawStormClouds(k, cur, t, reduced, width, height, horizonY);
         break;
       case 'snow':
-        drawOvercastCloudBlobs(k, 'snow', cur.flags.isNight, cur.weather.ramp, t, width, horizonY);
+        drawOvercastCloudBlobs(k, 'snow', cur.flags.isNight, cur.weather.ramp, t, camRefX, width, horizonY);
         drawSnow(k, cur, t, width, height, horizonY);
         break;
       case 'fog':
-        drawOvercastCloudBlobs(k, 'fog', cur.flags.isNight, cur.weather.ramp, t, width, horizonY);
+        drawOvercastCloudBlobs(k, 'fog', cur.flags.isNight, cur.weather.ramp, t, camRefX, width, horizonY);
         drawFogBehind(k, cur, t, width, height, horizonY);
         break;
       case 'cloudy':
-        drawOvercastCloudBlobs(k, 'cloudy', cur.flags.isNight, cur.weather.ramp, t, width, horizonY);
+        drawOvercastCloudBlobs(k, 'cloudy', cur.flags.isNight, cur.weather.ramp, t, camRefX, width, horizonY);
         break;
       case 'wind':
         drawWind(k, cur, t, width, height, horizonY);
