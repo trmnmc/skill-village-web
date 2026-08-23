@@ -59,15 +59,31 @@ const bar = (remainingTok: number, cap: number) => {
  * boot starts correct); the `themed:<token>` tag lets `startVillage`'s
  * retint walker find and recolour every one of these on a later theme
  * change without this function knowing anything about that walker.
+ *
+ * `token` always seeds the initial colour, but `tagToken: false` skips
+ * adding the `themed:<token>` tag itself — for a block whose colour is
+ * owned by someone else (e.g. a house window, owned by sky.ts's
+ * `windowsGlow` swap) and must not also be caught by this walker's generic
+ * per-token pass, which would fight over the same paint every publish.
  */
-function block(k: KAPLAYCtx, x: number, y: number, w: number, h: number, token: keyof Tokens, z = 0, extraTags: string[] = []) {
+function block(
+  k: KAPLAYCtx,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  token: keyof Tokens,
+  z = 0,
+  extraTags: string[] = [],
+  tagToken = true,
+) {
   const { tokens, tint } = themeStore.current();
   return k.add([
     k.rect(w, h),
     k.pos(x, y),
     k.color(hex(k, sceneryColor(tokens, tint, token))),
     k.z(z),
-    tokenTag(token),
+    ...(tagToken ? [tokenTag(token)] : []),
     ...extraTags,
   ]);
 }
@@ -75,11 +91,12 @@ function block(k: KAPLAYCtx, x: number, y: number, w: number, h: number, token: 
 function house(k: KAPLAYCtx, x: number, y: number, wall: keyof Tokens, roof: keyof Tokens) {
   block(k, x, y - 66, 86, 66, wall, 1);
   block(k, x + 30, y - 34, 22, 34, 'wood', 2);
-  // Also tagged 'themed:window' — sky.ts's night-ambience layer swaps this
-  // block's fill to the lamp-glow colour when `windowsGlow` is on, on top of
-  // (or instead of, depending on update order) the ordinary sky1 retint
-  // every other 'themed:sky1' object gets from the walker below.
-  block(k, x + 10, y - 56, 16, 14, 'sky1', 2, ['themed:window']);
+  // Tagged ONLY 'themed:window', not 'themed:sky1' — sky.ts's night-ambience
+  // layer is this block's sole colour owner (lamp-glow when `windowsGlow` is
+  // on, else the ordinary sky1 scenery colour); the generic per-token pass
+  // below must never also touch it, or the two would fight over the same
+  // paint every publish.
+  block(k, x + 10, y - 56, 16, 14, 'sky1', 2, ['themed:window'], false);
   // Roof: three stacked bars, widest at the eaves — a pixel gable.
   block(k, x - 8, y - 80, 102, 14, roof, 2);
   block(k, x + 6, y - 92, 74, 12, roof, 2);
@@ -396,10 +413,10 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     for (const obj of k.get('themed:creature', { recursive: true })) {
       (obj as unknown as { color: unknown }).color = cTint;
     }
-    // Last, so its explicit window-glow colour (and everything else it
-    // positions/toggles from `t`) is the one that sticks rather than the
-    // plain sky1 retint the loop above just gave every 'themed:sky1' object,
-    // windows included.
+    // Positions/toggles the sun, moon, stars, fireflies, lantern, and (since
+    // house windows carry only 'themed:window', never 'themed:sky1' — see
+    // `house()` above) sets the one colour a window wears, with no other
+    // pass in this walker touching it.
     sky.update(t);
   };
   applyTheme(themeStore.current());

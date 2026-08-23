@@ -103,10 +103,24 @@ function screenX(k: KAPLAYCtx, x01: number): number {
   return 40 + x01 * (k.width() - 80);
 }
 
+/**
+ * The horizon's *current* screen y — where `GROUND_TOP` (a world-space
+ * constant) actually lands on screen right now. `k.fixed()` objects live in
+ * raw screen pixels, but the camera is panned to `GROUND_Y - 130` in world
+ * space (see village.ts) and never recentres vertically, so `GROUND_TOP`
+ * alone is not a screen coordinate — it has to go through the camera
+ * transform every time, not just once at mount, so a window resize (which
+ * moves `k.height()/2`, and so the transform) self-corrects on the very next
+ * `update()` rather than needing a reload.
+ */
+function horizonScreenY(k: KAPLAYCtx): number {
+  return k.toScreen(k.vec2(0, GROUND_TOP)).y;
+}
+
 /** Screen-space y for a 0..1 arc fraction (1 = zenith/high, 0 = the horizon). */
-function arcY(y01: number): number {
-  const hi = GROUND_TOP * 0.15;
-  const lo = GROUND_TOP * 0.75;
+function arcY(horizonY: number, y01: number): number {
+  const hi = horizonY * 0.15;
+  const lo = horizonY * 0.75;
   return lo - y01 * (lo - hi);
 }
 
@@ -194,11 +208,10 @@ export function mountSky(k: KAPLAYCtx): SkyLayer {
   // instead of settling into a fixed twinkle band.
   const starBaseAlpha = new Array<number>(starDots.length).fill(0);
   for (let i = 0; i < starDots.length; i++) {
-    const s = starSpecs[i]!;
-    starDots[i]!.pos.x = s.x01 * k.width();
-    starDots[i]!.pos.y = s.y01 * GROUND_TOP;
     starDots[i]!.hidden = true;
   }
+  // Positions are set from `update()`, not here — they depend on the live
+  // horizon screen y (see `horizonScreenY`), which can change on a resize.
   k.onUpdate(() => {
     const time = k.time();
     for (let i = 0; i < starDots.length; i++) {
@@ -234,6 +247,10 @@ export function mountSky(k: KAPLAYCtx): SkyLayer {
   // own), so `update()` just flips this flag rather than resetting the
   // clock — a weather flip does not reset how long we have been waiting.
   let wantsShootingStar = false;
+  // The live horizon screen y, refreshed every `update()` call — read here
+  // rather than recomputed, since a shot can fire between publishes and
+  // still wants this frame's transform, not a stale one from mount time.
+  let horizonY = horizonScreenY(k);
 
   k.onUpdate(() => {
     if (shooting || reducedMotion()) return;
@@ -242,9 +259,9 @@ export function mountSky(k: KAPLAYCtx): SkyLayer {
     if (!wantsShootingStar) return;
     shooting = true;
     const startX = k.width() * 0.2;
-    const startY = GROUND_TOP * 0.15;
+    const startY = horizonY * 0.15;
     const endX = startX + k.width() * 0.35;
-    const endY = startY + GROUND_TOP * 0.25;
+    const endY = startY + horizonY * 0.25;
     streak.pos.x = startX;
     streak.pos.y = startY;
     streak.opacity = 0.9;
@@ -332,13 +349,22 @@ export function mountSky(k: KAPLAYCtx): SkyLayer {
 
   return {
     update(t: ResolvedTheme) {
+      // The horizon's live screen y — refreshed every publish so a window
+      // resize between publishes self-corrects on the next one, rather than
+      // every fixed-space object staying pinned to whatever the viewport
+      // measured at mount time. Also handed to the shooting-star timer
+      // above, which free-runs between publishes and needs this frame's
+      // value rather than a stale one from its own last update.
+      const horizon = horizonScreenY(k);
+      horizonY = horizon;
+
       // Sun.
       const sunVisible = t.sun.visible && !t.flags.overcast;
       sunOuter.hidden = !sunVisible;
       sunInner.hidden = !sunVisible;
       if (sunVisible) {
         const x = screenX(k, t.sun.x01);
-        const y = arcY(t.sun.y01);
+        const y = arcY(horizon, t.sun.y01);
         sunOuter.pos.x = x; sunOuter.pos.y = y;
         sunInner.pos.x = x; sunInner.pos.y = y;
       }
@@ -354,11 +380,12 @@ export function mountSky(k: KAPLAYCtx): SkyLayer {
         moonRoot.hidden = !moonVisible;
         if (moonVisible) {
           moonRoot.pos.x = screenX(k, t.moonSky.x01) - MOON_SIZE / 2;
-          moonRoot.pos.y = arcY(t.moonSky.y01) - MOON_SIZE / 2;
+          moonRoot.pos.y = arcY(horizon, t.moonSky.y01) - MOON_SIZE / 2;
         }
       }
 
-      // Stars: night or dusk, never overcast.
+      // Stars: night or dusk, never overcast. Position, not just visibility,
+      // is recomputed every publish (see `horizon` above).
       const starsOn = (t.flags.isNight || t.flags.isDusk) && !t.flags.overcast;
       const nightCount = 24 - Math.round(8 * (1 - t.moonSky.darkness));
       const count = starsOn ? (t.flags.isNight ? nightCount : 7) : 0;
@@ -368,6 +395,8 @@ export function mountSky(k: KAPLAYCtx): SkyLayer {
         dot.hidden = !visible;
         if (!visible) continue;
         const spec = starSpecs[i]!;
+        dot.pos.x = spec.x01 * k.width();
+        dot.pos.y = spec.y01 * horizon;
         const base = t.flags.isNight ? (spec.major ? 0.9 : 0.5) : 0.3;
         starBaseAlpha[i] = base;
         dot.opacity = base;
@@ -376,8 +405,9 @@ export function mountSky(k: KAPLAYCtx): SkyLayer {
       // Shooting star eligibility (the timer itself free-runs above).
       wantsShootingStar = t.flags.isNight && !t.flags.overcast && t.weather.kind === 'clear';
 
-      // Fireflies.
-      const fliesOn = t.flags.lanternsOn && !t.flags.overcast && CLEARISH.has(t.weather.kind);
+      // Fireflies. `CLEARISH` already excludes every overcast weather kind,
+      // so checking `t.flags.overcast` too would be redundant.
+      const fliesOn = t.flags.lanternsOn && CLEARISH.has(t.weather.kind);
       const fireflyCount = fliesOn
         ? t.flags.isNight
           ? Math.round(9 * (0.6 + 0.4 * t.moonSky.darkness))
@@ -397,10 +427,9 @@ export function mountSky(k: KAPLAYCtx): SkyLayer {
       for (const m of moths) m.hidden = !mothsOn;
 
       // House windows: lit lamp-glow colour when glowing, else the ordinary
-      // themed sky1 scenery colour — set explicitly both ways so this holds
-      // regardless of whether village.ts's own retint walker (which also
-      // touches every `themed:sky1` object, windows included) runs before or
-      // after this update.
+      // themed sky1 scenery colour. These blocks carry ONLY 'themed:window'
+      // — not 'themed:sky1' — so this is their sole colour owner; nothing
+      // else in the scene writes to a 'themed:window' object.
       const windowColour = glow ? hex(k, '#FFDF9E') : hex(k, sceneryColor(t.tokens, t.tint, 'sky1'));
       for (const obj of k.get('themed:window', { recursive: true })) {
         (obj as unknown as { color: unknown }).color = windowColour;
