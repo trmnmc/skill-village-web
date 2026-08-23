@@ -56,7 +56,7 @@ export const PALETTES: Record<PaletteId, Palette> = {
 /** Channelwise hex lerp — the reference painter's mix(), typed. */
 export function mix(a: string, b: string, k: number): string {
   const hx = (c: string) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
-  const h2 = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+  const h2 = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0').toUpperCase();
   const A = hx(a), B = hx(b);
   return `#${h2(A[0]! + (B[0]! - A[0]!) * k)}${h2(A[1]! + (B[1]! - A[1]!) * k)}${h2(A[2]! + (B[2]! - A[2]!) * k)}`;
 }
