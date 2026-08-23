@@ -1,7 +1,20 @@
 import kaplay, { type KAPLAYCtx } from 'kaplay';
 import type { Creature } from '@village/core/visual';
 import { TEXT_SS, THEME } from '../theme.js';
-import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, placeCreatures, type Spot } from '../layout/zones.js';
+import {
+  ZONES,
+  WORLD_W,
+  GROUND_Y,
+  GROUND_TOP,
+  HOMES_HOUSE_XS,
+  HOMES_TREE_XS,
+  HOUSE_BASE_Y,
+  TREE_BASE_Y,
+  SIGN_BASE_Y,
+  signLeft,
+  placeCreatures,
+  type Spot,
+} from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
 
@@ -136,15 +149,25 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   block(k, 0, GROUND_TOP, WORLD_W, 14, THEME.groundDark, 0);
   block(k, 0, GROUND_TOP + 14, WORLD_W, k.height() * 2, THEME.ground, 0);
 
+  const homes = ZONES.find((z) => z.id === 'homes')!;
+
+  // Prop positions come from zones.ts, where placeCreatures derives its
+  // keep-out bands from the same anchors — draw them anywhere else and the
+  // villagers would no longer know to stand clear.
   for (const zone of ZONES) {
-    sign(k, zone.x + zone.w / 2 - 50, GROUND_Y - 6, zone.label, pixelFont);
+    sign(k, signLeft(zone), SIGN_BASE_Y, zone.label, pixelFont);
   }
 
-  const homes = ZONES.find((z) => z.id === 'homes')!;
-  house(k, homes.x + 180, GROUND_Y - 30, THEME.signCream, THEME.accent);
-  house(k, homes.x + 900, GROUND_Y - 30, THEME.wallLilac, THEME.roofLilac);
-  house(k, homes.x + 1700, GROUND_Y - 30, THEME.wallSand, THEME.roofClay);
-  for (const dx of [60, 620, 1240, 2050, 2420]) tree(k, homes.x + dx, GROUND_Y - 20);
+  const houseStyles = [
+    { wall: THEME.signCream, roof: THEME.accent },
+    { wall: THEME.wallLilac, roof: THEME.roofLilac },
+    { wall: THEME.wallSand, roof: THEME.roofClay },
+  ];
+  HOMES_HOUSE_XS.forEach((x, i) => {
+    const style = houseStyles[i % houseStyles.length]!;
+    house(k, x, HOUSE_BASE_Y, style.wall, style.roof);
+  });
+  for (const x of HOMES_TREE_XS) tree(k, x, TREE_BASE_Y);
 
   // Drag to pan along the strip. KAPLAY binds mousedown/mousemove/mouseup
   // on the canvas element itself (e.canvas.addEventListener, see

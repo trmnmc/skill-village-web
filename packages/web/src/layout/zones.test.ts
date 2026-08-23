@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, MIN_SEPARATION, placeCreatures } from './zones.js';
+import {
+  ZONES,
+  WORLD_W,
+  GROUND_Y,
+  GROUND_TOP,
+  MIN_SEPARATION,
+  HOMES_HOUSE_XS,
+  HOMES_TREE_XS,
+  homesKeepOutAt,
+  placeCreatures,
+} from './zones.js';
 
 const ids = Array.from({ length: 70 }, (_, i) => `skill:s${i}`);
 
@@ -70,6 +80,9 @@ describe('placeCreatures', () => {
 
       const arrivalRow = after.get(newcomer)!.y;
       const rowSize = [...after.values()].filter((s) => s.y === arrivalRow).length;
+      // A displaced villager may also have to hop the row's scenery bands —
+      // nothing may stand inside one — so the reach bound grows by their width.
+      const bandWidth = homesKeepOutAt(arrivalRow).reduce((sum, b) => sum + (b.right - b.left), 0);
 
       for (const id of ids) {
         const was = before.get(id)!;
@@ -81,7 +94,7 @@ describe('placeCreatures', () => {
         expect(now.y).toBe(arrivalRow);
         // A displaced villager steps clear of the cluster it was standing in.
         // It can never travel further than that row could pack end to end.
-        expect(Math.abs(now.x - was.x)).toBeLessThanOrEqual(rowSize * MIN_SEPARATION);
+        expect(Math.abs(now.x - was.x)).toBeLessThanOrEqual(rowSize * MIN_SEPARATION + bandWidth);
       }
 
       // Same membership, same layout: the whole "stable geography" promise.
@@ -146,6 +159,59 @@ describe('placeCreatures', () => {
 
   it('handles an empty village', () => {
     expect(placeCreatures([]).size).toBe(0);
+  });
+
+  it('covers every house and tree with a keep-out band for the rows among their pixels', () => {
+    // The bands are derived from the same anchors village.ts draws from, so
+    // this is the tripwire for someone emptying or narrowing the list: for a
+    // middle row (whose feet land among every prop's pixels) every prop's
+    // anchor must sit strictly inside some band.
+    const middleRowY = GROUND_Y - 46;
+    const bands = homesKeepOutAt(middleRowY);
+    for (const x of [...HOMES_HOUSE_XS, ...HOMES_TREE_XS]) {
+      expect(bands.some((b) => b.left < x && x < b.right)).toBe(true);
+    }
+  });
+
+  it('gives the front and back rows no bands — they clear the scenery by depth', () => {
+    // Front-row feet sit below every prop's base, so a front villager stands
+    // *in front of* the scenery; back-row feet clear even the rooflines. Only
+    // the middle rows ever share pixels with a prop, and blocking more than
+    // that would cost the row capacity the village needs.
+    expect(homesKeepOutAt(GROUND_Y)).toEqual([]);
+    expect(homesKeepOutAt(GROUND_Y - 3 * 46)).toEqual([]);
+  });
+
+  it('never stands a villager among the scenery pixels of its own row', () => {
+    // The houses, trees and the Homes sign are drawn inside the same x-band
+    // the villagers are seated in, and creatures z-sort above props — so a
+    // villager whose feet land among a prop's pixels is drawn standing *on*
+    // the house, not behind it. Placement is the only thing preventing that.
+    const violations: string[] = [];
+    for (const [id, { x, y }] of placeCreatures(ids)) {
+      for (const band of homesKeepOutAt(y)) {
+        if (x > band.left && x < band.right) {
+          violations.push(`${id} at x=${x} inside [${band.left}, ${band.right}]`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('keeps villagers off the scenery even when rows are past capacity', () => {
+    // Overcrowding degrades creature spacing first (villagers may overlap each
+    // other), never the scenery rule: the fallback seats a creature at the
+    // nearest clear ground, so nobody ever stands on a roof to make room.
+    const crowd = Array.from({ length: 300 }, (_, i) => `skill:crowd${i}`);
+    const violations: string[] = [];
+    for (const [id, { x, y }] of placeCreatures(crowd)) {
+      for (const band of homesKeepOutAt(y)) {
+        if (x > band.left && x < band.right) {
+          violations.push(`${id} at x=${x} inside [${band.left}, ${band.right}]`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
   });
 
   it('still seats everyone when a row holds more than it can space out', () => {
