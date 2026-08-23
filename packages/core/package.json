@@ -3,21 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./src/index.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./dist/swarm.js": {
-      "types": "./dist/swarm.d.ts",
-      "import": "./dist/swarm.js"
-    },
-    "./visual": {
-      "types": "./dist/visual.d.ts",
-      "import": "./dist/visual.js"
-    }
+    ".": "./src/index.ts",
+    "./visual": "./src/visual.ts"
   },
   "dependencies": {
     "yaml": "^2.5.1"
