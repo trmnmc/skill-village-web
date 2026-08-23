@@ -291,7 +291,11 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     if (lookAt !== null && cursorY !== null) {
       let best = 90 * 90;
       for (const [id, spot] of placements) {
-        const dx = lookAt - spot.x;
+        // Aim at where the villager is drawn, not its home spot — an ambling
+        // creature can be a full body-width from home. The spot is only the
+        // fallback for an actor whose sprites are still loading.
+        const x = actors.get(id)?.worldX() ?? spot.x;
+        const dx = lookAt - x;
         const dyMid = cursorY - (spot.y - 34);
         const d = dx * dx + dyMid * dyMid;
         if (d < best) {

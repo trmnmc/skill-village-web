@@ -194,6 +194,50 @@ describe('placeCreatures', () => {
     expect(placeCreatures([]).size).toBe(0);
   });
 
+  it('grants wander room that can never reach a prop or a neighbour', () => {
+    // Each spot carries how far its villager may amble from home. The leash
+    // is cut from real clearances: full excursions toward a neighbour still
+    // leave MIN_SEPARATION between the pair (both may be at their limits at
+    // once), and no excursion crosses into the row's keep-out bands or past
+    // the row's ends.
+    const spots = placeCreatures(ids);
+    const rows = new Map<number, { x: number; wander: number }[]>();
+    const violations: string[] = [];
+    for (const [id, spot] of spots) {
+      expect(spot.wander).toBeGreaterThanOrEqual(0);
+      if (spot.x - spot.wander < HOMES_LO || spot.x + spot.wander > HOMES_HI) {
+        violations.push(`${id} can leave the row: ${spot.x}±${spot.wander}`);
+      }
+      for (const band of homesKeepOutAt(spot.y)) {
+        const nearEdge = spot.x < band.left ? band.left : band.right;
+        if (spot.x + spot.wander > band.left && spot.x - spot.wander < band.right) {
+          violations.push(`${id} can wander into [${band.left}, ${band.right}] (x=${spot.x}±${spot.wander}, edge ${nearEdge})`);
+        }
+      }
+      const row = rows.get(spot.y) ?? [];
+      row.push({ x: spot.x, wander: spot.wander });
+      rows.set(spot.y, row);
+    }
+    for (const [y, entries] of rows) {
+      entries.sort((a, b) => a.x - b.x);
+      for (let i = 1; i < entries.length; i++) {
+        const a = entries[i - 1]!;
+        const b = entries[i]!;
+        if (b.x - b.wander - (a.x + a.wander) < MIN_SEPARATION) {
+          violations.push(`row y=${y}: leashes collide at ${a.x}+${a.wander} vs ${b.x}-${b.wander}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('lets a good share of the village actually stroll', () => {
+    // A leash of a few pixels is standing still with extra steps. The layout
+    // is loose enough that most villagers should have real room.
+    const wanders = [...placeCreatures(ids).values()].map((s) => s.wander);
+    expect(wanders.filter((w) => w >= 20).length).toBeGreaterThan(wanders.length / 2);
+  });
+
   it('keeps the middle rows out of every prop, sign included', () => {
     // The bands are derived from the same anchors village.ts draws from, so
     // this is the tripwire for someone emptying or narrowing the list: for a

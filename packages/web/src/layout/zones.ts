@@ -273,7 +273,18 @@ function hash(id: string): number {
 export interface Spot {
   x: number;
   y: number;
+  /**
+   * How far this villager may amble from home, in pixels along the row. Cut
+   * from its real clearances at placement time: full excursions toward a
+   * neighbour still leave MIN_SEPARATION between the pair even when both are
+   * at their limits, and no excursion reaches a keep-out band or the row's
+   * ends. Zero for a villager seated with no room — crowded rows stand still.
+   */
+  wander: number;
 }
+
+/** The longest leash any villager gets, however open its ground. */
+const WANDER_CAP = 60;
 
 /** A villager already seated in a row: its centre and the radius it claims. */
 interface Occupant {
@@ -474,7 +485,21 @@ export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
       seatRow(ordered, ground, (a, other) => other.r + a.r) ??
       seatRow(ordered, ground, () => MIN_SEPARATION) ??
       seatRowPacked(ordered, ground);
-    for (const [id, x] of xs) spots.set(id, { x, y: rowY(row) });
+
+    // The wander leash: half the spare gap to each neighbour (both may be at
+    // their limits at once), never past a band edge or the row's ends.
+    const seated = [...xs.entries()].map(([id, x]) => ({ id, x })).sort((a, b) => a.x - b.x);
+    seated.forEach((e, i) => {
+      const left = i === 0 ? e.x - HOMES_LO : (e.x - seated[i - 1]!.x - MIN_SEPARATION) / 2;
+      const right =
+        i === seated.length - 1 ? HOMES_HI - e.x : (seated[i + 1]!.x - e.x - MIN_SEPARATION) / 2;
+      let leash = Math.min(WANDER_CAP, left, right);
+      for (const band of ground.bands) {
+        if (band.right <= e.x) leash = Math.min(leash, e.x - band.right);
+        else if (band.left >= e.x) leash = Math.min(leash, band.left - e.x);
+      }
+      spots.set(e.id, { x: e.x, y: rowY(row), wander: Math.max(0, Math.floor(leash)) });
+    });
   }
 
   return spots;

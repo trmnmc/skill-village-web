@@ -16,6 +16,7 @@ import {
   isBlinking,
   phaseFor,
   shadowSquash,
+  wanderOffset,
   wingAngle,
 } from '../motion/motion.js';
 import type { Spot } from '../layout/zones.js';
@@ -32,6 +33,12 @@ const BUBBLE_LIFT = 50;
 
 export interface CreatureActor {
   update(t: number, lookAt: number | null, hovered?: boolean): void;
+  /**
+   * Where this creature is drawn right now: its home x plus however far it
+   * has ambled. Hover and click aim at this, not the home spot — a villager
+   * at the end of its leash is a full body-width from home.
+   */
+  worldX(): number;
   /**
    * Adopt a fresh copy of this creature — same look, newer stats — without
    * respawning it. See the implementation's note in `spawnCreature`.
@@ -500,10 +507,24 @@ export async function spawnCreature(
   let plateAlpha = 0;
   let lastT: number | null = null;
 
+  // The wander leash eases toward its target instead of switching: a
+  // creature dozing off drifts gently home as its leash shrinks to nothing,
+  // and a fresh spawn strolls out from its spot rather than teleporting to
+  // wherever its clock says it should already be.
+  let leash = 0;
+  let drift = 0;
+
   return {
     update(t, lookAt, hovered = false) {
       const frameDt = lastT === null ? 0 : Math.min(t - lastT, 0.1);
       lastT = t;
+
+      // Grounded villagers amble; flyers have their own roam, and a sleeping
+      // creature's leash eases to zero, walking it home to doze.
+      const leashTarget = behaviour.asleep || behaviour.fly ? 0 : at.wander;
+      leash += (leashTarget - leash) * Math.min(1, frameDt * 0.5);
+      drift = wanderOffset(t, phi, leash);
+      root.pos.x = at.x + drift;
       // t0 = -phi * 2.6 (the hop cycle length, private to motion.ts) shifts
       // each hopper's cycle start by its own phase, the same way breathe/
       // isBlinking/gaze/wingAngle/hover already do — without it every hopper
@@ -545,7 +566,7 @@ export async function spawnCreature(
       });
 
       const shut = behaviour.asleep || isBlinking(t, phi);
-      const look = shut ? 0 : gaze(t, phi, lookAt ?? undefined, at.x);
+      const look = shut ? 0 : gaze(t, phi, lookAt ?? undefined, at.x + drift);
 
       grid.eyes.forEach((anchor, i) => {
         const { pupil, lid, lash } = eyes[i]!;
@@ -688,9 +709,14 @@ export async function spawnCreature(
      * is instant, which reads as the village making room. `z` follows `y`
      * because depth sorting is keyed on it.
      */
+    worldX() {
+      return at.x + drift;
+    },
     setSpot(next) {
       at = next;
-      root.pos.x = next.x;
+      // The next update() re-adds the current drift; writing the bare home x
+      // here just keeps the frame between them from flashing stale ground.
+      root.pos.x = next.x + drift;
       root.pos.y = next.y;
       root.z = next.y;
     },
