@@ -27,6 +27,15 @@ export function menuModel(mode: WeatherMode, picked: WeatherKind): MenuModel {
 
 const REFRESH_MS = 20 * 60 * 1000;
 
+// Generation counter for Real-mode activations. `store.mode() === 'real'`
+// alone can't tell a fresh activation apart from a stale, still-in-flight one
+// that happens to resolve after mode has cycled back to 'real' again — two
+// startReal() calls racing would otherwise let whichever promise resolves
+// last install its (possibly stale) source's interval/listener. Each
+// startReal() call mints a new generation; a leave-real teardown bumps it too
+// so any activation in flight at that moment is permanently stale.
+let realGen = 0;
+
 function getPosition(): Promise<{ lat: number; lon: number }> {
   return new Promise((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(
@@ -67,11 +76,15 @@ export function mountWeatherMenu(store: ThemeStore, container: HTMLElement): voi
     }
   }
 
-  function refreshReal(src: ReturnType<typeof createRealWeatherSource>): void {
-    void src.refresh().then(() => store.tick());
+  function refreshReal(src: ReturnType<typeof createRealWeatherSource>, gen: number): void {
+    void src.refresh().then(() => {
+      if (gen !== realGen || store.mode() !== 'real') return; // this activation is stale
+      store.tick();
+    });
   }
 
   function startReal(): void {
+    const gen = ++realGen;
     const src = createRealWeatherSource({
       fetchJson: (u) => fetch(u).then((r) => r.json()),
       getPosition,
@@ -81,15 +94,22 @@ export function mountWeatherMenu(store: ThemeStore, container: HTMLElement): voi
     src
       .refresh()
       .then(() => {
+        // A newer activation (or a mode change away from real) has since
+        // superseded this one — do not resurrect its timer/listener/source.
+        if (gen !== realGen || store.mode() !== 'real') return;
         store.tick();
-        if (store.mode() !== 'real') return; // mode changed while the fetch was in flight
         teardownReal();
-        realTimer = setInterval(() => refreshReal(src), REFRESH_MS);
-        realFocusListener = () => refreshReal(src);
+        realTimer = setInterval(() => refreshReal(src, gen), REFRESH_MS);
+        realFocusListener = () => refreshReal(src, gen);
         window.addEventListener('focus', realFocusListener);
       })
       .catch(() => {
+        // Same staleness guard: if the player already picked Pick/Journey
+        // (or re-triggered Real) while the geolocation prompt sat open, a
+        // late denial must not stomp their later choice back to off.
+        if (gen !== realGen || store.mode() !== 'real') return;
         note = 'location unavailable — staying clear';
+        store.setRealSource(null);
         store.setMode('off');
         render();
       });
@@ -127,7 +147,11 @@ export function mountWeatherMenu(store: ThemeStore, container: HTMLElement): voi
       el.addEventListener('click', () => {
         const m = el.dataset.mode as WeatherMode;
         note = '';
-        if (m !== 'real') teardownReal();
+        // Bump the generation here (not inside teardownReal, which the
+        // success .then also calls to swap timers within the *same*
+        // generation) so leaving real invalidates any activation still in
+        // flight without the success path invalidating itself.
+        if (m !== 'real') { realGen++; teardownReal(); }
         store.setMode(m);
         store.tick();
         if (m === 'real') startReal();
