@@ -24,6 +24,17 @@ the Adoption Center, and the Notice Board.
 - **Read-only where it matters.** The server reads `~/.claude` and never writes to it; all game
   state lives in `~/.skill-village`. Your real config cannot be corrupted by a game.
 
+## The sky
+
+The ambient sky animates across six palettes: a Kelvin-honest progression from dawn through dusk,
+with weekdays woven from Meadow Blue and Golden Hour, rotating weekend palettes, and seeded surprise
+days. Palettes blend continuously, and the UI dims after sunset. Four weather modes control the sky:
+**Off** (default static sunrise), **Pick** (choose a time), **Journey** (curated 45-minute loop), or
+**Real** (opt-in geolocation via Open-Meteo with live sunrise/sunset). Override any sky with the dev
+cheat-sheet: `?at=HH:MM&day=sat&weather=storm&palette=1e` sets time, day of week, weather mode, and
+palette directly. The moon is a real lunar phase, calculated from
+[`github.com/trmnmc/moon`](https://github.com/trmnmc/moon) — a port of Jean Meeus's *Astronomical Algorithms*.
+
 ## Run it
 
 Requires Node 20+.
