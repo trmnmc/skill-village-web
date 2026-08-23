@@ -19,6 +19,8 @@ const scene = await startSpectatorVillage({
   },
 });
 
+const n = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
 function renderHud(view: ShowroomView): void {
   const sign = document.getElementById('hud-sign')!;
   const rareClause = view.counts.rares > 0 ? ` · ${view.counts.rares} rare on the block` : '';
@@ -27,7 +29,7 @@ function renderHud(view: ShowroomView): void {
     `<div class="board"><div style="font-family:'Pixelify Sans',sans-serif;font-size:27px;line-height:1.1;">SWARM VILLAGE</div>` +
     `<div style="font-size:11px;opacity:0.75;">every villager here was built by the swarm</div></div><br>` +
     `<span class="chip" style="margin-top:8px;"><span style="color:#D97757;">●</span> ` +
-    `${view.counts.villagers} villagers · ${view.counts.eggs} eggs${rareClause}${stale}</span>`;
+    `${n(view.counts.villagers, 'villager')} · ${n(view.counts.eggs, 'egg')}${rareClause}${stale}</span>`;
 
   const notice = document.getElementById('hud-notice')!;
   const lines = noticeLines(view.events).slice(0, 4);
@@ -36,13 +38,19 @@ function renderHud(view: ShowroomView): void {
     lines.map((l) => `<div>${l.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`).join('') + `</div>`;
 }
 
+let emptyShown = false;
+
 connectShowroom({
   onView: (view) => {
     latest = view;
     scene.setView(view);
     renderHud(view);
     if (view.counts.villagers === 0 && view.counts.eggs === 0) {
+      emptyShown = true;
       scene.setStatus("the swarm hasn't sent anyone home yet.");
+    } else if (emptyShown) {
+      emptyShown = false;
+      scene.setStatus('');
     }
   },
   onHatch: (slug) => scene.playHatch(slug),

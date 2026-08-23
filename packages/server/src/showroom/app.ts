@@ -33,7 +33,17 @@ export async function createShowroomApp(runtime: ShowroomRuntime): Promise<Fasti
       if (socket.readyState !== socket.OPEN) return;
       for (const frame of wsFrames(payload, fresh)) socket.send(frame);
     });
-    socket.on('close', unsubscribe);
+    // Frames only flow on the runtime's ~5-minute polls, but nginx's default
+    // proxy_read_timeout is 60s — without traffic in between, the proxy kills
+    // the connection long before the next real frame. A ping every 30s keeps
+    // the intermediary's idle timer from ever firing.
+    const ping = setInterval(() => {
+      if (socket.readyState === socket.OPEN) socket.ping();
+    }, 30_000);
+    socket.on('close', () => {
+      clearInterval(ping);
+      unsubscribe();
+    });
   });
 
   return app;

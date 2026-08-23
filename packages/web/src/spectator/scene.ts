@@ -492,7 +492,10 @@ export async function startSpectatorVillage(options: SpectatorVillageOptions): P
   const pedestalTopY = pedestal(k, PEDESTAL_X, GROUND_Y);
 
   // The rare's in-world sign: "RARE DROP" + the auction countdown, re-drawn
-  // once a minute. Built once, hidden until a rare is configured.
+  // every second. Built once, hidden until a rare is configured. Must be
+  // every second, not once a minute: formatAuctionCountdown renders
+  // HH:MM:SS inside the final day, so anything slower makes the seconds
+  // digit freeze and then lurch forward in visible jumps.
   const rareSignRoot = k.add([k.pos(PEDESTAL_X + 70, pedestalTopY), k.z(pedestalTopY + 2)]);
   rareSignRoot.hidden = true;
   rareSignRoot.add([k.rect(8, 60), k.pos(20, 4), k.anchor('top'), k.color(hex(k, THEME.wood))]);
@@ -530,7 +533,7 @@ export async function startSpectatorVillage(options: SpectatorVillageOptions): P
     rareSignSub.text = countdown === 'open' ? 'auction is open' : countdown === '' ? 'auction tbd' : `auction in ${countdown}`;
     rareSignBox.width = Math.max(rareSignTitle.width, rareSignSub.width) / TEXT_SS + 20;
   }
-  setInterval(renderRareSign, 60_000);
+  setInterval(renderRareSign, 1_000);
 
   // Drag to pan — identical mechanics to scene/village.ts (see that file's
   // long comment on why the pan/click listeners live on window rather than
