@@ -198,7 +198,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // creature spawns, so a villager arriving mid-session never lands above
   // an object this layer hasn't created yet.
   const sky = mountSky(k);
-  // World-space rain/snow/fog/etc, mounted alongside the sky layer — both are
+  // Screen-space rain/snow/fog/etc, mounted alongside the sky layer — both are
   // driven from the same `applyTheme` walker below, `sky.update(t)` and
   // `weather.update(t)` called back to back on every resolved-theme change.
   const weather = mountWeather(k);

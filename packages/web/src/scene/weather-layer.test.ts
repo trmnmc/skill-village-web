@@ -10,6 +10,9 @@ import {
   rainbowBlocks,
   overcastCloudSpecs,
   fairCloudSpecs,
+  OVERCAST_CLOUD_CLUSTERS,
+  FAIR_CLOUD_ALWAYS,
+  FAIR_CLOUD_DAY_ONLY,
   hash,
   strikeParams,
   activeStrike,
@@ -272,9 +275,9 @@ describe('overcastCloudSpecs', () => {
     for (const b of overcastCloudSpecs('rain', false, 5, 480, 182)) expect(b.alpha).toBe(0.85);
   });
 
-  it('drift wraps deterministically: 3 ref px/s over a 560 ref-px period repeats every 560/3 seconds', () => {
+  it('drift wraps deterministically: 3 ref px/s over a 640 ref-px period repeats every 640/3 seconds', () => {
     const a = overcastCloudSpecs('fog', false, 12.7, 480, 182);
-    const b = overcastCloudSpecs('fog', false, 12.7 + 560 / 3, 480, 182);
+    const b = overcastCloudSpecs('fog', false, 12.7 + 640 / 3, 480, 182);
     for (let i = 0; i < a.length; i++) expect(b[i]!.x).toBeCloseTo(a[i]!.x, 6);
   });
 
@@ -334,9 +337,9 @@ describe('fairCloudSpecs', () => {
     for (const b of fairCloudSpecs(false, 9, 480, 182, 0)) expect(b.alpha).toBe(0.75);
   });
 
-  it('drift wraps deterministically: 1.5 ref px/s over a 560 ref-px period repeats every 560/1.5 seconds', () => {
+  it('drift wraps deterministically: 1.5 ref px/s over a 640 ref-px period repeats every 640/1.5 seconds', () => {
     const a = fairCloudSpecs(false, 4.4, 480, 182, 0);
-    const b = fairCloudSpecs(false, 4.4 + 560 / 1.5, 480, 182, 0);
+    const b = fairCloudSpecs(false, 4.4 + 640 / 1.5, 480, 182, 0);
     for (let i = 0; i < a.length; i++) expect(b[i]!.x).toBeCloseTo(a[i]!.x, 6);
   });
 
@@ -349,6 +352,44 @@ describe('fairCloudSpecs', () => {
     expect(doubledOffset).toBeCloseTo(baseOffset * 2, 6);
     expect(doubled[0]!.w).toBeCloseTo(base[0]!.w * 2, 6);
     expect(doubled[0]!.h).toBeCloseTo(base[0]!.h * 2, 6);
+  });
+});
+
+describe('cloud geometry tables (transcription fidelity)', () => {
+  // Verbatim from the reference painter (village-scene.js lines 300–308).
+  // These tables drive every overcast/fair-weather cloud shape on screen; a
+  // transposed digit here would still pass every other test in this file
+  // (they only check drift/scale *behavior*, not the literal numbers), so
+  // pin the exact rects directly.
+
+  /** Flattens a cluster def into (baseX+dx, y, w, h) tuples, in raw reference space. */
+  function flatten(cluster: { baseX: number; rects: { dx: number; y: number; w: number; h: number }[] }) {
+    return cluster.rects.map((r) => [cluster.baseX + r.dx, r.y, r.w, r.h]);
+  }
+
+  it('OVERCAST_CLOUD_CLUSTERS matches the reference exactly', () => {
+    expect(OVERCAST_CLOUD_CLUSTERS.flatMap(flatten)).toEqual([
+      [14, 18, 96, 14],
+      [32, 10, 52, 10],
+      [150, 40, 74, 12],
+      [248, 14, 112, 16],
+      [270, 6, 62, 10],
+      [384, 42, 82, 12],
+    ]);
+  });
+
+  it('FAIR_CLOUD_ALWAYS matches the reference exactly', () => {
+    expect(flatten(FAIR_CLOUD_ALWAYS)).toEqual([
+      [70, 42, 40, 10],
+      [80, 34, 24, 8],
+    ]);
+  });
+
+  it('FAIR_CLOUD_DAY_ONLY matches the reference exactly', () => {
+    expect(flatten(FAIR_CLOUD_DAY_ONLY)).toEqual([
+      [270, 66, 34, 9],
+      [278, 59, 20, 7],
+    ]);
   });
 });
 

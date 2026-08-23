@@ -41,7 +41,8 @@ import { horizonScreenY } from './sky.js';
  * `width`, `height`, and the live horizon screen y are re-derived at the top
  * of every `onDraw` call (see `horizonScreenY`, imported from sky.ts) — never
  * cached across frames, so a window resize self-corrects on the very next
- * frame, same as sky.ts's own fixed objects.
+ * frame. Contrast sky.ts's own fixed objects, whose positions are written in
+ * `update()` and so only self-correct on the next resolved-theme publish.
  *
  * The rainbow is the one exception to "redraw every frame": its ~670 blocks
  * are built once into a retained `k.fixed()` object when the weather enters
@@ -236,13 +237,18 @@ export interface CloudBlobSpec {
 /**
  * Materializes a set of class-2 clusters at one instant: each cluster's
  * anchor drifts leftward in reference space at `speed` ref px/s, wrapping
- * over a 560 ref-px period into `[-40, 520)` — the same `(x % 560) - 40`
- * shape `drawWind`'s flecks use below, but wrapped with `wrap` instead of
- * raw `%`: `drawWind` always *adds* a `tSec` term (drift rightward), while
- * this drift *subtracts* an unbounded one (leftward), which would send a
- * plain `%` negative once `tSec * speed` outgrows the anchor. Plan-over-
- * reference deviation: the reference paints these clusters static; a
- * scrolling camera would pin them to one screen spot forever.
+ * over a 640 ref-px period into `[-120, 520)` — shaped like `drawWind`'s own
+ * `(x % 560) - 40` fleck wrap below, but widened and wrapped with `wrap`
+ * instead of raw `%`: `drawWind` always *adds* a `tSec` term (drift
+ * rightward), while this drift *subtracts* an unbounded one (leftward),
+ * which would send a plain `%` negative once `tSec * speed` outgrows the
+ * anchor. The 640/-120 window (rather than `drawWind`'s narrower 560/-40) is
+ * deliberately wider than the widest cluster span in `OVERCAST_CLOUD_CLUSTERS`
+ * (112 ref px) so a cluster never straddles the wrap seam — at 560/-40 a
+ * cluster near the seam would have part of itself teleport off-window mid-
+ * frame while still on screen. Plan-over-reference deviation: the reference
+ * paints these clusters static; a scrolling camera would pin them to one
+ * screen spot forever.
  */
 function driftedClusterRects(
   clusters: readonly CloudClusterDef[],
@@ -254,7 +260,7 @@ function driftedClusterRects(
   const s = fy(horizonY);
   const out: { x: number; y: number; w: number; h: number }[] = [];
   for (const cluster of clusters) {
-    const driftedRefX = wrap(cluster.baseX + 560 - tSec * speed, 560) - 40;
+    const driftedRefX = wrap(cluster.baseX + 640 - tSec * speed, 640) - 120;
     const anchorX = mapX(driftedRefX, width);
     for (const r of cluster.rects) {
       out.push({ x: anchorX + r.dx * s, y: r.y * s, w: r.w * s, h: r.h * s });
@@ -264,7 +270,7 @@ function driftedClusterRects(
 }
 
 /** The reference's four overcast clusters (village-scene.js lines 300–303), verbatim. */
-const OVERCAST_CLOUD_CLUSTERS: readonly CloudClusterDef[] = [
+export const OVERCAST_CLOUD_CLUSTERS: readonly CloudClusterDef[] = [
   { baseX: 14, rects: [{ dx: 0, y: 18, w: 96, h: 14 }, { dx: 18, y: 10, w: 52, h: 10 }] },
   { baseX: 150, rects: [{ dx: 0, y: 40, w: 74, h: 12 }] },
   { baseX: 248, rects: [{ dx: 0, y: 14, w: 112, h: 16 }, { dx: 22, y: 6, w: 62, h: 10 }] },
@@ -296,10 +302,10 @@ export function overcastCloudSpecs(
 }
 
 /** The reference's always-on fair-weather cluster (village-scene.js line 307): present at both dawn and full day. */
-const FAIR_CLOUD_ALWAYS: CloudClusterDef = { baseX: 70, rects: [{ dx: 0, y: 42, w: 40, h: 10 }, { dx: 10, y: 34, w: 24, h: 8 }] };
+export const FAIR_CLOUD_ALWAYS: CloudClusterDef = { baseX: 70, rects: [{ dx: 0, y: 42, w: 40, h: 10 }, { dx: 10, y: 34, w: 24, h: 8 }] };
 
 /** The reference's "day only" second cluster (village-scene.js line 308) — withheld at dawn. */
-const FAIR_CLOUD_DAY_ONLY: CloudClusterDef = { baseX: 270, rects: [{ dx: 0, y: 66, w: 34, h: 9 }, { dx: 8, y: 59, w: 20, h: 7 }] };
+export const FAIR_CLOUD_DAY_ONLY: CloudClusterDef = { baseX: 270, rects: [{ dx: 0, y: 66, w: 34, h: 9 }, { dx: 8, y: 59, w: 20, h: 7 }] };
 
 /**
  * Fair-weather clouds — the reference's `else if (time==='day'||dawn)`
@@ -913,9 +919,11 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
     }
   });
 
-  // The storm flash is a screen effect, not a world one — a bolt should
-  // whiten the whole viewport for an instant, not just the strip currently
-  // in frame, so this object is `k.fixed()` unlike `behind`/`front` above.
+  // The storm flash is screen-space like the rest of this layer (`behind`
+  // and `front` above are `k.fixed()` too, since the screen-space rescale) —
+  // what sets it apart is being a full-viewport overlay: a bolt should
+  // whiten the whole screen for an instant, not just wherever the other two
+  // objects happen to be drawing.
   const flash = k.add([k.pos(0, 0), k.z(10000), k.fixed()]);
   flash.onDraw(() => {
     const cur = current;
