@@ -69,20 +69,20 @@ describe('direct', () => {
 
   it('idle chirps wait out their Poisson timer and respect the village-wide gap', () => {
     const cand = [{ id: 'skill:x', x: 1000, voice }];
-    // First tick: the timer arms (rand 0.5 → deadline ≈ now + 45·ln2 ≈ +31.2s);
+    // First tick: the timer arms (rand 0.5 → deadline ≈ now + 120·ln2 ≈ +83.2s);
     // nothing plays.
     const armed = direct(initialDirectorState(), { type: 'idle-tick', candidates: cand }, ctx({ now: 100 }));
     expect(armed.commands).toEqual([]);
     // Well past the armed deadline: the chirp fires.
     const fired = direct(armed.state, { type: 'idle-tick', candidates: cand }, ctx({ now: 200 }));
     expect(fired.commands.length).toBeGreaterThan(0);
-    // A second creature arms with rand 0.9 → deadline ≈ +4.7s, which lands
-    // *inside* the 8s village-wide gap that started at now=200 — so even an
+    // A second creature arms with rand 0.9 → deadline ≈ +12.6s, which lands
+    // *inside* the 25s village-wide gap that started at now=200 — so even an
     // elapsed timer stays quiet until the gap clears.
     const other = [{ id: 'skill:y', x: 1000, voice }];
     const armed2 = direct(fired.state, { type: 'idle-tick', candidates: other }, ctx({ now: 203, rand: () => 0.9 }));
     expect(armed2.commands).toEqual([]);
-    const gagged = direct(armed2.state, { type: 'idle-tick', candidates: other }, ctx({ now: 207.8, rand: () => 0.9 }));
+    const gagged = direct(armed2.state, { type: 'idle-tick', candidates: other }, ctx({ now: 216, rand: () => 0.9 }));
     expect(gagged.commands).toEqual([]);
   });
 

@@ -55,8 +55,12 @@ const CHIME_SPACING = 0.6;
  */
 const CHIME_QUEUE_HORIZON = 3;
 const VOICE_CAP = 8;
-const IDLE_VILLAGE_GAP = 8;
-const IDLE_MEAN_WAIT = 45;
+// Retuned after the first playtest: the spec's 8s/45s read as a metronome —
+// with a dozen creatures on screen, some timer was always pending, so the
+// village chirped the moment every gap expired, every 8 seconds, forever.
+// Idle chirps should be a rare aside you notice twice a minute at most.
+const IDLE_VILLAGE_GAP = 25;
+const IDLE_MEAN_WAIT = 120;
 
 function syllableCommands(
   syllables: Syllable[], vp: VoiceParams, pan: number, att: number, gainMul: number, at = 0,
@@ -280,7 +284,7 @@ export function direct(
         }
         // A short remark, not the full name: the first two signature syllables.
         const syllables = signaturePhrase(cand.voice).slice(0, 2)
-          .map((s) => ({ ...s, gain: 0.09 }));
+          .map((s) => ({ ...s, gain: 0.07 }));
         next = trackVoice({ ...next, idleNextAt: rearm, lastIdleAt: ctx.now }, phraseEnd(syllables, ctx.now));
         return { state: next, commands: syllableCommands(syllables, cand.voice, pan, attenuation, 1) };
       }

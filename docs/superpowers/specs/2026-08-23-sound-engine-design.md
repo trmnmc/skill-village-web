@@ -100,7 +100,9 @@ Voice surfaces:
   Body sounds belong to the world aesthetic even when the sleeper is a chip
   singer.
 - **Idle chirps:** rare chirps from on-screen happy creatures (mood > 75),
-  Poisson-spaced ~45s per creature, capped village-wide at one per 8s —
+  Poisson-spaced ~120s per creature, capped village-wide at one per 25s
+  (retuned from 45s/8s after the first playtest: with a crowd on screen some
+  timer was always pending, so the 8s gap fired like a metronome) —
   seventy villagers must not become an aviary.
 
 ## 4. Body & interaction SFX (the naturalistic half)
