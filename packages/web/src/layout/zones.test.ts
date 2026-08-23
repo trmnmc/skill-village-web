@@ -3,6 +3,7 @@ import {
   ZONES,
   WORLD_W,
   GROUND_Y,
+  GROUND_FRONT,
   GROUND_TOP,
   MIN_SEPARATION,
   HOMES_HOUSE_XS,
@@ -136,9 +137,17 @@ describe('placeCreatures', () => {
     // inside the painted band, or a villager floats on the sky-blue clear
     // colour with its shadow drawn in mid-air.
     for (const { y } of placeCreatures(ids).values()) {
-      expect(y).toBeLessThanOrEqual(GROUND_Y);
+      expect(y).toBeLessThanOrEqual(GROUND_FRONT);
       expect(y - 5).toBeGreaterThan(GROUND_TOP);
     }
+  });
+
+  it('seats villagers in front of the baseline as well as behind it', () => {
+    // The field reaches toward the viewer, not only toward the horizon: the
+    // front rows stand below GROUND_Y, all the way out to GROUND_FRONT.
+    const ys = [...placeCreatures(ids).values()].map((s) => s.y);
+    expect(Math.max(...ys)).toBe(GROUND_FRONT);
+    expect(GROUND_FRONT).toBeGreaterThan(GROUND_Y);
   });
 
   it('gives the back row real field behind it, not a razor-thin horizon', () => {
@@ -179,6 +188,7 @@ describe('placeCreatures', () => {
     // the middle rows ever share pixels with a prop, and blocking more than
     // that would cost the row capacity the village needs.
     expect(homesKeepOutAt(GROUND_Y)).toEqual([]);
+    expect(homesKeepOutAt(GROUND_FRONT)).toEqual([]);
     expect(homesKeepOutAt(GROUND_Y - 3 * 46)).toEqual([]);
   });
 

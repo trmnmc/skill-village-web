@@ -24,18 +24,29 @@ export const ZONES: readonly Zone[] = Object.freeze([
 ]);
 
 export const WORLD_W = 4300;
-/** Baseline the creatures stand on; depth rows sit just behind it. */
+/** Baseline the props are anchored around; depth rows reach both ways from it. */
 export const GROUND_Y = 620;
 
-const ROWS = 4;
+/** Depth rows behind the baseline, toward the horizon. */
+const BACK_ROWS = 3;
+/** Depth rows in front of the baseline, toward the viewer. */
+const FRONT_ROWS = 2;
+const ROWS = BACK_ROWS + FRONT_ROWS + 1;
 const ROW_DEPTH = 46;
 const MARGIN = 90;
 
 /**
- * How far the furthest depth row reaches above the baseline. Row 0 stands on
- * GROUND_Y and every row behind it is one ROW_DEPTH further up the screen.
+ * How far the furthest depth row reaches above the baseline: only the back
+ * rows count here — the front rows extend the field the other way, toward
+ * the viewer, and never move the horizon.
  */
-const DEPTH_REACH = (ROWS - 1) * ROW_DEPTH;
+const DEPTH_REACH = BACK_ROWS * ROW_DEPTH;
+
+/** The front row's feet: the closest to the viewer a villager ever stands. */
+export const GROUND_FRONT = GROUND_Y + FRONT_ROWS * ROW_DEPTH;
+
+/** Feet height for a depth row: row 0 is the front-most, each next one steps back. */
+const rowY = (row: number) => GROUND_FRONT - row * ROW_DEPTH;
 
 /**
  * Clearance between the furthest row and the horizon. A creature's contact
@@ -256,9 +267,7 @@ export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
   const occupied = new Map<number, number[]>();
 
   const seating = [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  const bandsByRow = Array.from({ length: ROWS }, (_, row) =>
-    homesKeepOutAt(GROUND_Y - row * ROW_DEPTH),
-  );
+  const bandsByRow = Array.from({ length: ROWS }, (_, row) => homesKeepOutAt(rowY(row)));
 
   for (const id of seating) {
     const h = hash(id);
@@ -272,7 +281,7 @@ export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
     taken.push(x);
     occupied.set(row, taken);
 
-    spots.set(id, { x, y: GROUND_Y - row * ROW_DEPTH });
+    spots.set(id, { x, y: rowY(row) });
   }
 
   return spots;
