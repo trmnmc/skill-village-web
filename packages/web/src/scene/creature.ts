@@ -318,7 +318,12 @@ export async function spawnCreature(
       k.z(1),
     ]);
     const lid = root.add([
-      k.rect(U * 2, U * 2),
+      // 0.2 cells larger than the 2x2 white block it covers: the baked sprite
+      // and this vector rect round sub-pixels differently under breath squash,
+      // and an exact-size lid can leave a one-pixel sliver of baked white at
+      // its edge. Every body grid keeps body-hue cells around the eye block,
+      // so the overshoot paints hue on hue — invisible, and the sliver's gone.
+      k.rect(U * 2.4, U * 2.4),
       k.pos(0, 0),
       k.anchor('center'),
       k.color(lidColour),
