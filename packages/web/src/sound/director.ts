@@ -4,10 +4,10 @@ import { babble, signaturePhrase, type Syllable, type VoiceParams } from './voic
 /**
  * The deciding half of the engine, spec §2: game events in, plain commands
  * out. Pure — state is threaded explicitly so every rule here is testable
- * without an AudioContext in the room.
+ * without Web Audio API dependencies.
  */
 export interface DirectorCtx {
-  /** The player's clock (AudioContext.currentTime), seconds. */
+  /** The player's clock (in seconds), for scheduling audio events. */
   now: number;
   camX: number;
   viewW: number;
