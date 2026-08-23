@@ -1,7 +1,26 @@
+import { generateAppearance, type CreatureAppearance } from '@village/core';
 import type { SwarmProject } from '../bridge/swarm.js';
 import type { ShowroomConfig } from './config.js';
 
 export type ResidentState = 'egg' | 'common';
+
+/**
+ * Stable identity for a swarm-built resident: `swarm:<slug>`. This string is
+ * both the showroom resident's id and its DNA name — S4's delivery reproduces
+ * the creature in a buyer's village from the slug alone, so NEVER change it.
+ */
+function swarmResidentId(slug: string): string {
+  return `swarm:${slug}`;
+}
+
+/**
+ * A swarm resident's look. Kind is 'skill' (grounded, never winged); the DNA
+ * seed is therefore sha256 of `skill:swarm:<slug>` — the namespace keeps swarm
+ * residents from colliding with a player's real skill of the same name.
+ */
+function swarmAppearance(slug: string): CreatureAppearance {
+  return generateAppearance({ kind: 'skill', name: swarmResidentId(slug) });
+}
 
 /**
  * The S1 lifecycle proxy (spec §3), isolated so S2 can swap it for the feed's
@@ -21,7 +40,7 @@ export interface ShowroomEvent {
   name: string;
 }
 
-const displayName = (p: SwarmProject) => (p.name !== '' ? p.name : p.slug);
+export const displayName = (p: SwarmProject) => (p.name !== '' ? p.name : p.slug);
 
 /**
  * Everything the notice board will ever say comes from diffing two consecutive
@@ -85,4 +104,145 @@ export function mergeRoster(roster: SwarmProject[], fetched: SwarmProject[]): Sw
   const known = new Set(roster.map((p) => p.slug));
   for (const p of fetched) if (!known.has(p.slug)) merged.push(p);
   return merged;
+}
+
+export interface SpectatorResident {
+  id: string;
+  kind: 'skill';
+  name: string;
+  nickname: '';
+  appearance: CreatureAppearance;
+  stats: { mood: number; energy: number };
+  slug: string;
+  description: string | null;
+  runs: number;
+  builtAt: string | null;
+  lastBuiltAt: string | null;
+  repoUrl: string | null;
+  liveUrl: string | null;
+}
+
+export interface EggView {
+  slug: string;
+  name: string;
+  runs: number;
+  description: string | null;
+  lastBuiltAt: string | null;
+  active: boolean;
+  /** The future creature's body hue — the egg wears its spots. */
+  hue: string;
+}
+
+export interface RareView {
+  slug: string;
+  number: number;
+  auctionOpensAt: string;
+  name: string;
+  description: string | null;
+  runs: number;
+  builtAt: string | null;
+  repoUrl: string | null;
+  liveUrl: string | null;
+}
+
+/** A build within this window counts as actively incubating / lively. */
+const ACTIVE_MS = 48 * 60 * 60 * 1000;
+
+function isActive(lastBuiltAt: string | null, now: number): boolean {
+  if (lastBuiltAt === null) return false;
+  const t = Date.parse(lastBuiltAt);
+  return !Number.isNaN(t) && now - t < ACTIVE_MS;
+}
+
+export function resolveRares(config: ShowroomConfig, projects: SwarmProject[]): { rares: RareView[]; ignored: string[] } {
+  const bySlug = new Map(projects.map((p) => [p.slug, p]));
+  const rares: RareView[] = [];
+  const ignored: string[] = [];
+  for (const r of config.rares) {
+    const p = bySlug.get(r.slug);
+    if (!p) { ignored.push(`rare "${r.slug}" is not in the feed`); continue; }
+    if (classify(p) !== 'common') { ignored.push(`rare "${r.slug}" is still an egg`); continue; }
+    rares.push({
+      slug: r.slug, number: r.number, auctionOpensAt: r.auctionOpensAt,
+      name: displayName(p), description: p.description, runs: p.runs,
+      builtAt: p.builtAt, repoUrl: p.repoUrl, liveUrl: p.liveUrl,
+    });
+  }
+  rares.sort((a, b) => a.number - b.number);
+  return { rares, ignored };
+}
+
+export interface VillagePayload {
+  residents: SpectatorResident[];
+  eggs: EggView[];
+  /** The pedestal: the highest-numbered resolved rare (the current drop). */
+  rare: RareView | null;
+  events: ShowroomEvent[];
+  counts: { villagers: number; eggs: number; rares: number };
+  feedStale: boolean;
+  trivia: Record<string, string>;
+}
+
+/** How many event lines the payload carries; the log on disk keeps everything. */
+const EVENT_TAIL = 20;
+
+export function buildVillagePayload(args: {
+  projects: SwarmProject[];
+  config: ShowroomConfig;
+  events: ShowroomEvent[];
+  feedStale: boolean;
+  now: number;
+}): VillagePayload {
+  const hidden = new Set(args.config.hidden);
+  const visible = args.projects.filter((p) => !hidden.has(p.slug));
+
+  const residents: SpectatorResident[] = visible
+    .filter((p) => classify(p) === 'common')
+    .map((p) => {
+      const active = isActive(p.lastBuiltAt, args.now);
+      return {
+        id: swarmResidentId(p.slug),
+        kind: 'skill' as const,
+        name: displayName(p),
+        nickname: '' as const,
+        appearance: swarmAppearance(p.slug),
+        // Against behaviour.ts thresholds: energy 20 dozes (< 25), energy 80 is
+        // awake and can hop (> 70 with mood > 75). Mood never drops below 35:
+        // showroom residents are swarm's charges and are never scruffy.
+        stats: active ? { mood: 80, energy: 80 } : { mood: 60, energy: 20 },
+        slug: p.slug,
+        description: p.description,
+        runs: p.runs,
+        builtAt: p.builtAt,
+        lastBuiltAt: p.lastBuiltAt,
+        repoUrl: p.repoUrl,
+        liveUrl: p.liveUrl,
+      };
+    })
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+  const eggs: EggView[] = visible
+    .filter((p) => classify(p) === 'egg')
+    .map((p) => ({
+      slug: p.slug,
+      name: p.name, // '' stays '': the client renders the "?????" egg
+      runs: p.runs,
+      description: p.description,
+      lastBuiltAt: p.lastBuiltAt,
+      active: isActive(p.lastBuiltAt, args.now),
+      hue: swarmAppearance(p.slug).palette.hue,
+    }))
+    .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+
+  const { rares } = resolveRares(args.config, visible);
+
+  return {
+    residents,
+    eggs,
+    rare: rares.length > 0 ? rares[rares.length - 1]! : null,
+    events: args.events.slice(-EVENT_TAIL).reverse(),
+    counts: { villagers: residents.length, eggs: eggs.length, rares: rares.length },
+    feedStale: args.feedStale,
+    trivia: args.config.trivia,
+  };
 }
