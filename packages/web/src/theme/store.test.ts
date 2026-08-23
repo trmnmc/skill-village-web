@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createThemeStore, cssVars } from './store.js';
 import { PALETTES, mix } from './palettes.js';
+import { isHex } from '../theme.js';
 import type { RealWeatherSource } from './weather/real.js';
 
 const at = (iso: string) => () => new Date(iso);
@@ -39,6 +40,28 @@ describe('createThemeStore — clock resolution', () => {
     const sky = s.current().tokens.sky1;
     expect(sky).not.toBe(PALETTES['1a'].skies.day[1]);
     expect(sky).not.toBe(PALETTES['1b'].skies.day[1]);
+  });
+});
+
+describe('tick — publish dedupe signature', () => {
+  it('keeps publishing through the day plateau as the sun arc moves (no freeze)', () => {
+    // 10:00 on 2026-08-18 (a weave weekday) sits inside the '1a day' plateau
+    // (8:30–16:45 per buildTimeline) where tokens/flags/weather are constant
+    // for hours — only sun.x01/y01 (and moonSky/tint) move minute to minute.
+    // A signature that omits them would never re-publish here.
+    let nowMs = new Date('2026-08-18T10:00:00').getTime();
+    const s = createThemeStore({ now: () => new Date(nowMs), storage: mem() });
+    s.tick();
+    const firstX01 = s.current().sun.x01;
+
+    const spy = vi.fn();
+    s.subscribe(spy);
+    nowMs += 30 * 60_000; // +30 minutes, same plateau
+    s.tick();
+
+    expect(spy).toHaveBeenCalled();
+    const publishedX01 = spy.mock.calls[spy.mock.calls.length - 1]![0].sun.x01;
+    expect(publishedX01).not.toBe(firstX01);
   });
 });
 
@@ -109,6 +132,27 @@ describe('dev override', () => {
     expect(t.flags.isNight).toBe(true);
     expect(t.weather.kind).toBe('storm');
   });
+});
+
+describe('dev override — garbage input safety', () => {
+  // paletteRaw in PALETTES walks the prototype chain, so ?palette=toString or
+  // ?palette=__proto__ used to pass validation and crash tick() at boot. Every
+  // entry here must resolve to a sane theme instead of throwing.
+  const garbageSearches = [
+    '?at=99:99',
+    '?weather=nonsense',
+    '?palette=zz',
+    '?palette=toString',
+    '?palette=__proto__',
+  ];
+
+  for (const search of garbageSearches) {
+    it(`tick() does not throw for ${search}`, () => {
+      const s = createThemeStore({ now: at('2026-08-19T12:00:00'), storage: mem(), search });
+      expect(() => s.tick()).not.toThrow();
+      expect(isHex(s.current().tokens.sky1)).toBe(true);
+    });
+  }
 });
 
 describe('cssVars', () => {

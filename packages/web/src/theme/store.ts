@@ -121,7 +121,7 @@ function parseOverrides(search: string): Overrides {
   const dayRaw = params.get('day');
   const day = dayRaw && VALID_DAY_OVERRIDES.has(dayRaw) ? dayRaw : undefined;
   const paletteRaw = params.get('palette');
-  const palette = paletteRaw && paletteRaw in PALETTES ? (paletteRaw as PaletteId) : undefined;
+  const palette = paletteRaw && Object.hasOwn(PALETTES, paletteRaw) ? (paletteRaw as PaletteId) : undefined;
   const weatherRaw = params.get('weather');
   const weather = weatherRaw && (ALL_WEATHERS as string[]).includes(weatherRaw) ? (weatherRaw as WeatherKind) : undefined;
   return { at, day, palette, weather, any: at !== undefined || day !== undefined || palette !== undefined || weather !== undefined };
@@ -290,7 +290,10 @@ export function createThemeStore(deps?: {
   function tick(): void {
     const resolved = resolve(now());
     currentTheme = resolved;
-    const sig = JSON.stringify({ tokens: resolved.tokens, flags: resolved.flags, weather: resolved.weather });
+    const sig = JSON.stringify({
+      tokens: resolved.tokens, flags: resolved.flags, weather: resolved.weather,
+      sun: resolved.sun, moonSky: resolved.moonSky, tint: resolved.tint,
+    });
     if (sig !== lastSignature) {
       lastSignature = sig;
       for (const fn of subscribers) fn(resolved);
