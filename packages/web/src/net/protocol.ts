@@ -69,6 +69,11 @@ function isRenderable(value: unknown): value is Creature {
   );
 }
 
+/** The renderable subset of an arbitrary list, sorted for stable render order. */
+export function filterRenderable(values: unknown[]): Creature[] {
+  return values.filter(isRenderable).sort((a, b) => a.id.localeCompare(b.id));
+}
+
 /**
  * Turn a server state payload into what the renderer needs. Anything the
  * renderer cannot draw is dropped rather than crashing the village: one bad
@@ -79,9 +84,7 @@ export function toView(payload: unknown): VillageView | null {
   const p = payload as { creatures?: unknown; problems?: unknown; startupNote?: unknown; llm?: unknown };
   if (typeof p.creatures !== 'object' || p.creatures === null) return null;
 
-  const creatures = Object.values(p.creatures as Record<string, unknown>)
-    .filter(isRenderable)
-    .sort((a, b) => a.id.localeCompare(b.id));
+  const creatures = filterRenderable(Object.values(p.creatures as Record<string, unknown>));
 
   let llm: LlmView | null = null;
   const rawLlm = p.llm;
