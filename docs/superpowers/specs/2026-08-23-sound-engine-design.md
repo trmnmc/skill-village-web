@@ -165,8 +165,15 @@ music is a visitor. A village left open all day must never feel like a loop.
 - One speaker button in the existing HUD strip: click toggles master mute;
   hover (click-hold on touch) reveals a popover with the four bus sliders.
 - All five values persist in `localStorage` (`settings.ts`). Default: sound
-  on, master 70%, music slightly lower. After that, what you set is what you
-  get.
+  on, master 70%, music slightly lower, **ambience 0**. After that, what you
+  set is what you get.
+- **Playtest amendment (2026-08-23):** the ambient bed (wind, songbirds,
+  crickets) shipped and was judged more irritant than atmosphere in its
+  first listen. It is parked off-by-default — the machinery stays, the
+  ambience slider opts back in — pending an ear-tuning overhaul (backlog:
+  thinner dawn chorus, softer cricket gates, possibly sparser wind LFO).
+  §5's "ambience is the constant" describes the intended end state, not
+  the current default.
 - First gesture: the village opens silent (browser rule); the speaker icon
   shows a small dot until unlocked. The first click — pan, creature,
   anything — creates the context and fades ambience in over ~2s. No

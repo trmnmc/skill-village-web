@@ -14,7 +14,10 @@ export interface SoundSettings {
 export const DEFAULT_SETTINGS: SoundSettings = {
   muted: false,
   master: 0.7,
-  buses: { voices: 1, sfx: 1, ambience: 1, music: 0.85 },
+  // Ambience ships at zero: the first playtest found the bed (wind, birds,
+  // crickets) more irritant than atmosphere, so it is parked off-by-default
+  // pending an ear-tuning overhaul — the HUD slider opts back in. Spec §6.
+  buses: { voices: 1, sfx: 1, ambience: 0, music: 0.85 },
 };
 
 export const STORAGE_KEY = 'skill-village:sound';
