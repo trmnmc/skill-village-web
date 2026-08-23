@@ -1,0 +1,46 @@
+# The village, kept awake by systemd.
+#
+# Installed by deploy/bootstrap.sh, which substitutes the paths below. The
+# server is the whole back end: state store, file bridge, sim tick, REST and
+# WebSocket API, all in one process on 127.0.0.1 — nginx is the only thing
+# that talks to the outside world.
+
+[Unit]
+Description=Skill Village — game server and daemon
+Documentation=https://github.com/trmnmc/skill-village-web
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__APP_HOME__/app
+# HOME is what decides where the village looks for skills (~/.claude) and
+# where it keeps its own state (~/.skill-village). systemd would set it from
+# the user's passwd entry anyway; it is spelled out because everything about
+# this deploy hangs off it.
+Environment=HOME=__APP_HOME__
+Environment=NODE_ENV=production
+Environment=VILLAGE_PORT=__PORT__
+# tsx from the checkout's own node_modules, not npx: no network lookup on
+# boot, and the version is whatever package-lock.json pinned.
+ExecStart=__APP_HOME__/app/node_modules/.bin/tsx packages/server/src/main.ts
+Restart=always
+RestartSec=3
+
+# The server reads ~/.claude and writes only inside ~/.skill-village, so
+# nothing outside its own home needs to be writable. If you later install the
+# claude CLI for this user to give creatures their voices, keep the CLI (and
+# its login) under __APP_HOME__ so ReadWritePaths still covers it.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=__APP_HOME__
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
