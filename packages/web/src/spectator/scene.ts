@@ -9,16 +9,31 @@ import { roleMap } from '../render/roles.js';
 import { clamp, easeOutBack, phaseFor } from '../motion/motion.js';
 import { bakeEgg, EGG_ROWS } from './egg.js';
 import { formatAuctionCountdown, type PanelTarget } from './copy.js';
+import { placeAvoiding, type XSpan } from './barriers.js';
 import type { EggView, RareViewFull, ResidentView, ShowroomView } from './protocol.js';
 
 /** One meadow, no zone strip — spec §5's showroom layout. */
 const WORLD_W = 2200;
 /** Fenced pen; eggs are placed here via placeInRange. */
 const NURSERY = { lo: 160, hi: 520 };
-/** Residents are placed here via placeInRange. */
+/** Residents are placed here via placeAvoiding around the scenery. */
 const COMMONS = { lo: 640, hi: 1560 };
 /** The rare stands here, never in the commons. */
 const PEDESTAL_X = 1800;
+
+/**
+ * Scenery footprints inside the commons band — villagers are never seated in
+ * them (staging law: nothing stands inside a house). Spans cover each prop's
+ * drawn footprint plus overhang: a house wall is x..x+86 with the roof at
+ * x-8..x+94, a tree canopy is x..x+40. Change a prop's position in
+ * buildScenery and its span here moves with it.
+ */
+const COMMONS_BARRIERS: XSpan[] = [
+  { lo: 598, hi: 662 },   // tree at 610
+  { lo: 888, hi: 1006 },  // house at 900
+  { lo: 1148, hi: 1212 }, // tree at 1160
+  { lo: 1408, hi: 1526 }, // house at 1420
+];
 
 /** How far a press may travel and still count as a click, in client pixels. */
 const CLICK_SLOP = 6;
@@ -679,7 +694,7 @@ export async function startSpectatorVillage(options: SpectatorVillageOptions): P
     const commons = view.residents.filter((r) => !view.rare || r.slug !== view.rare.slug);
     const toRender = rareResident ? [...commons, rareResident] : commons;
 
-    const spots = new Map<string, Spot>(placeInRange(commons.map((r) => r.id), COMMONS.lo, COMMONS.hi));
+    const spots = new Map<string, Spot>(placeAvoiding(commons.map((r) => r.id), COMMONS, COMMONS_BARRIERS));
     if (rareResident) spots.set(rareResident.id, { x: PEDESTAL_X, y: pedestalTopY });
     placements = spots;
 

@@ -68,7 +68,7 @@ const WIDEST_BODY = Math.max(...Object.values(BODIES).map((b) => b.w)) * U;
 export const MIN_SEPARATION = WIDEST_BODY + 6;
 
 /** Same hash as the motion phase: stable, cheap, and no dependency. */
-function hash(id: string): number {
+export function hashId(id: string): number {
   let h = 2166136261;
   for (let i = 0; i < id.length; i++) {
     h ^= id.charCodeAt(i);
@@ -130,7 +130,7 @@ export function placeInRange(ids: readonly string[], lo: number, hi: number): Ma
   const seating = [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
   for (const id of seating) {
-    const h = hash(id);
+    const h = hashId(id);
     const row = h % ROWS;
     // Two independent draws from the hash: one for the row, one for the offset.
     const along = ((h >>> 8) % 10000) / 10000;
