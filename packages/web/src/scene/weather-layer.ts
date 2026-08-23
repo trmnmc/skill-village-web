@@ -174,8 +174,17 @@ export interface RainbowBlock {
   alpha: number;
 }
 
-/** How much of the sky's height the outermost band's radius takes up. */
-const RAINBOW_RADIUS = 0.68;
+/** Clear sky left above the apex, as a fraction of the sky's height. */
+const RAINBOW_APEX_MARGIN = 0.12;
+/**
+ * How far below the horizon the bow's centre sits, in sky-heights, at a
+ * sunrise sun and at a noon sun. A real bow is centred on the antisolar
+ * point, which is exactly as far below the horizon as the sun is above it —
+ * which is why you only ever see the top cap of a very large circle, and why
+ * the bow flattens and widens as the day climbs.
+ */
+const RAINBOW_DROP_MIN = 0.35;
+const RAINBOW_DROP_SPAN = 0.5;
 /**
  * Opacity across the five bands, outermost to innermost. A real bow has no
  * hard edge — it feathers into the sky on both sides — so the outer and inner
@@ -189,8 +198,13 @@ const RAINBOW_BAND_ALPHA = [0.5, 0.8, 1, 0.8, 0.55];
  * it thins out into haze instead of stopping dead on the horizon.
  */
 const RAINBOW_LEG_FADE = 0.75;
-/** Band thickness as a fraction of that radius — the reference's 6-of-170 ratio. */
-const RAINBOW_BAND_RATIO = 6 / 170;
+/**
+ * Band thickness as a fraction of the radius. A real bow's whole spectrum is
+ * about 2° across a 42° radius — a slender ribbon. The reference painter's
+ * 6-of-170 was three times thicker, which is what made a big arc read as a
+ * fat hoop; this is nearer the truth while staying thick enough to see.
+ */
+const RAINBOW_BAND_RATIO = 0.014;
 /** Step along a band as a fraction of one block, so consecutive squares overlap. */
 const RAINBOW_OVERLAP = 0.7;
 
@@ -211,31 +225,44 @@ const RAINBOW_OVERLAP = 0.7;
  * circle at any viewport aspect — a deliberate departure from the mapX/mapY
  * split used elsewhere in this file.
  */
-export function rainbowBlocks(width: number, horizonY: number, sunX01 = 0.5): RainbowBlock[] {
+export function rainbowBlocks(
+  width: number,
+  horizonY: number,
+  sunX01 = 0.5,
+  sunY01 = 0.5,
+): RainbowBlock[] {
   const blocks: RainbowBlock[] = [];
   // A bow is centred on the antisolar point — directly opposite the sun — so
   // it swings across the sky as the day turns, and is never the dead-centre
   // croquet hoop that a fixed width/2 produces. Clamped so a sun near the
   // horizon cannot drag the arc half out of frame.
   const centerX = width * Math.min(0.7, Math.max(0.3, 1 - sunX01));
-  const centerY = horizonY;
-  const outerR = horizonY * RAINBOW_RADIUS;
+  // ...and that centre is *below* the horizon, by as much as the sun is above
+  // it. Everything visible is therefore the top cap of a circle far larger
+  // than the sky, which is what makes a real bow feel enormous: the feet run
+  // off toward the edges of the frame rather than planting inside it.
+  const drop = horizonY * (RAINBOW_DROP_MIN + RAINBOW_DROP_SPAN * sunY01);
+  const centerY = horizonY + drop;
+  const outerR = horizonY * (1 - RAINBOW_APEX_MARGIN) + drop;
   const size = outerR * RAINBOW_BAND_RATIO;
   for (let band = 0; band < 5; band++) {
     const rr = outerR - band * size;
     const step = (size * RAINBOW_OVERLAP) / rr;
+    // Where this band crosses the horizon, as a height fraction — the fade
+    // below is measured across the *visible* cap, not the whole circle, so
+    // the bow still dissolves to nothing exactly at the ground line.
+    const footClimb = Math.min(1, drop / rr);
     for (let a = Math.PI; a <= Math.PI * 2; a += step) {
       const y = centerY + Math.sin(a) * rr;
       // The blocks nearest each foot would hang below the horizon line.
-      if (y + size > centerY) continue;
-      // Height up the arc: 1 at the apex, 0 at either foot.
-      const climb = Math.abs(Math.sin(a));
+      if (y + size > horizonY) continue;
+      const climb = (Math.abs(Math.sin(a)) - footClimb) / Math.max(1e-6, 1 - footClimb);
       blocks.push({
         x: centerX + Math.cos(a) * rr,
         y,
         size,
         band,
-        alpha: RAINBOW_BAND_ALPHA[band]! * Math.pow(climb, RAINBOW_LEG_FADE),
+        alpha: RAINBOW_BAND_ALPHA[band]! * Math.pow(Math.max(0, climb), RAINBOW_LEG_FADE),
       });
     }
   }
@@ -1171,13 +1198,14 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
   let rainbowBuiltWidth = 0;
   let rainbowBuiltHorizonY = 0;
   let rainbowBuiltSunX01 = -1;
+  let rainbowBuiltSunY01 = -1;
 
-  function rebuildRainbow(width: number, horizonY: number, sunX01: number): void {
+  function rebuildRainbow(width: number, horizonY: number, sunX01: number, sunY01: number): void {
     rainbowRoot?.destroy();
     const root = k.add([k.pos(0, 0), k.z(5), k.fixed()]);
     rainbowBlockObjs = [];
     rainbowBlockAlphas = [];
-    for (const blk of rainbowBlocks(width, horizonY, sunX01)) {
+    for (const blk of rainbowBlocks(width, horizonY, sunX01, sunY01)) {
       const obj = root.add([
         k.rect(blk.size, blk.size),
         k.pos(blk.x, blk.y),
@@ -1209,16 +1237,19 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
         // would rebuild ~600 objects a minute for a sub-pixel shift, so the
         // sun only counts once it has moved a visible amount.
         const sunX01 = t.sun.visible ? t.sun.x01 : 0.5;
+        const sunY01 = t.sun.visible ? t.sun.y01 : 0.5;
         if (
           !rainbowRoot ||
           Math.abs(width - rainbowBuiltWidth) > 1 ||
           Math.abs(horizonY - rainbowBuiltHorizonY) > 1 ||
-          Math.abs(sunX01 - rainbowBuiltSunX01) > 0.02
+          Math.abs(sunX01 - rainbowBuiltSunX01) > 0.02 ||
+          Math.abs(sunY01 - rainbowBuiltSunY01) > 0.02
         ) {
-          rebuildRainbow(width, horizonY, sunX01);
+          rebuildRainbow(width, horizonY, sunX01, sunY01);
           rainbowBuiltWidth = width;
           rainbowBuiltHorizonY = horizonY;
           rainbowBuiltSunX01 = sunX01;
+          rainbowBuiltSunY01 = sunY01;
         }
         const alpha = 0.9 * t.weather.ramp;
         for (let i = 0; i < rainbowBlockObjs.length; i++) {
@@ -1230,6 +1261,7 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
         rainbowBlockObjs = [];
         rainbowBlockAlphas = [];
         rainbowBuiltSunX01 = -1;
+        rainbowBuiltSunY01 = -1;
       }
 
       // Umbrellas: creature.ts seeds ownership per id and creates the 5

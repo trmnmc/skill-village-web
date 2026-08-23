@@ -276,16 +276,45 @@ describe('rainbowBlocks', () => {
     }
   });
 
-  it('sits in the distance: the arc spans a modest share of the sky, not the whole frame', () => {
+  it('is huge: the bow spans multiples of the sky\'s height, the way a real one dwarfs the landscape', () => {
     const horizonY = 500;
     const blocks = rainbowBlocks(1600, horizonY);
     const xs = blocks.map((b) => b.x);
     const span = Math.max(...xs) - Math.min(...xs);
-    // Roughly 1.2x the sky's height across — comfortably inside a wide frame.
-    expect(span).toBeGreaterThan(horizonY);
-    expect(span).toBeLessThan(horizonY * 1.5);
-    // ...and its apex leaves clear sky above it.
-    expect(Math.min(...blocks.map((b) => b.y))).toBeGreaterThan(horizonY * 0.3);
+    // Feet far apart — well over twice the sky is tall, not a small hoop.
+    expect(span).toBeGreaterThan(horizonY * 2);
+  });
+
+  it('rises most of the way up the sky, leaving only a margin above the apex', () => {
+    const horizonY = 500;
+    const apexY = Math.min(...rainbowBlocks(1600, horizonY).map((b) => b.y));
+    expect(apexY).toBeLessThan(horizonY * 0.25);
+    expect(apexY).toBeGreaterThanOrEqual(0);
+  });
+
+  it('is a shallow cap of a much larger circle, so its curve is gentle rather than hoop-like', () => {
+    const horizonY = 500;
+    const blocks = rainbowBlocks(1600, horizonY);
+    const span = Math.max(...blocks.map((b) => b.x)) - Math.min(...blocks.map((b) => b.x));
+    const rise = horizonY - Math.min(...blocks.map((b) => b.y));
+    // A semicircle would have span == 2*rise; a big distant bow is far wider
+    // than it is tall.
+    expect(span / rise).toBeGreaterThan(2.4);
+  });
+
+  it('flattens as the sun climbs: a higher sun drops the antisolar centre and widens the bow', () => {
+    const spanAt = (sunY01: number) => {
+      const xs = rainbowBlocks(1600, 500, 0.5, sunY01).map((b) => b.x);
+      return Math.max(...xs) - Math.min(...xs);
+    };
+    expect(spanAt(1)).toBeGreaterThan(spanAt(0));
+  });
+
+  it('keeps the bands a slender ribbon, not a fat painted hoop', () => {
+    const blocks = rainbowBlocks(1600, 500);
+    const thickness = blocks[0]!.size * 5;
+    const rise = 500 - Math.min(...blocks.map((b) => b.y));
+    expect(thickness / rise).toBeLessThan(0.2);
   });
 
   it('stays centred horizontally whatever the viewport width', () => {
