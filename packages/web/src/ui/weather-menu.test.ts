@@ -77,3 +77,32 @@ describe('menuModel — timeChips', () => {
     ]);
   });
 });
+
+describe('menuModel — palette chips', () => {
+  it('offers auto plus one chip per palette, labelled with the palette name', () => {
+    const { paletteChips } = menuModel('off', 'clear', null, null);
+    expect(paletteChips!.map((c) => c.id)).toEqual(['auto', '1a', '1b', '1c', '1d', '1e', '1f']);
+    expect(paletteChips!.find((c) => c.id === '1a')!.label).toBe('Meadow Blue');
+    expect(paletteChips!.find((c) => c.id === '1f')!.label).toBe('Marigold');
+  });
+
+  it('auto is active when no palette is pinned', () => {
+    const { paletteChips } = menuModel('off', 'clear', null, null);
+    expect(paletteChips!.find((c) => c.id === 'auto')!.active).toBe(true);
+    expect(paletteChips!.filter((c) => c.active)).toHaveLength(1);
+  });
+
+  it('the pinned palette is the only active chip', () => {
+    const { paletteChips } = menuModel('pick', 'clear', null, '1a');
+    expect(paletteChips!.find((c) => c.id === '1a')!.active).toBe(true);
+    expect(paletteChips!.find((c) => c.id === 'auto')!.active).toBe(false);
+    expect(paletteChips!.filter((c) => c.active)).toHaveLength(1);
+  });
+
+  it('is present in off/pick/real and absent in journey (which owns its own palette)', () => {
+    expect(menuModel('off', 'clear', null, null).paletteChips).toBeDefined();
+    expect(menuModel('pick', 'clear', null, null).paletteChips).toBeDefined();
+    expect(menuModel('real', 'clear', null, null).paletteChips).toBeDefined();
+    expect(menuModel('journey', 'clear', null, '1a').paletteChips).toBeUndefined();
+  });
+});

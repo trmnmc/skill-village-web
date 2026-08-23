@@ -226,3 +226,67 @@ describe('cssVars', () => {
     expect(nv['--sv-chip-player']).toBe(mix(night.current().tokens.ink, '#000000', 0.05));
   });
 });
+
+describe('createThemeStore — palette pin', () => {
+  it('a pinned palette replaces the scheduled one: Meadow Blue day on a Marigold weekend', () => {
+    const storage = mem();
+    // 2026-08-23 is a Sunday — the schedule gives it a single special palette,
+    // not the Kelvin weekday weave, so its noon sky is nothing like 1a's blue.
+    const scheduled = createThemeStore({ now: at('2026-08-23T14:00:00'), storage });
+    scheduled.tick();
+    expect(scheduled.current().tokens.sky1).not.toBe(PALETTES['1a'].skies.day[1]);
+
+    const pinned = createThemeStore({ now: at('2026-08-23T14:00:00'), storage: mem() });
+    pinned.setPinnedPalette('1a');
+    pinned.tick();
+    expect(pinned.current().tokens.sky1).toBe(PALETTES['1a'].skies.day[1]);
+  });
+
+  it('round-trips through storage so the choice survives a reload', () => {
+    const storage = mem();
+    const first = createThemeStore({ now: at('2026-08-23T14:00:00'), storage });
+    first.setPinnedPalette('1c');
+    const reloaded = createThemeStore({ now: at('2026-08-23T14:00:00'), storage });
+    expect(reloaded.pinnedPalette()).toBe('1c');
+    reloaded.tick();
+    expect(reloaded.current().tokens.sky1).toBe(PALETTES['1c'].skies.day[1]);
+  });
+
+  it('clears back to the schedule when set to null', () => {
+    const storage = mem();
+    const s = createThemeStore({ now: at('2026-08-23T14:00:00'), storage });
+    s.setPinnedPalette('1a');
+    s.tick();
+    const pinnedSky = s.current().tokens.sky1;
+    s.setPinnedPalette(null);
+    s.tick();
+    expect(s.current().tokens.sky1).not.toBe(pinnedSky);
+    expect(createThemeStore({ now: at('2026-08-23T14:00:00'), storage }).pinnedPalette()).toBeNull();
+  });
+
+  it('a ?palette= URL override still beats the pin', () => {
+    const s = createThemeStore({ now: at('2026-08-23T14:00:00'), storage: mem(), search: '?palette=1e' });
+    s.setPinnedPalette('1a');
+    s.tick();
+    expect(s.current().tokens.sky1).toBe(PALETTES['1e'].skies.day[1]);
+  });
+
+  it('journey mode ignores the pin — it owns its own palette', () => {
+    const s = createThemeStore({ now: at('2026-08-23T14:00:00'), storage: mem() });
+    s.setMode('journey');
+    s.setPinnedPalette('1a');
+    s.tick();
+    const journeySky = s.current().tokens.sky1;
+    const s2 = createThemeStore({ now: at('2026-08-23T14:00:00'), storage: mem() });
+    s2.setMode('journey');
+    s2.tick();
+    expect(s.current().tokens.sky1).toBe(journeySky);
+    expect(s2.current().tokens.sky1).toBe(journeySky);
+  });
+
+  it('rejects a junk stored palette rather than exploding', () => {
+    const storage = mem();
+    storage.setItem('sv-palette-pin', 'toString');
+    expect(createThemeStore({ now: at('2026-08-23T14:00:00'), storage }).pinnedPalette()).toBeNull();
+  });
+});

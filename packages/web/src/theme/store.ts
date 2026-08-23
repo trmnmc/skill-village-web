@@ -30,6 +30,7 @@ export interface ThemeStore {
   mode(): WeatherMode; setMode(m: WeatherMode): void;
   picked(): WeatherKind; setPicked(k: WeatherKind): void;
   pinnedTime(): number | null; setPinnedTime(min: number | null): void;
+  pinnedPalette(): PaletteId | null; setPinnedPalette(p: PaletteId | null): void;
   setRealSource(src: RealWeatherSource | null): void;
   tick(): void; start(): void; stop(): void;
 }
@@ -37,6 +38,7 @@ export interface ThemeStore {
 const MODE_KEY = 'sv-weather-mode';
 const PICK_KEY = 'sv-weather-pick';
 const TIME_PIN_KEY = 'sv-time-pin';
+const PALETTE_PIN_KEY = 'sv-palette-pin';
 
 const VALID_MODES: WeatherMode[] = ['off', 'pick', 'journey', 'real'];
 const VALID_DAY_OVERRIDES = new Set(['sat', 'sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'weave']);
@@ -114,6 +116,12 @@ function parsePinnedTime(v: string | null): number | null {
   return n;
 }
 
+/** Loads the 'sv-palette-pin' id. Missing/empty/unknown → null (the schedule decides). */
+function parsePinnedPalette(v: string | null): PaletteId | null {
+  if (v === null || v === '') return null;
+  return Object.hasOwn(PALETTES, v) ? (v as PaletteId) : null;
+}
+
 function parseAt(v: string): number | undefined {
   const m = /^(\d{1,2}):(\d{2})$/.exec(v);
   if (!m) return undefined;
@@ -163,6 +171,7 @@ export function createThemeStore(deps?: {
     return v && (ALL_WEATHERS as string[]).includes(v) ? (v as WeatherKind) : 'clear';
   })();
   let pinnedState: number | null = parsePinnedTime(safeGet(TIME_PIN_KEY));
+  let pinnedPaletteState: PaletteId | null = parsePinnedPalette(safeGet(PALETTE_PIN_KEY));
 
   const subscribers = new Set<(t: ResolvedTheme) => void>();
   let currentTheme: ResolvedTheme | null = null;
@@ -206,12 +215,18 @@ export function createThemeStore(deps?: {
         weatherRamp = a.weather === b.weather ? 1 : Math.abs(t - 0.5) * 2;
       }
     } else {
-      const plan: DayPlan = ov.palette
-        ? { kind: 'single', palette: ov.palette }
+      // Palette priority: the ?palette= dev override, then the player's pinned
+      // choice from the gear menu, then the day's own scheduled plan. A pinned
+      // palette makes a single-palette day exactly like a weekend special — it
+      // replaces the weekday weave rather than recolouring it, so the frames
+      // still move dawn→day→dusk→night on the clock.
+      const forcedPalette: PaletteId | null = ov.palette ?? pinnedPaletteState;
+      const plan: DayPlan = forcedPalette
+        ? { kind: 'single', palette: forcedPalette }
         : ov.day
           ? planForOverrideDay(ov.day, n)
           : planForDate(n);
-      const prevPlan: DayPlan = (ov.palette || ov.day) ? plan : planForDate(prevCalendarDay(n));
+      const prevPlan: DayPlan = (forcedPalette || ov.day) ? plan : planForDate(prevCalendarDay(n));
       const frames = buildTimeline(plan, prevPlan, anchors);
       const { a, b, t } = sampleTimeline(frames, minuteOfDay);
       tokens = lerpTokens(tokensFor(a.palette, a.frame), tokensFor(b.palette, b.frame), t);
@@ -335,6 +350,11 @@ export function createThemeStore(deps?: {
     setPinnedTime(min: number | null): void {
       pinnedState = min;
       safeSet(TIME_PIN_KEY, min === null ? '' : String(min));
+    },
+    pinnedPalette(): PaletteId | null { return pinnedPaletteState; },
+    setPinnedPalette(p: PaletteId | null): void {
+      pinnedPaletteState = p;
+      safeSet(PALETTE_PIN_KEY, p ?? '');
     },
     setRealSource(src: RealWeatherSource | null): void { real = src; },
     tick,

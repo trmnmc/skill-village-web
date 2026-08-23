@@ -31,7 +31,10 @@ with weekdays woven from Meadow Blue and Golden Hour, rotating weekend palettes,
 days. Palettes blend continuously, and the UI dims after sunset. Four weather modes control the sky:
 **Off** (clear skies, the default — the clock still drives time and palette), **Pick** (choose a
 weather kind that stays), **Journey** (a ~45-minute curated tour of palette·time·weather), or
-**Real** (opt-in geolocation, live local weather + true sunrise/sunset via Open-Meteo). Override any sky with the dev
+**Real** (opt-in geolocation, live local weather + true sunrise/sunset via Open-Meteo). The gear menu
+also pins the two things the schedule would otherwise pick for you: the **palette** (auto, or any of
+the six by name) and the **time of day** (auto, or one of seven presets) — so you can hold the
+village in Meadow Blue at noon on a day the calendar wanted to paint Marigold. Override any sky with the dev
 cheat-sheet: `?at=HH:MM&day=sat&weather=storm&palette=1e` sets time, day of week, weather mode, and
 palette directly. The moon is a real lunar phase, calculated from
 [`github.com/trmnmc/moon`](https://github.com/trmnmc/moon) — a port of Jean Meeus's *Astronomical Algorithms*.

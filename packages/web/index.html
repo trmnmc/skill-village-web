@@ -111,7 +111,9 @@
         background: none; color: inherit; font: inherit; cursor: pointer;
       }
       .weather-menu-row.active { background: var(--sv-cream, #F2E5C4); color: var(--sv-ink, #3A2E22); }
-      #weather-menu-chips, #weather-menu-time-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 4px 2px; }
+      #weather-menu-chips, #weather-menu-time-chips, #weather-menu-palette-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 4px 2px; }
+      /* The palette row leads the popover, so it carries the divider under it. */
+      #weather-menu-palette-chips { border-bottom: 1px solid var(--sv-wood, #8A6B4A); padding-bottom: 5px; }
       .weather-menu-chip {
         padding: 4px 7px; border: 1.5px solid var(--sv-ink, #3A2E22); border-radius: 5px;
         background: none; color: inherit; font: inherit; cursor: pointer;
