@@ -25,6 +25,12 @@ mountSoundHud();
 mountSoundcheck();
 
 let lastStatus: 'connecting' | 'live' | 'offline' = 'connecting';
+// client.ts emits 'connecting' synchronously at the start of every retry, so
+// the real sequence after a drop is live → offline → connecting → live —
+// by the time 'live' lands, lastStatus is 'connecting', not 'offline'. This
+// flag survives that intermediate hop so "reconnected" still has something
+// to check against.
+let wasOffline = false;
 
 connect({
   onView: (view) => {
@@ -37,8 +43,8 @@ connect({
     );
     // Only real transitions ring, spec §4: losing a live village, or getting
     // it back. The initial 'connecting' is a pending answer, not a verdict.
-    if (status === 'offline' && lastStatus === 'live') sound.event({ type: 'offline' });
-    if (status === 'live' && lastStatus === 'offline') sound.event({ type: 'reconnected' });
+    if (status === 'offline' && lastStatus === 'live') { sound.event({ type: 'offline' }); wasOffline = true; }
+    if (status === 'live' && wasOffline) { sound.event({ type: 'reconnected' }); wasOffline = false; }
     lastStatus = status;
   },
 });

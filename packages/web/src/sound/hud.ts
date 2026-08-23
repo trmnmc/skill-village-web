@@ -57,6 +57,11 @@ export function mountSoundHud(): void {
   root.addEventListener('mouseenter', () => { popover.hidden = false; });
   root.addEventListener('mouseleave', () => { popover.hidden = true; });
   // The unlock dot clears on the same first gesture that unlocks audio.
-  window.addEventListener('pointerdown', () => setTimeout(render, 0), { once: true });
+  // player.ts unlocks on pointerdown OR keydown, so the HUD has to listen
+  // for both — a keyboard-only first gesture would otherwise leave the
+  // dot stuck. Both may fire once each; the double render is harmless.
+  const onFirstGesture = () => setTimeout(render, 0);
+  window.addEventListener('pointerdown', onFirstGesture, { once: true });
+  window.addEventListener('keydown', onFirstGesture, { once: true });
   render();
 }
