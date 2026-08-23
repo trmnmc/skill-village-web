@@ -120,6 +120,15 @@ export function toView(payload: unknown): VillageView | null {
   const rawTurn = (p as { robotLastTurnAt?: unknown }).robotLastTurnAt;
   const robotLastTurnAt = typeof rawTurn === 'number' ? rawTurn : null;
 
+  let robotResidentId: string | null = null;
+  const rawRobot = (p as { robot?: unknown }).robot;
+  if (typeof rawRobot === 'object' && rawRobot !== null) {
+    const r = rawRobot as { residentId?: unknown };
+    if (typeof r.residentId === 'string') robotResidentId = r.residentId;
+  }
+  const rawTurn = (p as { robotLastTurnAt?: unknown }).robotLastTurnAt;
+  const robotLastTurnAt = typeof rawTurn === 'number' ? rawTurn : null;
+
   return {
     creatures,
     problems: Array.isArray(p.problems) ? p.problems : [],
@@ -127,6 +136,8 @@ export function toView(payload: unknown): VillageView | null {
     robotResidentId,
     robotLastTurnAt,
     llm,
+    robotResidentId,
+    robotLastTurnAt,
   };
 }
 
