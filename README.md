@@ -52,6 +52,10 @@ Then open http://localhost:5173. The server finds your skills in `~/.claude/skil
 `~/.claude/agents`; if you have none, the village is an empty field waiting for M5's adoption
 center.
 
+To put it somewhere else — a droplet, a link, a friend — `deploy/` holds that half: a production
+build, a systemd unit, an nginx site behind one password, and scripts to set it up, update it, and
+send the village your skills. See [`deploy/README.md`](deploy/README.md).
+
 ## How it's built
 
 | Package | Role |

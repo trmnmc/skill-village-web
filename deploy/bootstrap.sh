@@ -109,6 +109,7 @@ main() {
 
   step "service"
   sed -e "s|__APP_USER__|$APP_USER|g" -e "s|__APP_HOME__|$APP_HOME|g" -e "s|__PORT__|$port|g" \
+      -e "s|__NODE_DIR__|$NODE_DIR|g" \
       "$here/skill-village.service" > /etc/systemd/system/skill-village.service
   systemctl daemon-reload
   systemctl enable skill-village
@@ -173,6 +174,16 @@ require_node() {
     echo "node $major is too old; the village needs 20+." >&2
     return 1
   fi
+  case "$node_path" in
+    /home/*|/root/*)
+      # ProtectHome=yes in the unit hides exactly these, so the service would
+      # start up unable to find its own interpreter.
+      echo "node lives at $node_path, which the service cannot see (ProtectHome)." >&2
+      echo "install it system-wide instead:" >&2
+      echo "  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs" >&2
+      return 1
+      ;;
+  esac
   dirname "$node_path"
 }
 

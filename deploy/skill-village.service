@@ -23,6 +23,10 @@ WorkingDirectory=__APP_HOME__/app
 Environment=HOME=__APP_HOME__
 Environment=NODE_ENV=production
 Environment=VILLAGE_PORT=__PORT__
+# tsx's shebang is `/usr/bin/env node`, and systemd hands a service the system
+# PATH — a node installed anywhere else (nvm, /opt) would be invisible here.
+# bootstrap.sh substitutes whatever directory it found node in.
+Environment=PATH=__NODE_DIR__:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # tsx from the checkout's own node_modules, not npx: no network lookup on
 # boot, and the version is whatever package-lock.json pinned.
 ExecStart=__APP_HOME__/app/node_modules/.bin/tsx packages/server/src/main.ts
