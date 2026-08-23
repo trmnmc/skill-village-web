@@ -1,6 +1,10 @@
 import kaplay, { type KAPLAYCtx } from 'kaplay';
 import type { Creature } from '@village/core/visual';
-import { TEXT_SS, THEME } from '../theme.js';
+import { TEXT_SS } from '../theme.js';
+import { themeStore } from '../theme/index.js';
+import type { Tokens, ResolvedTheme } from '../theme/store.js';
+import { mix } from '../theme/palettes.js';
+import { tokenTag, sceneryColor, creatureTintColor } from './retint.js';
 import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, placeCreatures, type Spot } from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
@@ -47,15 +51,29 @@ const bar = (remainingTok: number, cap: number) => {
   return '█'.repeat(filled) + '░'.repeat(10 - filled);
 };
 
-/** A flat rectangle prop. Spec §4.1: props are rectangles, never sprites. */
-function block(k: KAPLAYCtx, x: number, y: number, w: number, h: number, colour: string, z = 0) {
-  return k.add([k.rect(w, h), k.pos(x, y), k.color(hex(k, colour)), k.z(z)]);
+/**
+ * A flat rectangle prop, tagged and coloured off a palette token rather than
+ * a fixed hex. Spec §4.1: props are rectangles, never sprites. The colour is
+ * struck at creation time from the *current* resolved theme (so a mid-day
+ * boot starts correct); the `themed:<token>` tag lets `startVillage`'s
+ * retint walker find and recolour every one of these on a later theme
+ * change without this function knowing anything about that walker.
+ */
+function block(k: KAPLAYCtx, x: number, y: number, w: number, h: number, token: keyof Tokens, z = 0) {
+  const { tokens, tint } = themeStore.current();
+  return k.add([
+    k.rect(w, h),
+    k.pos(x, y),
+    k.color(hex(k, sceneryColor(tokens, tint, token))),
+    k.z(z),
+    tokenTag(token),
+  ]);
 }
 
-function house(k: KAPLAYCtx, x: number, y: number, wall: string, roof: string) {
+function house(k: KAPLAYCtx, x: number, y: number, wall: keyof Tokens, roof: keyof Tokens) {
   block(k, x, y - 66, 86, 66, wall, 1);
-  block(k, x + 30, y - 34, 22, 34, THEME.wood, 2);
-  block(k, x + 10, y - 56, 16, 14, THEME.sky, 2);
+  block(k, x + 30, y - 34, 22, 34, 'wood', 2);
+  block(k, x + 10, y - 56, 16, 14, 'sky1', 2);
   // Roof: three stacked bars, widest at the eaves — a pixel gable.
   block(k, x - 8, y - 80, 102, 14, roof, 2);
   block(k, x + 6, y - 92, 74, 12, roof, 2);
@@ -63,21 +81,23 @@ function house(k: KAPLAYCtx, x: number, y: number, wall: string, roof: string) {
 }
 
 function tree(k: KAPLAYCtx, x: number, y: number) {
-  block(k, x + 14, y - 44, 12, 44, THEME.wood, 1);
-  block(k, x, y - 96, 40, 54, THEME.foliage, 1);
-  block(k, x + 8, y - 110, 24, 18, THEME.foliageLite, 1);
+  block(k, x + 14, y - 44, 12, 44, 'wood', 1);
+  block(k, x, y - 96, 40, 54, 'foliage', 1);
+  block(k, x + 8, y - 110, 24, 18, 'foliageLite', 1);
 }
 
 function sign(k: KAPLAYCtx, x: number, y: number, label: string, font: string) {
-  block(k, x + 44, y - 34, 10, 34, THEME.wood, 3);
-  block(k, x, y - 62, 100, 30, THEME.signCream, 3);
+  block(k, x + 44, y - 34, 10, 34, 'wood', 3);
+  block(k, x, y - 62, 100, 30, 'cream', 3);
+  const { tokens, tint } = themeStore.current();
   k.add([
     k.text(label, { size: 15 * TEXT_SS, font }),
     k.scale(1 / TEXT_SS),
     k.pos(x + 50, y - 47),
     k.anchor('center'),
-    k.color(hex(k, THEME.ink)),
+    k.color(hex(k, sceneryColor(tokens, tint, 'ink'))),
     k.z(4),
+    tokenTag('ink'),
   ]);
 }
 
@@ -114,7 +134,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   ]);
 
   const k = kaplay({
-    background: THEME.sky,
+    background: sceneryColor(themeStore.current().tokens, themeStore.current().tint, 'sky1'),
     crisp: true,
     global: false,
     // KAPLAY's default pixelDensity is 1: the canvas backing store gets one
@@ -133,17 +153,20 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // depth rows themselves, so the field always reaches back past the furthest
   // villager; painting everything above GROUND_Y dark instead turned into a
   // 250px wall once GROUND_TOP moved up to give the back row real field.
-  block(k, 0, GROUND_TOP, WORLD_W, 14, THEME.groundDark, 0);
-  block(k, 0, GROUND_TOP + 14, WORLD_W, k.height() * 2, THEME.ground, 0);
+  block(k, 0, GROUND_TOP, WORLD_W, 14, 'groundDark', 0);
+  block(k, 0, GROUND_TOP + 14, WORLD_W, k.height() * 2, 'ground', 0);
 
   for (const zone of ZONES) {
     sign(k, zone.x + zone.w / 2 - 50, GROUND_Y - 6, zone.label, pixelFont);
   }
 
   const homes = ZONES.find((z) => z.id === 'homes')!;
-  house(k, homes.x + 180, GROUND_Y - 30, THEME.signCream, THEME.accent);
-  house(k, homes.x + 900, GROUND_Y - 30, THEME.wallLilac, THEME.roofLilac);
-  house(k, homes.x + 1700, GROUND_Y - 30, THEME.wallSand, THEME.roofClay);
+  // House 1 and house 2 each get their own wall/roof pair; house 3 (the old
+  // wallSand/roofClay THEME hexes, retired with THEME) reuses house 1's wall
+  // with house 2's roof for variety without a third token pair.
+  house(k, homes.x + 180, GROUND_Y - 30, 'houseAWall', 'houseARoof');
+  house(k, homes.x + 900, GROUND_Y - 30, 'houseBWall', 'houseBRoof');
+  house(k, homes.x + 1700, GROUND_Y - 30, 'houseAWall', 'houseBRoof');
   for (const dx of [60, 620, 1240, 2050, 2420]) tree(k, homes.x + dx, GROUND_Y - 20);
 
   // Drag to pan along the strip. KAPLAY binds mousedown/mousemove/mouseup
@@ -184,8 +207,9 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     k.scale(1 / TEXT_SS),
     k.pos(12, 12),
     k.fixed(),
-    k.color(hex(k, THEME.ink)),
+    k.color(hex(k, sceneryColor(themeStore.current().tokens, themeStore.current().tint, 'ink'))),
     k.z(100),
+    tokenTag('ink'),
   ]);
 
   const counter = k.add([
@@ -193,8 +217,9 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     k.scale(1 / TEXT_SS),
     k.pos(12, 32),
     k.fixed(),
-    k.color(hex(k, THEME.ink)),
+    k.color(hex(k, sceneryColor(themeStore.current().tokens, themeStore.current().tint, 'ink'))),
     k.z(100),
+    tokenTag('ink'),
   ]);
 
   // How much interactive voice budget is left. Empty text is the whole of
@@ -205,8 +230,9 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     k.scale(1 / TEXT_SS),
     k.pos(12, 52),
     k.fixed(),
-    k.color(hex(k, THEME.ink)),
+    k.color(hex(k, sceneryColor(themeStore.current().tokens, themeStore.current().tint, 'ink'))),
     k.z(100),
+    tokenTag('ink'),
   ]);
 
   // Open on the middle of Homes — the crowd — not on the empty Hatchery at
@@ -321,6 +347,31 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     const creature = known.get(hoveredId);
     if (creature) opts.onCreatureClick?.(creature);
   });
+
+  // Retint every tagged scenery object (and every tagged creature sprite) in
+  // one pass whenever the resolved theme changes — a clock tick crossing a
+  // frame boundary, a weather mode flip, a `?at=`/`?palette=` override. Every
+  // `block()`/`sign()` object and every HUD text line above already carries
+  // its `themed:<token>` tag from creation, so this walker needs no list of
+  // its own to stay in sync with; `creature.ts` tags its own chrome and
+  // sprite roots with the same tags at spawn time, including a fresh spawn
+  // that lands after this theme change has already fired.
+  const applyTheme = (t: ResolvedTheme) => {
+    k.setBackground(hex(k, mix(t.tokens.sky1, t.tint.col, t.tint.sceneryK)));
+    for (const token of Object.keys(t.tokens) as (keyof Tokens)[]) {
+      for (const obj of k.get(tokenTag(token))) {
+        (obj as unknown as { color: unknown }).color = hex(k, sceneryColor(t.tokens, t.tint, token));
+      }
+    }
+    const cTint = hex(k, creatureTintColor(t.tint));
+    for (const obj of k.get('themed:creature')) (obj as unknown as { color: unknown }).color = cTint;
+  };
+  applyTheme(themeStore.current());
+  // No teardown path exists for this scene yet — same as the window-level
+  // pan/click listeners above, this subscription lives for the page's
+  // lifetime. Held rather than discarded so a future scene-teardown path has
+  // it ready to call.
+  const unsubscribeTheme = themeStore.subscribe(applyTheme);
 
   return {
     k,

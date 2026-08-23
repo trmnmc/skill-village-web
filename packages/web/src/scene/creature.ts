@@ -1,6 +1,9 @@
 import type { KAPLAYCtx } from 'kaplay';
 import { WING, type Creature } from '@village/core/visual';
-import { TEXT_SS, THEME, U } from '../theme.js';
+import { TEXT_SS, U } from '../theme.js';
+import { themeStore } from '../theme/index.js';
+import type { Tokens } from '../theme/store.js';
+import { tokenTag, sceneryColor, creatureTintColor } from './retint.js';
 import { composeGrid } from '../render/compose.js';
 import { bakePixels } from '../render/bake.js';
 import { roleMap } from '../render/roles.js';
@@ -29,6 +32,24 @@ const BUBBLE_LEADING = 4;
 const BUBBLE_MAX_W = 180;
 /** How far above the feet the bubble's tail sits — clear of the hover sign. */
 const BUBBLE_LIFT = 50;
+
+/**
+ * The creature's contact shadow. Fixed regardless of theme, unlike every
+ * other colour below — shadows already draw at a constant low alpha, and the
+ * scene's ambient tint (the `themed:creature` multiply on the sprite above
+ * it) is what carries the day/night mood, not the shadow itself.
+ */
+const SHADOW = '#5A4628';
+
+/**
+ * A token colour struck from the *current* resolved theme, for chrome that
+ * (like village.ts's `block()`) needs both an initial colour and the tag
+ * that lets `startVillage`'s retint walker find and recolour it later.
+ */
+function themedColor(k: KAPLAYCtx, token: keyof Tokens) {
+  const { tokens, tint } = themeStore.current();
+  return k.Color.fromHex(sceneryColor(tokens, tint, token));
+}
 
 export interface CreatureActor {
   update(t: number, lookAt: number | null, hovered?: boolean): void;
@@ -163,11 +184,12 @@ function puff(k: KAPLAYCtx, x: number, y: number): void {
       k.rect(5, 5),
       k.pos(x, y),
       k.anchor('center'),
-      k.color(k.Color.fromHex(THEME.bubbleWhite)),
+      k.color(themedColor(k, 'bubble')),
       k.opacity(0.9),
       k.z(4),
       k.lifespan(0.45, { fade: 0.25 }),
       k.move(k.vec2(Math.cos(angle), Math.sin(angle) * 0.5), 120),
+      tokenTag('bubble'),
     ]);
   }
 }
@@ -246,16 +268,26 @@ export async function spawnCreature(
     k.rect(bw * 0.78, 10, { radius: 5 }),
     k.pos(0, 0),
     k.anchor('center'),
-    k.color(k.Color.fromHex(THEME.shadow)),
+    k.color(k.Color.fromHex(SHADOW)),
     k.opacity(creature.appearance.winged ? 0.1 : 0.18),
     k.z(-1),
   ]);
+
+  // A creature spawned after a theme change (e.g. the clock crosses into
+  // night while the page is open, and the server then sends a fresh look for
+  // this id) has to wear the *current* tint from its very first frame — it
+  // gets no help from the walker's own pass, which already ran before this
+  // sprite existed. Struck once here, not re-read per frame: `applyTheme`'s
+  // own pass is what keeps it current after that.
+  const creatureTint = k.Color.fromHex(creatureTintColor(themeStore.current().tint));
 
   const body = root.add([
     k.sprite(restKey),
     k.pos(0, 0),
     k.anchor('bot'),
     k.scale(U),
+    k.color(creatureTint),
+    'themed:creature',
   ]);
 
   const wings = creature.appearance.winged
@@ -278,6 +310,8 @@ export async function spawnCreature(
           k.scale(U * side, U),
           k.rotate(0),
           k.z(-2),
+          k.color(creatureTint),
+          'themed:creature',
         ]),
       )
     : [];
@@ -347,10 +381,11 @@ export async function spawnCreature(
     k.rect(10, hasNickname ? 36 : 24, { radius: 4 }),
     k.pos(0, -restH - (hasNickname ? 25 : 20)),
     k.anchor('center'),
-    k.color(k.Color.fromHex(THEME.signCream)),
-    k.outline(2, k.Color.fromHex(THEME.ink)),
+    k.color(themedColor(k, 'cream')),
+    k.outline(2, themedColor(k, 'ink')),
     k.opacity(0),
     k.z(4.6),
+    tokenTag('cream'),
   ]);
 
   // Text renders at TEXT_SS times its intended size and is scaled back down,
@@ -366,9 +401,10 @@ export async function spawnCreature(
     k.pos(0, -restH - (hasNickname ? 32 : 20)),
     k.anchor('center'),
     k.scale(1 / TEXT_SS),
-    k.color(k.Color.fromHex(THEME.ink)),
+    k.color(themedColor(k, 'ink')),
     k.opacity(0),
     k.z(5),
+    tokenTag('ink'),
   ]);
 
   const fileTag = hasNickname
@@ -377,9 +413,10 @@ export async function spawnCreature(
         k.pos(0, -restH - 15),
         k.anchor('center'),
         k.scale(1 / TEXT_SS),
-        k.color(k.Color.fromHex(THEME.ink)),
+        k.color(themedColor(k, 'ink')),
         k.opacity(0),
         k.z(5),
+        tokenTag('ink'),
       ])
     : null;
 
@@ -407,8 +444,9 @@ export async function spawnCreature(
     k.pos(0, 0),
     k.anchor('bot'),
     k.scale(1 / TEXT_SS),
-    k.color(k.Color.fromHex(THEME.ink)),
+    k.color(themedColor(k, 'ink')),
     k.z(7),
+    tokenTag('ink'),
   ]);
   const bubbleBg = root.add([
     // Sized from the rendered text on every `say`; these are placeholders.
@@ -416,10 +454,11 @@ export async function spawnCreature(
     k.pos(0, 0),
     k.anchor('bot'),
     k.scale(1),
-    k.color(k.Color.fromHex(THEME.bubbleWhite)),
-    k.outline(2, k.Color.fromHex(THEME.ink)),
+    k.color(themedColor(k, 'bubble')),
+    k.outline(2, themedColor(k, 'ink')),
     k.opacity(0.97),
     k.z(6.5),
+    tokenTag('bubble'),
   ]);
   bubbleText.hidden = true;
   bubbleBg.hidden = true;
@@ -481,9 +520,10 @@ export async function spawnCreature(
       k.pos(bw * 0.4, -restH),
       k.anchor('center'),
       k.scale(1 / TEXT_SS),
-      k.color(k.Color.fromHex(THEME.ink)),
+      k.color(themedColor(k, 'ink')),
       k.opacity(0.7),
       k.z(5),
+      tokenTag('ink'),
       { drift: i * 0.34 },
     ]),
   );
