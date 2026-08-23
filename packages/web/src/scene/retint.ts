@@ -29,3 +29,21 @@ export function sceneryColor(
 export function creatureTintColor(tint: { col: string; creatureK: number }): string {
   return mix('#FFFFFF', tint.col, tint.creatureK);
 }
+
+/**
+ * A creature *overlay's* fill colour: the flat shade a solid rect has to be
+ * drawn in so it lands exactly where the body sprite's own texels land under
+ * the multiply tint.
+ *
+ * A sprite wears the tint as a multiplier over a baked texel; a solid rect has
+ * no texel for the multiplier to act on, so the multiply has to happen here.
+ * Without it an overlay stays full-bright while the body around it darkens —
+ * which is what made shut eyelids read as pale patches once the village
+ * started sleeping through the night.
+ */
+export function creatureOverlayColor(hex: string, tint: { col: string; creatureK: number }): string {
+  const factor = creatureTintColor(tint);
+  const channel = (s: string, i: number) => parseInt(s.slice(1 + i * 2, 3 + i * 2), 16);
+  const out = [0, 1, 2].map((i) => Math.round((channel(hex, i) * channel(factor, i)) / 255));
+  return `#${out.map((v) => v.toString(16).padStart(2, '0').toUpperCase()).join('')}`;
+}

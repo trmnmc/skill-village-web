@@ -3,7 +3,7 @@ import { WING, type Creature } from '@village/core/visual';
 import { TEXT_SS, U } from '../theme.js';
 import { themeStore } from '../theme/index.js';
 import type { Tokens } from '../theme/store.js';
-import { tokenTag, sceneryColor, creatureTintColor } from './retint.js';
+import { tokenTag, sceneryColor, creatureTintColor, creatureOverlayColor } from './retint.js';
 import { composeGrid } from '../render/compose.js';
 import { bakePixels } from '../render/bake.js';
 import { roleMap } from '../render/roles.js';
@@ -68,6 +68,17 @@ function simpleHash(id: string): number {
 
 /** The reference umbrella (drawUmbrella) was authored at U=4; the game draws at U=6. */
 const UMBRELLA_SCALE = U / 4;
+
+/**
+ * How many grid cells across the shut eyelid is drawn. The baked eye white is
+ * exactly 2x2 cells, but the sprite texels and this overlay rect round to
+ * device pixels independently — at pixelDensity 2, with the body breathing on
+ * a non-integer scale, their edges can land a pixel apart and leave a bright
+ * sliver of eye white showing around the lid. Covering a quarter-cell past the
+ * block on every side absorbs that; the overhang falls on body-coloured cells
+ * and the lid wears the body tint, so it is invisible.
+ */
+const EYE_LID_CELLS = 2.5;
 
 export interface CreatureActor {
   update(t: number, lookAt: number | null, hovered?: boolean): void;
@@ -354,8 +365,14 @@ export async function spawnCreature(
       )
     : [];
 
-  const lidColour = k.Color.fromHex(creature.appearance.palette.hue);
-  const pupilColour = k.Color.fromHex(map.K!);
+  // Eye overlays are solid rects, so unlike the body sprite they get no
+  // multiply from the tint for free — see creatureOverlayColor. Kept as hex
+  // so the tint can be re-applied whenever the sky moves.
+  const lidHex = creature.appearance.palette.hue;
+  const pupilHex = map.K!;
+  let eyeTintKey = '';
+  let lidColour = k.Color.fromHex(creatureOverlayColor(lidHex, themeStore.current().tint));
+  let pupilColour = k.Color.fromHex(creatureOverlayColor(pupilHex, themeStore.current().tint));
 
   // Eyes are overlaid, never baked, so they can blink and track. `W` (eye
   // white) IS baked into the body texture, though — a shut eye must fully
@@ -384,7 +401,7 @@ export async function spawnCreature(
       k.z(1),
     ]);
     const lid = root.add([
-      k.rect(U * 2, U * 2),
+      k.rect(U * EYE_LID_CELLS, U * EYE_LID_CELLS),
       k.pos(0, 0),
       k.anchor('center'),
       k.color(lidColour),
@@ -686,6 +703,21 @@ export async function spawnCreature(
       // storm ramps past half strength, and lifts off again the instant it
       // clears — themeStore.current() is a cheap read, not a subscription.
       const themeNow = themeStore.current();
+      // Eye overlays are solid rects: the retint walker's multiply only
+      // reaches the body sprite, so their tinted shade is recomputed here
+      // whenever the sky actually moves (a string compare, not a per-frame
+      // colour mix), or a shut lid stays full-bright over a darkened body.
+      const tintKey = themeNow.tint.col + themeNow.tint.creatureK;
+      if (tintKey !== eyeTintKey) {
+        eyeTintKey = tintKey;
+        lidColour = k.Color.fromHex(creatureOverlayColor(lidHex, themeNow.tint));
+        pupilColour = k.Color.fromHex(creatureOverlayColor(pupilHex, themeNow.tint));
+        for (const { pupil, lid, lash } of eyes) {
+          pupil.color = pupilColour;
+          lid.color = lidColour;
+          lash.color = pupilColour;
+        }
+      }
       // Nightfall beds the village down. Checked per frame from the same
       // cheap cached read as the weather below, so dozing follows the sky
       // without every actor holding its own theme subscription.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tokenTag, sceneryColor, creatureTintColor } from './retint.js';
+import { tokenTag, sceneryColor, creatureTintColor, creatureOverlayColor } from './retint.js';
 import { mix } from '../theme/palettes.js';
 import type { Tokens } from '../theme/store.js';
 
@@ -38,5 +38,32 @@ describe('creatureTintColor', () => {
   it('returns pure white at day, when creatureK is 0', () => {
     const tint = { col: '#232A3C', sceneryK: 0, creatureK: 0 };
     expect(creatureTintColor(tint)).toBe('#FFFFFF');
+  });
+});
+
+describe('creatureOverlayColor', () => {
+  it('is a no-op in daylight, when the tint multiplier is white', () => {
+    expect(creatureOverlayColor('#E58C68', { col: '#1C2130', creatureK: 0 })).toBe('#E58C68');
+  });
+
+  it('darkens an overlay by exactly the multiply the body sprite receives', () => {
+    const tint = { col: '#1C2130', creatureK: 0.28 };
+    const factor = creatureTintColor(tint);
+    const f = (i: number) => parseInt(factor.slice(1 + i * 2, 3 + i * 2), 16);
+    const got = creatureOverlayColor('#FFFFFF', tint);
+    // A white overlay lands exactly on the multiplier itself.
+    for (let i = 0; i < 3; i++) {
+      expect(parseInt(got.slice(1 + i * 2, 3 + i * 2), 16)).toBe(f(i));
+    }
+  });
+
+  it('never brightens: a tinted overlay is always at or below its own hue', () => {
+    const tint = { col: '#1C2130', creatureK: 0.55 };
+    const got = creatureOverlayColor('#E58C68', tint);
+    for (let i = 0; i < 3; i++) {
+      expect(parseInt(got.slice(1 + i * 2, 3 + i * 2), 16)).toBeLessThanOrEqual(
+        parseInt('#E58C68'.slice(1 + i * 2, 3 + i * 2), 16),
+      );
+    }
   });
 });
