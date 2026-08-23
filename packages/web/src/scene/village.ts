@@ -4,6 +4,9 @@ import { TEXT_SS, THEME } from '../theme.js';
 import { ZONES, WORLD_W, GROUND_Y, GROUND_TOP, placeCreatures, type Spot } from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
+import { sound } from '../sound/player.js';
+import { voiceParamsFor } from '../sound/voice.js';
+import { viewSoundEvents, type CreatureSnapshot } from '../sound/arrivals.js';
 
 export interface VillageScene {
   k: KAPLAYCtx;
@@ -13,7 +16,9 @@ export interface VillageScene {
    * Float a reply over one creature's head. The chat panel calls this; the
    * bubble is a second showing of the line, not the record of it.
    */
-  sayFor(creatureId: string, text: string): void;
+  sayFor(creatureId: string, text: string, source?: 'llm' | 'canned'): void;
+  /** Play the creature's signature chirp — main.ts calls it on chat open. */
+  greetFor(creatureId: string): void;
   /** Show / retire the "composing a reply" thought bubble over one creature. */
   thinkFor(creatureId: string): void;
   clearThoughtFor(creatureId: string): void;
@@ -229,6 +234,9 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // untracked, never destroyed, never updated, a permanent frozen creature.
   const generations = new Map<string, number>();
   let known = new Map<string, Creature>();
+  // Declared beside `known`: null until the first view lands, so a reload
+  // is not seventy arrival chimes (see arrivals.ts).
+  let prevStages: Map<string, string> | null = null;
   // The placement from the most recent view. Held so a spawn that is still
   // loading sprites can adopt the newest spot when it resolves, the same way
   // it adopts the newest stats from `known`.
@@ -253,6 +261,11 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     cursorY = pos.y + k.getCamPos().y - k.height() / 2;
   });
 
+  // Idle chirps, spec §3: once a second the scene offers the director its
+  // on-screen, happy, awake villagers; the director's Poisson state decides
+  // who (if anyone) actually chirps.
+  let lastIdleTickAt = 0;
+
   k.onUpdate(() => {
     const t = k.time();
     // One hovered villager at a time: the nearest to the cursor within reach,
@@ -272,6 +285,23 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         }
       }
     }
+
+    sound.setCamera(k.getCamPos().x, k.width());
+    if (t - lastIdleTickAt >= 1) {
+      lastIdleTickAt = t;
+      const camX = k.getCamPos().x;
+      const halfW = k.width() / 2 + 200;
+      const candidates: { id: string; x: number; voice: ReturnType<typeof voiceParamsFor> }[] = [];
+      for (const [id, spot] of placements) {
+        const c = known.get(id);
+        if (!c) continue;
+        if (Math.abs(spot.x - camX) > halfW) continue;
+        if (c.stats.mood <= 75 || c.stats.energy < 25) continue;
+        candidates.push({ id, x: spot.x, voice: voiceParamsFor(c) });
+      }
+      if (candidates.length > 0) sound.event({ type: 'idle-tick', candidates });
+    }
+
     for (const [id, actor] of actors) actor.update(t, lookAt, id === hoveredId);
   });
 
@@ -389,16 +419,28 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         if (!seen.has(id)) { actor.destroy(); actors.delete(id); }
       }
 
+      const snapshots: CreatureSnapshot[] = view.creatures.map((c) => ({
+        id: c.id,
+        stage: String((c as { stage?: unknown }).stage ?? 'adult'),
+        x: spots.get(c.id)!.x,
+        voice: voiceParamsFor(c),
+      }));
+      for (const ev of viewSoundEvents(prevStages, snapshots)) sound.event(ev);
+      prevStages = new Map(view.creatures.map((c) => [c.id, c.stage]));
+
       known = new Map(view.creatures.map((c) => [c.id, c]));
     },
     setStatus(s) {
       status.text = s;
     },
-    sayFor(creatureId, text) {
+    sayFor(creatureId, text, source) {
       // A villager that has despawned — or is still loading its sprites when
       // its reply lands — has no actor to speak through. The panel holds the
       // line either way, so there is nothing to recover here.
-      actors.get(creatureId)?.say(text);
+      actors.get(creatureId)?.say(text, source);
+    },
+    greetFor(creatureId) {
+      actors.get(creatureId)?.greet();
     },
     thinkFor(creatureId) {
       actors.get(creatureId)?.think();

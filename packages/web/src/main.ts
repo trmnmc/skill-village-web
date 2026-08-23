@@ -11,13 +11,17 @@ import { mountSoundcheck } from './sound/soundcheck.js';
 // runs long after both exist. Declaring them the other way round would need
 // the scene to know what a chat panel is.
 const panel = createChatPanel({
-  onBubble: (creatureId, text) => scene.sayFor(creatureId, text),
+  onBubble: (creatureId, text, source) => scene.sayFor(creatureId, text, source),
   onThinking: (creatureId) => scene.thinkFor(creatureId),
   onThinkingDone: (creatureId) => scene.clearThoughtFor(creatureId),
 });
 
 const scene = await startVillage({
-  onCreatureClick: (creature) => panel.open({ id: creature.id, label: displayName(creature) }),
+  onCreatureClick: (creature) => {
+    panel.open({ id: creature.id, label: displayName(creature) });
+    // Its audible name, spec §3: the signature phrase on meeting.
+    scene.greetFor(creature.id);
+  },
 });
 
 sound.init();
