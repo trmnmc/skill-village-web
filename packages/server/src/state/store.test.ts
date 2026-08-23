@@ -104,7 +104,7 @@ describe('state v1 -> v2 migration', () => {
     };
     await writeFile(sandbox.paths.statePath, JSON.stringify(v1), 'utf8');
     const loaded = await loadState(sandbox.paths, 1_000);
-    expect(loaded.state.version).toBe(2);
+    expect(loaded.state.version).toBe(STATE_VERSION);
     expect(loaded.state.createdAt).toBe(5);
     expect(loaded.state.llm.config.interactiveCap).toBe(500_000);
     expect(loaded.state.llm.config.autonomousEnabled).toBe(false);
@@ -115,7 +115,7 @@ describe('state v1 -> v2 migration', () => {
     await writeFile(sandbox.paths.statePath, JSON.stringify({ version: 99 }), 'utf8');
     const loaded = await loadState(sandbox.paths, 1_000);
     // Falls back to a fresh village with the explanatory note, as v1 did.
-    expect(loaded.state.version).toBe(2);
+    expect(loaded.state.version).toBe(STATE_VERSION);
     expect(loaded.note).toContain('newer version');
   });
 });
