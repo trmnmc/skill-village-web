@@ -92,8 +92,8 @@ describe('loadState', () => {
   });
 });
 
-describe('state v1 -> v2 migration', () => {
-  it('loads a v1 file and gains llm defaults without touching creatures', async () => {
+describe('state v1 -> v3 migration', () => {
+  it('loads a v1 file and gains llm and robot defaults without touching creatures', async () => {
     sandbox = await makeSandbox();
     const v1 = {
       version: 1,
@@ -108,6 +108,7 @@ describe('state v1 -> v2 migration', () => {
     expect(loaded.state.createdAt).toBe(5);
     expect(loaded.state.llm.config.interactiveCap).toBe(500_000);
     expect(loaded.state.llm.config.autonomousEnabled).toBe(false);
+    expect(loaded.state.robot).toEqual({ residentId: null });
   });
 
   it('still refuses a newer version than it knows', async () => {
@@ -117,6 +118,92 @@ describe('state v1 -> v2 migration', () => {
     // Falls back to a fresh village with the explanatory note, as v1 did.
     expect(loaded.state.version).toBe(STATE_VERSION);
     expect(loaded.note).toContain('newer version');
+  });
+});
+
+describe('robot block (v4)', () => {
+  it('a fresh state carries an empty robot house', async () => {
+    sandbox = await makeSandbox();
+    const { state } = await loadState(sandbox.paths, 1_000);
+    expect(state.version).toBe(STATE_VERSION);
+    expect(state.robot).toEqual({ residentId: null });
+  });
+
+  it('migrates a v2 save in place, preserving everything else', async () => {
+    sandbox = await makeSandbox();
+    const v2 = {
+      version: 2,
+      createdAt: 5,
+      updatedAt: 9,
+      creatures: {},
+      problems: [],
+      llm: {
+        ledger: { day: '2026-08-22', interactiveIn: 0, interactiveOut: 0, autonomousIn: 0, autonomousOut: 0 },
+        config: { interactiveCap: 500_000, autonomousCap: 100_000, autonomousEnabled: false },
+      },
+    };
+    await writeFile(sandbox.paths.statePath, JSON.stringify(v2), 'utf8');
+
+    const { state, recovered } = await loadState(sandbox.paths, 1_000);
+    expect(recovered).toBe(false);
+    expect(state.version).toBe(STATE_VERSION);
+    expect(state.robot).toEqual({ residentId: null });
+    expect(state.llm.config.interactiveCap).toBe(500_000);
+  });
+
+  it('migrates a v3 save — the resting-floor lift already ran, the robot house is new', async () => {
+    sandbox = await makeSandbox();
+    const v3 = {
+      version: 3,
+      createdAt: 5,
+      updatedAt: 9,
+      creatures: {},
+      problems: [],
+      llm: {
+        ledger: { day: '2026-08-22', interactiveIn: 0, interactiveOut: 0, autonomousIn: 0, autonomousOut: 0 },
+        config: { interactiveCap: 500_000, autonomousCap: 100_000, autonomousEnabled: false },
+      },
+    };
+    await writeFile(sandbox.paths.statePath, JSON.stringify(v3), 'utf8');
+
+    const { state, recovered } = await loadState(sandbox.paths, 1_000);
+    expect(recovered).toBe(false);
+    expect(state.version).toBe(STATE_VERSION);
+    expect(state.robot).toEqual({ residentId: null });
+    expect(state.llm.config.interactiveCap).toBe(500_000);
+  });
+
+  it('a v4 file without a robot block is invalid, and the backup is used', async () => {
+    sandbox = await makeSandbox();
+    const v4WithoutRobot = {
+      version: 4,
+      createdAt: 5,
+      updatedAt: 9,
+      creatures: {},
+      problems: [],
+      llm: {
+        ledger: { day: '2026-08-22', interactiveIn: 0, interactiveOut: 0, autonomousIn: 0, autonomousOut: 0 },
+        config: { interactiveCap: 500_000, autonomousCap: 100_000, autonomousEnabled: false },
+      },
+    };
+    await writeFile(sandbox.paths.statePath, JSON.stringify(v4WithoutRobot), 'utf8');
+
+    const v2Backup = {
+      version: 2,
+      createdAt: 1,
+      updatedAt: 2,
+      creatures: {},
+      problems: [],
+      llm: {
+        ledger: { day: '2026-08-22', interactiveIn: 0, interactiveOut: 0, autonomousIn: 0, autonomousOut: 0 },
+        config: { interactiveCap: 500_000, autonomousCap: 100_000, autonomousEnabled: false },
+      },
+    };
+    await writeFile(sandbox.paths.stateBackupPath, JSON.stringify(v2Backup), 'utf8');
+
+    const { state, recovered } = await loadState(sandbox.paths, 1_000);
+    expect(recovered).toBe(true);
+    expect(state.robot).toEqual({ residentId: null });
   });
 });
 
