@@ -107,6 +107,51 @@ describe('modes', () => {
   });
 });
 
+describe('pinned time', () => {
+  it('pin 1380 (23:00) overrides the clock at local noon on a weave day: night flags, moon visible', () => {
+    const s = createThemeStore({ now: at('2026-08-18T12:00:00'), storage: mem() });
+    s.setPinnedTime(1380);
+    s.tick();
+    const t = s.current();
+    expect(t.flags.isNight).toBe(true);
+    expect(t.moonSky.visible).toBe(true);
+  });
+
+  it('persists: a new store over the same storage resolves pinnedTime() and still applies it', () => {
+    const storage = mem();
+    const s = createThemeStore({ now: at('2026-08-18T12:00:00'), storage });
+    s.setPinnedTime(1380);
+    s.tick();
+
+    const s2 = createThemeStore({ now: at('2026-08-18T12:00:00'), storage });
+    expect(s2.pinnedTime()).toBe(1380);
+    s2.tick();
+    expect(s2.current().flags.isNight).toBe(true);
+  });
+
+  it('URL ?at beats the pin', () => {
+    const s = createThemeStore({ now: at('2026-08-18T12:00:00'), storage: mem(), search: '?at=12:00' });
+    s.setPinnedTime(1380);
+    s.tick();
+    expect(s.current().flags.isNight).toBe(false);
+  });
+
+  it('journey mode ignores the pin entirely', () => {
+    // Same nowMs recipe as "journey night waypoint owns the sky" above: lands
+    // exactly on waypoint 10 ('1e night clear') while local wall-clock stays
+    // near noon, so a leaking pin (or a leaking real sun) would both say "day".
+    const base = new Date('2026-08-18T12:00:00');
+    const pos = Math.floor(base.getTime() / 180_000) % 15;
+    const nowMs = base.getTime() + ((10 - pos + 15) % 15) * 180_000;
+
+    const s = createThemeStore({ now: () => new Date(nowMs), storage: mem() });
+    s.setMode('journey');
+    s.setPinnedTime(750);
+    s.tick();
+    expect(s.current().sun.visible).toBe(false);
+  });
+});
+
 describe('setRealSource', () => {
   it('overrides the injected real source at runtime; null reverts real mode to clear', () => {
     const src: RealWeatherSource = {

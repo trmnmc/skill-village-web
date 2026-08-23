@@ -29,12 +29,14 @@ export interface ThemeStore {
   subscribe(fn: (t: ResolvedTheme) => void): () => void;
   mode(): WeatherMode; setMode(m: WeatherMode): void;
   picked(): WeatherKind; setPicked(k: WeatherKind): void;
+  pinnedTime(): number | null; setPinnedTime(min: number | null): void;
   setRealSource(src: RealWeatherSource | null): void;
   tick(): void; start(): void; stop(): void;
 }
 
 const MODE_KEY = 'sv-weather-mode';
 const PICK_KEY = 'sv-weather-pick';
+const TIME_PIN_KEY = 'sv-time-pin';
 
 const VALID_MODES: WeatherMode[] = ['off', 'pick', 'journey', 'real'];
 const VALID_DAY_OVERRIDES = new Set(['sat', 'sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'weave']);
@@ -104,6 +106,14 @@ function prevCalendarDay(now: Date): Date {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
 }
 
+/** Loads the 'sv-time-pin' minute-of-day. Missing/empty/non-integer/out-of-range → null. */
+function parsePinnedTime(v: string | null): number | null {
+  if (v === null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 0 || n > 1439) return null;
+  return n;
+}
+
 function parseAt(v: string): number | undefined {
   const m = /^(\d{1,2}):(\d{2})$/.exec(v);
   if (!m) return undefined;
@@ -152,6 +162,7 @@ export function createThemeStore(deps?: {
     const v = safeGet(PICK_KEY);
     return v && (ALL_WEATHERS as string[]).includes(v) ? (v as WeatherKind) : 'clear';
   })();
+  let pinnedState: number | null = parsePinnedTime(safeGet(TIME_PIN_KEY));
 
   const subscribers = new Set<(t: ResolvedTheme) => void>();
   let currentTheme: ResolvedTheme | null = null;
@@ -168,7 +179,13 @@ export function createThemeStore(deps?: {
     const fresh = reading !== null && readingFresh(reading, nowMs);
     const anchors: SolarAnchors = fresh ? { sunriseMin: reading!.sunriseMin, sunsetMin: reading!.sunsetMin } : DEFAULT_ANCHORS;
 
-    const minuteOfDay = ov.at ?? (n.getHours() * 60 + n.getMinutes());
+    // Priority: ?at override beats the pinned time; the pin beats the clock.
+    // Journey mode ignores the pin entirely — journey owns time via its own
+    // wall-clock waypoint math (journeyAt(nowMs) below), so a pin must never
+    // reach it even when a URL override knocks journey out of its own branch.
+    const clockMinute = n.getHours() * 60 + n.getMinutes();
+    const pinApplies = modeState !== 'journey' && pinnedState !== null;
+    const minuteOfDay = ov.at ?? (pinApplies ? pinnedState! : clockMinute);
     const useJourney = modeState === 'journey' && !ov.any;
 
     let tokens: Tokens;
@@ -313,6 +330,11 @@ export function createThemeStore(deps?: {
     setMode(m: WeatherMode): void { modeState = m; safeSet(MODE_KEY, m); },
     picked(): WeatherKind { return pickedState; },
     setPicked(k: WeatherKind): void { pickedState = k; safeSet(PICK_KEY, k); },
+    pinnedTime(): number | null { return pinnedState; },
+    setPinnedTime(min: number | null): void {
+      pinnedState = min;
+      safeSet(TIME_PIN_KEY, min === null ? '' : String(min));
+    },
     setRealSource(src: RealWeatherSource | null): void { real = src; },
     tick,
     start(): void {

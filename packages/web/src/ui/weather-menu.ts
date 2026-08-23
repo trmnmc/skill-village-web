@@ -4,7 +4,7 @@ import { createRealWeatherSource } from '../theme/weather/real.js';
 import { journeyAt } from '../theme/weather/journey.js';
 
 export interface MenuRow { id: string; label: string; active: boolean }
-export interface MenuModel { rows: MenuRow[]; chips: MenuRow[] }
+export interface MenuModel { rows: MenuRow[]; chips: MenuRow[]; timeChips?: MenuRow[] }
 
 const MODE_ROWS: { id: WeatherMode; label: string }[] = [
   { id: 'off', label: 'Off' },
@@ -13,16 +13,37 @@ const MODE_ROWS: { id: WeatherMode; label: string }[] = [
   { id: 'real', label: 'Real' },
 ];
 
+/** Time-pin presets: id/label/minute-of-day, in menu order. */
+export const TIME_CHIPS: { id: string; label: string; minute: number }[] = [
+  { id: 'dawn', label: 'dawn', minute: 380 },
+  { id: 'morning', label: 'morning', minute: 570 },
+  { id: 'noon', label: 'noon', minute: 750 },
+  { id: 'golden', label: 'golden hour', minute: 1070 },
+  { id: 'sunset', label: 'sunset', minute: 1125 },
+  { id: 'evening', label: 'evening', minute: 1180 },
+  { id: 'night', label: 'night', minute: 1380 },
+];
+
 /**
  * Pure popover state: four mode rows always, plus (in pick mode only) one
  * chip per weather kind — 'clear' first so the player has a way to clear a
- * pick, then the nine non-clear kinds from ALL_WEATHERS.
+ * pick, then the nine non-clear kinds from ALL_WEATHERS. `timeChips` is
+ * included in every mode except journey (which owns time itself and ignores
+ * any pin): an 'auto' chip first, active when nothing is pinned, then the
+ * seven TIME_CHIPS presets, active when pinned matches their minute.
  */
-export function menuModel(mode: WeatherMode, picked: WeatherKind): MenuModel {
+export function menuModel(mode: WeatherMode, picked: WeatherKind, pinned: number | null): MenuModel {
   const rows: MenuRow[] = MODE_ROWS.map((r) => ({ id: r.id, label: r.label, active: mode === r.id }));
   const chips: MenuRow[] =
     mode === 'pick' ? ALL_WEATHERS.map((k) => ({ id: k, label: k, active: k === picked })) : [];
-  return { rows, chips };
+  const model: MenuModel = { rows, chips };
+  if (mode !== 'journey') {
+    model.timeChips = [
+      { id: 'auto', label: 'auto', active: pinned === null },
+      ...TIME_CHIPS.map((c) => ({ id: c.id, label: c.label, active: pinned === c.minute })),
+    ];
+  }
+  return model;
 }
 
 const REFRESH_MS = 20 * 60 * 1000;
@@ -116,7 +137,16 @@ export function mountWeatherMenu(store: ThemeStore, container: HTMLElement): voi
   }
 
   function render(): void {
-    const { rows, chips } = menuModel(store.mode(), store.picked());
+    const { rows, chips, timeChips } = menuModel(store.mode(), store.picked(), store.pinnedTime());
+
+    const timeChipsHtml = timeChips
+      ? `<div id="weather-menu-time-chips">${timeChips
+          .map(
+            (c) =>
+              `<button type="button" class="weather-menu-chip${c.active ? ' active' : ''}" data-time="${c.id}">${c.label}</button>`,
+          )
+          .join('')}</div>`
+      : '';
 
     const rowsHtml = rows
       .map(
@@ -141,7 +171,17 @@ export function mountWeatherMenu(store: ThemeStore, container: HTMLElement): voi
 
     const noteHtml = note ? `<div id="weather-menu-note">${note}</div>` : '';
 
-    popover.innerHTML = `${rowsHtml}${chipsHtml}${journeyHtml}${noteHtml}`;
+    popover.innerHTML = `${timeChipsHtml}${rowsHtml}${chipsHtml}${journeyHtml}${noteHtml}`;
+
+    popover.querySelectorAll<HTMLButtonElement>('#weather-menu-time-chips .weather-menu-chip').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = el.dataset.time!;
+        const minute = id === 'auto' ? null : TIME_CHIPS.find((c) => c.id === id)!.minute;
+        store.setPinnedTime(minute);
+        store.tick();
+        render();
+      });
+    });
 
     popover.querySelectorAll<HTMLButtonElement>('.weather-menu-row').forEach((el) => {
       el.addEventListener('click', () => {
@@ -159,7 +199,7 @@ export function mountWeatherMenu(store: ThemeStore, container: HTMLElement): voi
       });
     });
 
-    popover.querySelectorAll<HTMLButtonElement>('.weather-menu-chip').forEach((el) => {
+    popover.querySelectorAll<HTMLButtonElement>('#weather-menu-chips .weather-menu-chip').forEach((el) => {
       el.addEventListener('click', () => {
         store.setPicked(el.dataset.weather as WeatherKind);
         store.tick();
