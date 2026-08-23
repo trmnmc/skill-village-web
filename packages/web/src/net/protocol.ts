@@ -12,6 +12,10 @@ export interface VillageView {
   problems: unknown[];
   startupNote: string | null;
   llm: LlmView | null;
+  /** Who lives in the physical robot, or null. Drawn at the robot-house porch. */
+  robotResidentId: string | null;
+  /** When the robot last spoke (server process memory), for the presence glow. */
+  robotLastTurnAt: number | null;
 }
 
 const BODY_ID_SET: ReadonlySet<string> = new Set(BODY_IDS);
@@ -76,7 +80,7 @@ function isRenderable(value: unknown): value is Creature {
  */
 export function toView(payload: unknown): VillageView | null {
   if (typeof payload !== 'object' || payload === null) return null;
-  const p = payload as { creatures?: unknown; problems?: unknown; startupNote?: unknown; llm?: unknown };
+  const p = payload as { creatures?: unknown; problems?: unknown; startupNote?: unknown; llm?: unknown; robot?: unknown; robotLastTurnAt?: unknown };
   if (typeof p.creatures !== 'object' || p.creatures === null) return null;
 
   const creatures = Object.values(p.creatures as Record<string, unknown>)
@@ -105,11 +109,22 @@ export function toView(payload: unknown): VillageView | null {
     }
   }
 
+  let robotResidentId: string | null = null;
+  const rawRobot = (p as { robot?: unknown }).robot;
+  if (typeof rawRobot === 'object' && rawRobot !== null) {
+    const r = rawRobot as { residentId?: unknown };
+    if (typeof r.residentId === 'string') robotResidentId = r.residentId;
+  }
+  const rawTurn = (p as { robotLastTurnAt?: unknown }).robotLastTurnAt;
+  const robotLastTurnAt = typeof rawTurn === 'number' ? rawTurn : null;
+
   return {
     creatures,
     problems: Array.isArray(p.problems) ? p.problems : [],
     startupNote: typeof p.startupNote === 'string' ? p.startupNote : null,
     llm,
+    robotResidentId,
+    robotLastTurnAt,
   };
 }
 
