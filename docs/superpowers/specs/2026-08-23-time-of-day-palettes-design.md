@@ -7,7 +7,8 @@
 + `village-scene.js`, which together define six palettes, the four-frame sky
 cycle, the tint math, the night ambience, and a nine-kind weather engine with
 a live render loop. Those files are the visual source of truth; this spec
-maps them onto the game.
+maps them onto the game. Plus the user's `github.com/trmnmc/moon` (Meeus
+moon-phase port), vendored for the real lunar cycle (§5).
 **Approach:** A — live theme store with continuous keyframe blending (approved
 over stepped phases and a tint overlay).
 
@@ -127,6 +128,17 @@ Ported from the exploration painter into the KAPLAY scene:
   twinkle; a shooting star every few minutes at night; warm windows + lantern
   glow from dusk (and during storms, per the engine); moths at the lantern;
   up to 9 drifting fireflies (4 at dusk).
+- **The real moon** (from the user's `trmnmc/moon` — a Meeus
+  *Astronomical Algorithms* port with true phase instants, elongation-based
+  illumination, and almanac phase naming): `src/astro.js` is vendored into
+  the theme subsystem (provenance comments intact) and drives the night
+  sky. The moon sprite renders one of the 8 phases by `phaseName`, waxing
+  side per hemisphere (northern by default; Real mode's latitude decides).
+  Phase feeds the night itself: a new-moon night runs a touch darker with
+  more stars and the fireflies at their brightest; a full-moon night gets a
+  faint silver lift in the night tint and washes out the dimmest stars.
+  Optional flourish (polish, not v1-required): a notice-board line from
+  `nextFullMoon` ("full moon in 3 nights").
 - **Immediate-mode weather layer** (one onDraw object, drawn behind
   creatures; only the storm flash and fog front-veil in front): rain/storm
   drops with slant + splash ticks, the storm's layered decks + shafts +
@@ -206,6 +218,10 @@ can review any moment without waiting for the sky.
   first lerps cleanly), every adjacent pair changes at most one-and-a-bit
   axes (the cohesion invariant, asserted structurally), and the wall-clock
   position function is stateless and reload-stable.
+- Moon: the vendored `astro.js` is cross-checked against fixture vectors
+  taken from the upstream repo's own test suite (same dates → same
+  phaseName/illumination), so drift from the source is caught; the
+  night-darkness modulation is a pure function of illumination.
 - Store: fake clock ticks publish lerped tokens; visibility resume; CSS
   variable output as a pure token→map function with a thin DOM applier.
 - Renderer: tag-updater logic unit-tested; visuals gated by the user's eyes
