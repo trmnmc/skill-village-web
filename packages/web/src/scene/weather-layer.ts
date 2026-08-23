@@ -2,7 +2,7 @@ import type { KAPLAYCtx, GameObj } from 'kaplay';
 import { HUES } from '@village/core/visual';
 import type { ResolvedTheme } from '../theme/store.js';
 import { mix } from '../theme/palettes.js';
-import { OVERCAST } from '../theme/weather/kinds.js';
+import { OVERCAST, type WeatherKind } from '../theme/weather/kinds.js';
 import { horizonScreenY } from './sky.js';
 
 /**
@@ -168,35 +168,61 @@ export interface RainbowBlock {
   band: number;
 }
 
+/** How much of the sky's height the outermost band's radius takes up. */
+const RAINBOW_RADIUS = 0.6;
+/** Band thickness as a fraction of that radius — the reference's 6-of-170 ratio. */
+const RAINBOW_BAND_RATIO = 6 / 170;
+/** Step along a band as a fraction of one block, so consecutive squares overlap. */
+const RAINBOW_OVERLAP = 0.7;
+
 /**
  * Geometry for the rainbow's retained arc: five concentric bands of square
- * blocks, angle-stepped in reference space (`4/rr` radians, `rr` the
- * reference-space band radius) so each band stays contiguous however many
- * blocks that works out to (~134 for the outermost band). Both the radius
- * and the block size scale uniformly by `fy(horizonY)` — a deliberate
- * departure from the mapX/mapY split used elsewhere in this file, so the arc
- * stays a true circle instead of stretching into an ellipse with the
- * viewport's aspect ratio. Center x is `width/2` (the reference's own centre,
- * 240, is exactly half of 480). This function has no `height` parameter —
- * clipping blocks that fall below the visible screen happens at the call
- * site, which has `k.height()`.
+ * blocks, sized and stepped so each band is a solid stroke rather than a line
+ * of dots, and stacked edge to edge so no sky shows between them.
+ *
+ * The arc is seated *on* the horizon — its centre is the horizon line, so the
+ * bands only ever occupy sky and the legs meet the ground rather than
+ * streaking down across the village (the reference painter's arc is centred
+ * at ref-y 265, below its own 182 ground line, which works on a 270px
+ * postcard and does not on a full screen). The radius is a share of the sky's
+ * height rather than a scaled reference constant, which keeps the arc reading
+ * as something far away in the distance instead of a foreground object.
+ *
+ * Both radius and block size come off the same scalar, so the arc is a true
+ * circle at any viewport aspect — a deliberate departure from the mapX/mapY
+ * split used elsewhere in this file.
  */
 export function rainbowBlocks(width: number, horizonY: number): RainbowBlock[] {
   const blocks: RainbowBlock[] = [];
-  const scale = fy(horizonY);
   const centerX = width / 2;
-  const centerY = 265 * scale;
-  const size = 4 * scale;
+  const centerY = horizonY;
+  const outerR = horizonY * RAINBOW_RADIUS;
+  const size = outerR * RAINBOW_BAND_RATIO;
   for (let band = 0; band < 5; band++) {
-    const rr = 170 - band * 6;
-    const step = 4 / rr;
+    const rr = outerR - band * size;
+    const step = (size * RAINBOW_OVERLAP) / rr;
     for (let a = Math.PI; a <= Math.PI * 2; a += step) {
-      const x = centerX + Math.cos(a) * rr * scale;
-      const y = centerY + Math.sin(a) * rr * scale;
-      blocks.push({ x, y, size, band });
+      const y = centerY + Math.sin(a) * rr;
+      // The blocks nearest each foot would hang below the horizon line.
+      if (y + size > centerY) continue;
+      blocks.push({ x: centerX + Math.cos(a) * rr, y, size, band });
     }
   }
   return blocks;
+}
+
+/** Kinds that want a bare sky behind them, with no ambient cloud set. */
+const CLOUDLESS: ReadonlySet<WeatherKind> = new Set<WeatherKind>(['heat', 'rainbow']);
+
+/**
+ * How strongly a weather kind suppresses the ambient fair-weather clouds,
+ * scaled by its own ramp so a journey transition crossfades instead of
+ * popping. Overcast kinds replace them with their own blob decks; `heat` and
+ * `rainbow` read best against bare sky — a heat haze wants an empty white
+ * glare, and a rainbow wants clear air to arc through.
+ */
+export function cloudSuppression(kind: WeatherKind, ramp: number): number {
+  return OVERCAST.has(kind) || CLOUDLESS.has(kind) ? ramp : 0;
 }
 
 /** [HUES[0], HUES[4], HUES[2], HUES[6], HUES[1]] — the reference's exact band order. */
@@ -1031,8 +1057,7 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
           : cur.flags.isDawn
             ? 'dawn'
             : 'day';
-      const overcastRamp = OVERCAST.has(cur.weather.kind) ? cur.weather.ramp : 0;
-      drawFairClouds(k, phase, t, camRefX, width, horizonY, overcastRamp);
+      drawFairClouds(k, phase, t, camRefX, width, horizonY, cloudSuppression(cur.weather.kind, cur.weather.ramp));
     }
 
     if (cur.weather.kind === 'clear' || cur.weather.ramp <= 0.02) return;
@@ -1149,7 +1174,7 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
           rainbowBuiltWidth = width;
           rainbowBuiltHorizonY = horizonY;
         }
-        const alpha = 0.72 * t.weather.ramp;
+        const alpha = 0.85 * t.weather.ramp;
         for (const obj of rainbowBlockObjs) obj.opacity = alpha;
       } else if (rainbowRoot) {
         rainbowRoot.destroy();

@@ -8,6 +8,7 @@ import {
   mapX,
   mapY,
   rainbowBlocks,
+  cloudSuppression,
   overcastCloudSpecs,
   fairCloudSpecs,
   CLOUD_LAYERS,
@@ -237,13 +238,88 @@ describe('rainbowBlocks', () => {
     }
   });
 
-  it('produces roughly 134 blocks for the outermost band (170 ref-px radius, 4/rr step)', () => {
+  it('overlaps blocks along each band so the arc reads solid, never dotted', () => {
     const blocks = rainbowBlocks(800, 180);
-    const band0 = blocks.filter((b) => b.band === 0);
-    // pi / (4/170) = 170*pi/4 ≈ 133.5, so 133 or 134 samples depending on
-    // where the last step lands relative to the pi..2pi range.
-    expect(band0.length).toBeGreaterThanOrEqual(130);
-    expect(band0.length).toBeLessThanOrEqual(137);
+    for (let band = 0; band < 5; band++) {
+      const bandBlocks = blocks.filter((b) => b.band === band);
+      for (let i = 1; i < bandBlocks.length; i++) {
+        const gap = Math.hypot(
+          bandBlocks[i]!.x - bandBlocks[i - 1]!.x,
+          bandBlocks[i]!.y - bandBlocks[i - 1]!.y,
+        );
+        // Strictly inside one block: consecutive squares always overlap.
+        expect(gap).toBeLessThan(bandBlocks[i]!.size * 0.95);
+      }
+    }
+  });
+
+  it('stacks the five bands edge to edge, so there is no sky showing between them', () => {
+    const blocks = rainbowBlocks(800, 180);
+    // Radius of each band, measured from the arc's apex block (the highest y).
+    const apex = (band: number) =>
+      blocks.filter((b) => b.band === band).reduce((lo, b) => (b.y < lo.y ? b : lo));
+    for (let band = 1; band < 5; band++) {
+      const step = apex(band).y - apex(band - 1).y;
+      // Each inner band sits one block-width below the one outside it. The
+      // apex is whichever sample landed nearest the top, not the exact top,
+      // so this is within a few percent rather than exact.
+      expect(step).toBeGreaterThan(apex(band).size * 0.9);
+      expect(step).toBeLessThan(apex(band).size * 1.1);
+    }
+  });
+
+  it('never paints below the horizon — the arc meets the ground line and stops', () => {
+    for (const horizonY of [120, 180, 511]) {
+      for (const b of rainbowBlocks(1600, horizonY)) {
+        expect(b.y + b.size).toBeLessThanOrEqual(horizonY + 1e-9);
+      }
+    }
+  });
+
+  it('sits in the distance: the arc spans a modest share of the sky, not the whole frame', () => {
+    const horizonY = 500;
+    const blocks = rainbowBlocks(1600, horizonY);
+    const xs = blocks.map((b) => b.x);
+    const span = Math.max(...xs) - Math.min(...xs);
+    // Roughly 1.2x the sky's height across — comfortably inside a wide frame.
+    expect(span).toBeGreaterThan(horizonY);
+    expect(span).toBeLessThan(horizonY * 1.5);
+    // ...and its apex leaves clear sky above it.
+    expect(Math.min(...blocks.map((b) => b.y))).toBeGreaterThan(horizonY * 0.3);
+  });
+
+  it('stays centred horizontally whatever the viewport width', () => {
+    for (const width of [800, 1600, 2400]) {
+      const xs = rainbowBlocks(width, 400).map((b) => b.x);
+      // Within a pixel: the outermost samples sit a fraction of a step either
+      // side of the exact feet, so the midpoint is symmetric but not to 1e-6.
+      expect(Math.abs((Math.min(...xs) + Math.max(...xs)) / 2 - width / 2)).toBeLessThan(1);
+    }
+  });
+});
+
+describe('cloudSuppression', () => {
+  it('leaves the fair-weather clouds alone on kinds that should keep a cloudy sky', () => {
+    for (const kind of ['clear', 'wind', 'leaves'] as const) {
+      expect(cloudSuppression(kind, 1)).toBe(0);
+    }
+  });
+
+  it('empties the sky for heat and rainbow — the two kinds that want a bare sky', () => {
+    expect(cloudSuppression('heat', 1)).toBe(1);
+    expect(cloudSuppression('rainbow', 1)).toBe(1);
+  });
+
+  it('still hands the overcast kinds over to their own blob decks', () => {
+    for (const kind of ['rain', 'storm', 'snow', 'fog', 'cloudy'] as const) {
+      expect(cloudSuppression(kind, 1)).toBe(1);
+    }
+  });
+
+  it('follows the ramp rather than snapping, so a journey transition crossfades', () => {
+    expect(cloudSuppression('heat', 0.5)).toBe(0.5);
+    expect(cloudSuppression('rainbow', 0)).toBe(0);
+    expect(cloudSuppression('clear', 0.5)).toBe(0);
   });
 });
 
