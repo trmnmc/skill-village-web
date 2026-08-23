@@ -1,4 +1,14 @@
-import kaplay, { type KAPLAYCtx } from 'kaplay';
+import kaplay, {
+  type KAPLAYCtx,
+  type GameObj,
+  type AnchorComp,
+  type ColorComp,
+  type PosComp,
+  type RectComp,
+  type ScaleComp,
+  type TextComp,
+  type ZComp,
+} from 'kaplay';
 import type { Creature } from '@village/core/visual';
 import { TEXT_SS } from '../theme.js';
 import { themeStore } from '../theme/index.js';
@@ -28,6 +38,10 @@ import { viewSoundEvents, type CreatureSnapshot } from '../sound/arrivals.js';
 import { HAPPY_ABOVE, SLEEP_BELOW } from '../motion/behaviour.js';
 import { mountSky } from './sky.js';
 import { mountWeather } from './weather-layer.js';
+import { createRobotHouse } from './robotHouse.js';
+import { PORCH_SPOT, inRobotHouse } from '../layout/robot.js';
+import { createDragTracker } from '../input/drag.js';
+import { displayName } from '../render/label.js';
 
 export interface VillageScene {
   k: KAPLAYCtx;
@@ -51,6 +65,10 @@ export interface VillageOptions {
    * does not know what a chat panel is; `main.ts` connects the two.
    */
   onCreatureClick?(creature: Creature): void;
+  /** A villager was dropped onto the robot-house. */
+  onRobotDrop?(creatureId: string): void;
+  /** The current resident was dragged off the robot-house and let go elsewhere. */
+  onRobotEvict?(creatureId: string): void;
 }
 
 /** How far a press may travel and still count as a click, in client pixels. */
@@ -246,6 +264,8 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // `weather.update(t)` called back to back on every resolved-theme change.
   const weather = mountWeather(k);
 
+  const robotHouse = createRobotHouse(k, { pixel: pixelFont, mono: monoFont });
+
   // Drag to pan along the strip. KAPLAY binds mousedown/mousemove/mouseup
   // on the canvas element itself (e.canvas.addEventListener, see
   // kaplay.mjs) and native mouse events do not implicitly capture the
@@ -268,7 +288,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     panning = false;
   };
   k.onMouseDown('left', () => {
-    panning = true;
+    if (tracker.current() === null) panning = true;
   });
   k.onMouseMove((_pos, delta) => {
     if (!panning) return;
@@ -280,6 +300,11 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   window.addEventListener('mouseup', stopPanning);
   window.addEventListener('pointercancel', stopPanning);
   window.addEventListener('blur', stopPanning);
+  // A gesture the tracker owns must not survive a cancelled pointer or the
+  // window losing focus mid-drag — a plain 'mouseup' already reaches the
+  // tracker's own release handler below, so only these two are needed here.
+  window.addEventListener('pointercancel', () => tracker.cancel());
+  window.addEventListener('blur', () => tracker.cancel());
 
   const status = k.add([
     k.text('connecting…', { size: 14 * TEXT_SS, font: monoFont }),
@@ -353,6 +378,18 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // "the one whose name I can see", so both answers come from one test.
   let hoveredId: string | null = null;
 
+  const tracker = createDragTracker(CLICK_SLOP);
+  let residentId: string | null = null;
+
+  // The drag ghost's game objects, live only while a drag is in progress. See
+  // the onUpdate block below. Typed explicitly (rather than
+  // `ReturnType<typeof k.add>`, which loses the component union to the
+  // generic's unconstrained default) so `.pos`/`.text` stay visible once
+  // reassigned from `null` — the same shape `k.add`'s own inference would
+  // give a `const` binding of the identical component list.
+  let ghost: GameObj<RectComp | ColorComp | PosComp | AnchorComp | ZComp> | null = null;
+  let ghostLabel: GameObj<TextComp | ScaleComp | PosComp | AnchorComp | ColorComp | ZComp> | null = null;
+
   k.onMouseMove((pos) => {
     lookAt = screenToWorld(pos.x, k.getCamPos().x, k.width());
     cursorY = screenToWorld(pos.y, k.getCamPos().y, k.height());
@@ -407,6 +444,35 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     }
 
     for (const [id, actor] of actors) actor.update(t, lookAt, id === hoveredId);
+
+    // The drag ghost: a small accent square with the dragged villager's name,
+    // riding the cursor while a drag is live. Created and destroyed here so
+    // there is nothing to leak when the gesture ends off-canvas.
+    const drag = tracker.current();
+    if (drag?.dragging && lookAt !== null && cursorY !== null) {
+      // Both created (or neither) — checking both, not just `ghost`, is
+      // what lets TS narrow `ghostLabel` to non-null below too.
+      if (!ghost || !ghostLabel) {
+        ghost = k.add([k.rect(18, 18), k.color(hex(k, THEME.accent)), k.pos(0, 0), k.anchor('center'), k.z(60)]);
+        ghostLabel = k.add([
+          k.text('', { size: 12 * TEXT_SS, font: monoFont }),
+          k.scale(1 / TEXT_SS),
+          k.pos(0, 0),
+          k.anchor('center'),
+          k.color(hex(k, THEME.ink)),
+          k.z(61),
+        ]);
+      }
+      ghost.pos = k.vec2(lookAt, cursorY);
+      ghostLabel.pos = k.vec2(lookAt, cursorY - 20);
+      const dragged = known.get(drag.targetId);
+      ghostLabel.text = dragged ? displayName(dragged) : '';
+    } else if (ghost) {
+      ghost.destroy();
+      ghostLabel?.destroy();
+      ghost = null;
+      ghostLabel = null;
+    }
   });
 
   // A click is a press that did not turn into a drag — the same gesture pans
@@ -437,23 +503,33 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // `k.mousePos()`, which is frame-quantized for the same reason as above (the
   // mousemove handler defers `state.mousePos` onto the input queue) and so can
   // still be reporting a stale position during a fast gesture.
-  let pressedAt: { x: number; y: number } | null = null;
-
   k.canvas.addEventListener('mousedown', (event) => {
     if (event.button !== 0) return;
-    pressedAt = { x: event.clientX, y: event.clientY };
+    tracker.press(event.clientX, event.clientY, hoveredId);
+  });
+
+  window.addEventListener('mousemove', (event) => {
+    tracker.move(event.clientX, event.clientY);
   });
 
   window.addEventListener('mouseup', (event) => {
-    // Left button only, symmetric with the press: a right-button release
-    // during a left-button drag is not the end of that gesture.
     if (event.button !== 0) return;
-    const from = pressedAt;
-    pressedAt = null;
-    if (from === null || hoveredId === null) return;
-    if (Math.hypot(event.clientX - from.x, event.clientY - from.y) >= CLICK_SLOP) return;
-    const creature = known.get(hoveredId);
-    if (creature) opts.onCreatureClick?.(creature);
+    const gesture = tracker.release(event.clientX, event.clientY);
+    if (gesture.type === 'click') {
+      const creature = known.get(gesture.targetId);
+      if (creature) opts.onCreatureClick?.(creature);
+      return;
+    }
+    if (gesture.type === 'drop') {
+      const rect = k.canvas.getBoundingClientRect();
+      const worldX = event.clientX - rect.left + k.getCamPos().x - k.width() / 2;
+      const worldY = event.clientY - rect.top + k.getCamPos().y - k.height() / 2;
+      if (inRobotHouse(worldX, worldY)) {
+        opts.onRobotDrop?.(gesture.targetId);
+      } else if (gesture.targetId === residentId) {
+        opts.onRobotEvict?.(gesture.targetId);
+      }
+    }
   });
 
   // Retint every tagged scenery object (and every tagged creature sprite) in
@@ -515,6 +591,17 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         ? `voice ${bar(llm.interactiveRemaining, llm.interactiveCap)} ${fmt(llm.interactiveRemaining)}/${fmt(llm.interactiveCap)}`
         : '';
       const spots = placeCreatures(view.creatures.map((c) => c.id));
+
+      // The resident stands at the robot-house porch, not its hashed spot
+      // (spec §4: a glance at the house says who the robot is).
+      residentId = view.robotResidentId;
+      if (residentId && spots.has(residentId)) spots.set(residentId, { ...PORCH_SPOT });
+
+      const resident = residentId ? view.creatures.find((c) => c.id === residentId) : undefined;
+      robotHouse.setResidentLabel(resident ? displayName(resident) : null);
+      const active = view.robotLastTurnAt !== null && Date.now() - view.robotLastTurnAt < 15_000;
+      robotHouse.setPresence(residentId === null ? 'dark' : active ? 'talking' : 'lit');
+
       placements = spots;
       const seen = new Set<string>();
 
