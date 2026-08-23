@@ -2,6 +2,9 @@ import { startVillage } from './scene/village.js';
 import { connect } from './net/client.js';
 import { createChatPanel } from './chat/panel.js';
 import { displayName } from './render/label.js';
+import { sound } from './sound/player.js';
+import { mountSoundHud } from './sound/hud.js';
+import { mountSoundcheck } from './sound/soundcheck.js';
 
 // The panel is built before the scene and the scene is told about the panel:
 // each one's reference to the other lives inside an arrow function, which only
@@ -17,15 +20,27 @@ const scene = await startVillage({
   onCreatureClick: (creature) => panel.open({ id: creature.id, label: displayName(creature) }),
 });
 
+sound.init();
+mountSoundHud();
+mountSoundcheck();
+
+let lastStatus: 'connecting' | 'live' | 'offline' = 'connecting';
+
 connect({
   onView: (view) => {
     scene.setView(view);
     if (view.llm) setSilentBanner(view.llm.mode);
   },
-  onStatus: (status) =>
+  onStatus: (status) => {
     scene.setStatus(
       status === 'live' ? 'live' : status === 'connecting' ? 'connecting…' : 'server offline — retrying',
-    ),
+    );
+    // Only real transitions ring, spec §4: losing a live village, or getting
+    // it back. The initial 'connecting' is a pending answer, not a verdict.
+    if (status === 'offline' && lastStatus === 'live') sound.event({ type: 'offline' });
+    if (status === 'live' && lastStatus === 'offline') sound.event({ type: 'reconnected' });
+    lastStatus = status;
+  },
 });
 
 // The silent-movie banner rides the live state frames (every frame carries
