@@ -79,6 +79,18 @@ describe('draw', () => {
     expect(result.nextNumber).toBe(2);
   });
 
+  it('stops the whole round when the repair call itself fails', async () => {
+    const broken = JSON.stringify({ rows: ['XX', 'XX'], crown: 'tuft', hue: '#e58c68', title: 'Broken' });
+    const llm = stubLlm([
+      { ok: true, text: broken }, { ok: false, why: 'budget' },
+    ]);
+    const result = await createSketchArtist({ llm }).draw(request(3));
+
+    expect(result.sketches).toEqual([]);
+    expect(result.nextNumber).toBe(1);
+    expect(llm.prompts).toHaveLength(2);
+  });
+
   it('stops asking the moment the budget is gone', async () => {
     const llm = stubLlm([{ ok: true, text: sketchJson('One') }, { ok: false, why: 'budget' }]);
     const result = await createSketchArtist({ llm }).draw(request(5));
