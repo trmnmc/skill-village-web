@@ -2,9 +2,11 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
-import type { CareVerb } from '@village/core';
+import { toCaseView, type CareVerb, type CaseView } from '@village/core';
 import { remaining, type LlmConfig } from '../llm/ledger.js';
+import type { LlmMode } from '../llm/service.js';
 import { readEvents } from '../state/events.js';
+import type { VillageState } from '../state/schema.js';
 import type { Village } from '../village.js';
 import { parseChatRequest, lastUserMessage, chatCompletionJson, sseFrames } from '../robot/openai.js';
 
@@ -20,6 +22,56 @@ const EMPTY_HOUSE_LINE =
 const MOVED_AWAY_LINE =
   'The villager who lived in me seems to have moved away. Drag someone new onto my house in the village.';
 
+export interface ClientState {
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+  creatures: VillageState['creatures'];
+  problems: VillageState['problems'];
+  llm: VillageState['llm'] & { mode: LlmMode };
+  robot: VillageState['robot'];
+  /** In-memory, not persisted: the presence glow wants "is he talking right
+   * now", which a saved timestamp from last week must never answer. */
+  robotLastTurnAt: number | null;
+  startupNote: string | null;
+  /** Today's case, or null. The rest of the gallery never leaves the server. */
+  peddlerCase: CaseView | null;
+  peddler: boolean;
+}
+
+/**
+ * The only shape the browser ever sees. `gallery` holds the stock, the rejects,
+ * the verdict history and the distilled style guide — the whole hidden engine —
+ * so it is projected down to today's case here rather than spread wholesale.
+ * Ship the raw state and anyone who opens devtools reads the entire trick.
+ *
+ * `toCaseView` narrows one step further, dropping each sketch's survival count:
+ * a field named that would advertise the ladder all by itself.
+ *
+ * This absorbs what `withMode` used to do (stamping the live llm mode and the
+ * in-memory robot activity timestamp onto the state) rather than coexisting
+ * with a raw-state spread, since a spread now carries `gallery` along with it.
+ */
+export function toClientState(
+  state: VillageState,
+  extras: { startupNote: string | null; peddler: boolean; llmMode: LlmMode; robotLastTurnAt: number | null },
+): ClientState {
+  const open = state.gallery.case;
+  return {
+    version: state.version,
+    createdAt: state.createdAt,
+    updatedAt: state.updatedAt,
+    creatures: state.creatures,
+    problems: state.problems,
+    llm: { ...state.llm, mode: extras.llmMode },
+    robot: state.robot,
+    robotLastTurnAt: extras.robotLastTurnAt,
+    startupNote: extras.startupNote,
+    peddlerCase: extras.peddler && open ? toCaseView(open) : null,
+    peddler: extras.peddler,
+  };
+}
+
 /**
  * The whole API surface. Every route reads from the village runtime and every
  * mutation goes back through it, so the server has no state of its own.
@@ -32,21 +84,17 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
 
   app.get('/api/health', async () => ({ ok: true, creatures: Object.keys(village.getState().creatures).length }));
 
-  // The service mode lives on the llm service, not in the persisted state,
-  // but every consumer of a state payload wants them together: the client's
-  // silent-movie banner rides these frames and must never have to guess.
-  const withMode = (state: ReturnType<Village['getState']>) => ({
-    ...state,
-    llm: { ...state.llm, mode: village.llmMode() },
-    // In-memory, not persisted: the presence glow wants "is he talking right
-    // now", which a saved timestamp from last week must never answer.
-    robotLastTurnAt: village.robotActivityAt(),
-  });
+  // Every consumer of a state payload wants the same shape, so the extras a
+  // route must supply live in one place.
+  const clientState = () =>
+    toClientState(village.getState(), {
+      startupNote: village.startupNote,
+      peddler: village.peddlerVisiting(),
+      llmMode: village.llmMode(),
+      robotLastTurnAt: village.robotActivityAt(),
+    });
 
-  app.get('/api/state', async () => ({
-    ...withMode(village.getState()),
-    startupNote: village.startupNote,
-  }));
+  app.get('/api/state', async () => clientState());
 
   app.get('/api/creatures', async () => {
     return Object.values(village.getState().creatures).sort((a, b) => a.id.localeCompare(b.id));
@@ -156,7 +204,20 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
 
   app.post('/api/refresh', async () => {
     await village.refresh();
-    return village.getState();
+    return clientState();
+  });
+
+  app.post<{ Body: { sketchId?: unknown } }>('/api/gallery/cull', async (request, reply) => {
+    const { sketchId } = request.body ?? {};
+    if (typeof sketchId !== 'string' || !sketchId) {
+      return reply.code(400).send({ error: 'Expected a sketchId.' });
+    }
+
+    const accepted = await village.cull(sketchId);
+    const body = clientState();
+    // A refused cull is a race with midnight or a double click, not a failure
+    // the player should ever see. The client simply re-syncs from this body.
+    return accepted ? body : reply.code(409).send(body);
   });
 
   app.get<{ Querystring: { since?: string; limit?: string } }>('/api/events', async (request) => {
@@ -168,11 +229,11 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
   });
 
   app.get('/ws', { websocket: true }, (socket) => {
-    socket.send(JSON.stringify({ type: 'state', state: withMode(village.getState()) }));
-    const unsubscribe = village.subscribe((state) => {
-      if (socket.readyState === socket.OPEN) {
-        socket.send(JSON.stringify({ type: 'state', state: withMode(state) }));
-      }
+    const frame = () => JSON.stringify({ type: 'state', state: clientState() });
+
+    socket.send(frame());
+    const unsubscribe = village.subscribe(() => {
+      if (socket.readyState === socket.OPEN) socket.send(frame());
     });
     socket.on('close', unsubscribe);
   });

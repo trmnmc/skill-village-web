@@ -2,12 +2,15 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
+import { CASE_SIZE } from '@village/core';
 import { makeSandbox, skillFixture, type Sandbox } from '../testing/sandbox.js';
-import { createVillage, type Village } from '../village.js';
+import { createVillage, type Village, type VillageOptions } from '../village.js';
 import { defaultLlmState } from '../llm/ledger.js';
 import { createLlmService } from '../llm/service.js';
 import { fakeCliCommand } from '../llm/testing/fake.js';
-import { createApp } from './app.js';
+import type { SketchArtist } from '../gallery/artist.js';
+import { emptyState, type VillageState } from '../state/schema.js';
+import { createApp, toClientState } from './app.js';
 
 let sandbox: Sandbox | null = null;
 let village: Village | null = null;
@@ -19,10 +22,10 @@ afterEach(async () => {
   sandbox = null;
 });
 
-async function boot(skills: string[] = []) {
+async function boot(skills: string[] = [], opts: Partial<VillageOptions> = {}) {
   sandbox = await makeSandbox();
   for (const name of skills) await sandbox.writeSkill(name, skillFixture(name));
-  village = await createVillage({ paths: sandbox.paths, now: () => 1_000 });
+  village = await createVillage({ paths: sandbox.paths, now: () => 1_000, ...opts });
   return createApp(village);
 }
 
@@ -373,5 +376,114 @@ describe('the robot api', () => {
     const state = (await app.inject({ method: 'GET', url: '/api/state' })).json();
     expect(state.robot).toEqual({ residentId: null });
     expect(state.robotLastTurnAt).toBe(null);
+  });
+});
+
+/** The peddler's case, drawn deterministically so a test can name its sketches. */
+const PEDDLER_ROWS = ['.XXXXX.', 'XXXXXXX', 'XWWXWWX', 'XWWXWWX', 'XXXKXXX', 'XXXXXXX', '.DD.DD.'];
+
+describe('the gallery is projected, not shipped', () => {
+  it('sends the case and withholds every trace of the engine', () => {
+    const veteran = {
+      id: 'sketch-000001', rows: PEDDLER_ROWS, crown: 'none' as const, hue: '#e58c68',
+      title: 'Small Hope', createdDay: '2026-08-22', survivals: 2,
+    };
+    const state: VillageState = {
+      ...emptyState(0),
+      gallery: {
+        case: { day: '2026-08-22', sketches: [veteran], judged: false },
+        stock: [], rejects: [], verdicts: [],
+        styleGuide: 'wide low bodies keep losing',
+        verdictsAtLastGuide: 0, nextSketchNumber: 4,
+      },
+    };
+    const payload = JSON.stringify(toClientState(state, {
+      startupNote: null, peddler: true, llmMode: 'silent', robotLastTurnAt: null,
+    }));
+
+    expect(payload).toContain('Small Hope');
+    expect(payload).toContain('"peddler":true');
+    for (const secret of [
+      'styleGuide', 'stock', 'rejects', 'verdicts', 'nextSketchNumber',
+      'survivals', 'createdDay', 'wide low bodies', 'judged',
+    ]) {
+      expect(payload).not.toContain(secret);
+    }
+  });
+
+  it('still carries the creatures and the startup note', () => {
+    const projected = toClientState(emptyState(0), {
+      startupNote: 'a note', peddler: false, llmMode: 'silent', robotLastTurnAt: null,
+    });
+    expect(projected.startupNote).toBe('a note');
+    expect(projected.creatures).toEqual({});
+  });
+
+  it('withholds the case when no peddler is visiting, even if one drew today', () => {
+    const state: VillageState = {
+      ...emptyState(0),
+      gallery: {
+        case: { day: '2026-08-22', sketches: [], judged: true },
+        stock: [], rejects: [], verdicts: [], styleGuide: null,
+        verdictsAtLastGuide: 0, nextSketchNumber: 1,
+      },
+    };
+    const projected = toClientState(state, {
+      startupNote: null, peddler: false, llmMode: 'silent', robotLastTurnAt: null,
+    });
+    expect(projected.peddlerCase).toBeNull();
+  });
+});
+
+describe('POST /api/gallery/cull', () => {
+  /** Always draws, so the case is deterministic and CASE_SIZE-long. */
+  const artist: SketchArtist = {
+    async draw({ count, gallery, day }) {
+      return {
+        sketches: Array.from({ length: count }, (_, i) => ({
+          id: `sketch-${gallery.nextSketchNumber + i}`, rows: PEDDLER_ROWS, crown: 'none' as const,
+          hue: '#e58c68', title: `t${i}`, createdDay: day, survivals: 0,
+        })),
+        nextNumber: gallery.nextSketchNumber + count,
+      };
+    },
+    async distil() { return 'guide'; },
+  };
+
+  async function bootWithCase() {
+    const app = await boot([], { artist });
+    await village!.tick();
+    await village!.settleGallery();
+    return app;
+  }
+
+  it('accepts a cull the village accepts', async () => {
+    const app = await bootWithCase();
+    const sketchId = village!.getState().gallery.case!.sketches[0]!.id;
+    const res = await app.inject({
+      method: 'POST', url: '/api/gallery/cull', payload: { sketchId },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('answers a refused cull with 409 and the current case, never an error dialog', async () => {
+    const app = await bootWithCase();
+    // Culling an id not in today's case is refused without touching state -
+    // the same shape a race with midnight or a double click produces.
+    const res = await app.inject({
+      method: 'POST', url: '/api/gallery/cull', payload: { sketchId: 'sketch-not-in-the-case' },
+    });
+    expect(res.statusCode).toBe(409);
+    const body = res.json();
+    expect(body).toHaveProperty('peddlerCase');
+    expect(body.peddlerCase.sketches).toHaveLength(CASE_SIZE);
+  });
+
+  it('400s on a missing, empty, or non-string sketch id', async () => {
+    const app = await boot();
+    for (const payload of [{}, { sketchId: 42 }, { sketchId: '' }]) {
+      const res = await app.inject({ method: 'POST', url: '/api/gallery/cull', payload });
+      expect(res.statusCode).toBe(400);
+    }
   });
 });
