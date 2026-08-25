@@ -136,6 +136,21 @@ describe('cull', () => {
     expect(next!.verdictsAtLastGuide).toBe(0);
   });
 
+  it('keeps the old guide when distillation throws, exactly as when it fails', async () => {
+    const verdicts = Array.from({ length: VERDICTS_PER_GUIDE - 1 }, () =>
+      ({ day: YESTERDAY, culledId: 'x', survivorIds: [] }));
+    const gallery: GalleryState = {
+      ...caseOf([sketch('a'), sketch('b')]), verdicts, styleGuide: 'the old guide',
+    };
+    const artist = fakeArtist({ async distil() { throw new Error('model died'); } });
+    const next = await createGalleryRuntime({ artist }).cull(gallery, 'a', TODAY);
+
+    expect(next).not.toBeNull();
+    expect(next!.rejects.map((s) => s.id)).toEqual(['a']);
+    expect(next!.styleGuide).toBe('the old guide');
+    expect(next!.verdictsAtLastGuide).toBe(0);
+  });
+
   it('promotes a veteran into the stock at the threshold', async () => {
     const gallery = caseOf([sketch('veteran', SURVIVALS_TO_KEEP - 1), sketch('fresh')]);
     const next = await createGalleryRuntime({ artist: fakeArtist() }).cull(gallery, 'fresh', TODAY);

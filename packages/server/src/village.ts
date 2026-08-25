@@ -107,7 +107,7 @@ export interface Village {
   startupNote: string | null;
   /** Where this village keeps its files. The events route needs it. */
   getPaths(): VillagePaths;
-  /** Throw out a sketch. False when the cull was refused; never throws. */
+  /** Throw out a sketch. False when the cull was refused — a refusal never throws. */
   cull(sketchId: string): Promise<boolean>;
   /** Await the in-flight daily refill, if any. Tests only. */
   settleGallery(): Promise<void>;

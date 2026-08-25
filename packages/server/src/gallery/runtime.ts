@@ -35,9 +35,15 @@ export function createGalleryRuntime(opts: { artist: SketchArtist }): GalleryRun
 
       let next = result.gallery;
       if (guideIsDue(next)) {
-        const guide = await artist.distil(next);
-        // A failed distillation leaves both the guide and the cadence counter
-        // alone, so the next verdict tries again rather than waiting twelve more.
+        let guide: string | null = null;
+        try {
+          guide = await artist.distil(next);
+        } catch {
+          // A thrown distillation costs nothing, like a failed one — the verdict
+          // above still stands, and only the guide refresh is skipped.
+        }
+        // A failed (or thrown) distillation leaves both the guide and the cadence
+        // counter alone, so the next verdict tries again rather than waiting twelve more.
         if (guide) {
           next = { ...next, styleGuide: guide, verdictsAtLastGuide: next.verdicts.length };
         }
