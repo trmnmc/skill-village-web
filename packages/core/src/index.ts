@@ -7,6 +7,9 @@ export * from './appearance/palette.js';
 export * from './appearance/dna.js';
 export * from './appearance/generate.js';
 
+export * from './gallery/types.js';
+export * from './gallery/validate.js';
+
 export * from './files/names.js';
 export * from './files/frontmatter.js';
 export * from './files/skill.js';

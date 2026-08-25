@@ -12,3 +12,8 @@
 export * from './types.js';
 export * from './appearance/grids.js';
 export * from './appearance/palette.js';
+
+// Browser-safe: gallery types and validation import only types, palette, and
+// grids — no node builtins, no parsers. The web needs both to draw a sketch.
+export * from './gallery/types.js';
+export * from './gallery/validate.js';
