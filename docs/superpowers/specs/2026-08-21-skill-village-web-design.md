@@ -328,12 +328,18 @@ Rules: preserve upstream LICENSE/attribution in the catalog metadata and install
 2. **M2 Server** — state store, file bridge + first-run import, sim ticking, REST + WebSocket API. Verified with API calls only.
 3. **M3 Web village** — KAPLAY scene, grid renderer, the §4.2 motion vocabulary, four zones, founding villagers visibly alive. *The bar for this milestone is the trailer: if the village doesn't feel like `reference/animation-trailer/`, it isn't done.*
 4. **M4 Voice** — LLM service, personality cards + nicknames, chat, canned pools, budget meter, silent-movie mode.
-5. **M5 Adoption** — catalog build script + snapshot, Adoption Center, install/release/restore.
-6. **M6 Hatchery** — interview flow, draft/validate/review/install, export.
-7. **M7 Lineage** — breed (incl. DNA splicing), train (diff flow).
-8. **M8 Live reactions** — hook consent flow, ingest, XP/friendship from real sessions.
-9. **M9 Autonomous life** — headless ticking, scheduler, sub-budget, notice board.
-10. **M10 Polish** — golden-set pass, the §4.3 cold-open sequence, sounds/FX, About/credits.
+5. **M4.5 Peddler** — the hidden art-direction minigame: a daily visitor with a case of
+   Claude-drawn dream-sketches; the player's culls quietly build the design stock later
+   milestones dress new creatures from. Designed separately in
+   `2026-08-22-peddler-art-direction-design.md`; consumes M4's `LLMService`.
+6. **M5 Adoption** — catalog build script + snapshot, Adoption Center, install/release/restore.
+   New arrivals dress from the M4.5 design stock when it has designs to give.
+7. **M6 Hatchery** — interview flow, draft/validate/review/install, export. Hatchlings also
+   draw appearance from the M4.5 design stock.
+8. **M7 Lineage** — breed (incl. DNA splicing), train (diff flow).
+9. **M8 Live reactions** — hook consent flow, ingest, XP/friendship from real sessions.
+10. **M9 Autonomous life** — headless ticking, scheduler, sub-budget, notice board.
+11. **M10 Polish** — golden-set pass, the §4.3 cold-open sequence, sounds/FX, About/credits.
 
 ## 15. Out of scope (v1)
 

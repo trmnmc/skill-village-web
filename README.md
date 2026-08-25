@@ -51,7 +51,8 @@ DOM-free and tested (449 tests); the KAPLAY glue is deliberately thin.
 
 ## Roadmap
 
-M4 gives creatures their voices (chat via your existing Claude Code login — no API keys). M5 seeds
+M4 gives creatures their voices (chat via your existing Claude Code login — no API keys). M4.5
+brings an occasional visitor to the village edge — best discovered, not described. M5 seeds
 the Adoption Center from open-source skill collections. M6–M7 add hatching new skills through an
 in-character interview, breeding, and training. M8–M9 wire live reactions to your real coding
 sessions and autonomous village life. The full design is in
