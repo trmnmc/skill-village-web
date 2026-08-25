@@ -4,19 +4,30 @@
 - [x] Remap spec written + user-approved (`f9faf2f`) with mockup artifact
 - [x] Palette/weather/moon spec approved (`56217d8`) and plan written (`86ac12c`)
 - [x] Execute the palette plan — Tasks 1–14 done on branch claude/palette-weather-moon
-- [x] Diagnose the storm + Kelvin playtest complaints (root causes found; Kelvin was a false alarm — weekend special palette, not a code defect)
+- [x] Diagnose the storm + Kelvin playtest complaints (storm was a real architectural defect; the "Kelvin is a false alarm" verdict was later superseded — see `6b536d3`)
 - [x] Plan + execute the 3-task weather fix wave (rescale, clouds, lightning) — review-clean at `dbdec41`
 - [x] Coordinate with peer session and merge into main (`ea05233`, 852/852 + typecheck, pushed)
 - [x] Post-merge cleanup (worktree removed, branch deleted, `dev-worktree` launch entry removed, 5173 on main's `dev`)
 - [x] Diagnose "day/night + weather won't toggle" — not a bug; three design rulings compounding (URL overrides beat the menu, a time-pin freezes the cycle, Real only prompts on click)
-- [ ] **Weather-menu affordance (awaiting user go-ahead):** show "dev override active — menu muted" when URL params are present, and highlight the pinned time chip — `packages/web/src/ui/weather-menu.ts`
-- [ ] **Full visual playtest of the merged sky on main** — never done with human eyes: clouds at all phases, rainbow, a real ~30s lightning strike, two window sizes (display the Browser pane first; screenshots fail while it is hidden)
-- [ ] Deferred visual minors from the final review: strike glow draws over the near deck; rainbow doesn't rebuild on resize under a pinned time; fair clouds pop at the dusk flip; viewports under ~256px give `fy <= 0`
-- [ ] M5 implementation plan (writing-plans against the remap spec)
-- [ ] LICENSE decision (user's call; MIT suggested)
+- [x] Palette pin row in the gear menu (`27de404`) — auto + one chip per palette, persisted to `sv-palette-pin`; priority is `?palette=` > pin > schedule
+- [x] Special days get a daylight noon (`6b536d3`) — a single-palette day's two `day` keyframes pull 80% toward 1a's sky. This, not the earlier "working as specced" ruling, is the real answer to the Kelvin complaint
+- [x] Rainbow rebuilt across five commits (`6ab09ee` `ce23ce5` `cd27974` `510879a` `3693978`) — seated on the horizon, then re-derived as the cap of a circle centred on the antisolar point *below* the horizon; thin bands, leg fade, colours lifted toward white, sun read once and held, dropped to z 1 behind the weather. A bow keeps its clouds (a playtest note reversed half of `6ab09ee`); only heat haze gets bare sky
+- [x] The village sleeps at night, not forever (`ded7076`) — decay floor 20 against a sleep threshold of 25 had left 69 of 75 creatures permanently asleep; the v3 migration (`ce56696`) wakes already-stranded saves at once
+- [x] No white fringe around a shut eye (`7a56211`) — lid overhang plus `creatureOverlayColor`, so solid rects take the sky tint that sprites get for free
+
+- [ ] **Finish the visual playtest of the merged sky.** Rainbow, clouds, night and creature rendering *did* get human eyes — the five rainbow commits and `ded7076`/`7a56211` all came out of that pass. Still never seen: **a real ~30s lightning strike, the storm at large, clouds at all phases, two window sizes.** Display the Browser pane first; screenshots fail while it is hidden. Remember `&day=wed` to get the Kelvin weave rather than a weekend special
+- [ ] Deferred visual minors from the final review — 2 of 4 are now fixed:
+  - [x] rainbow rebuilds on resize — triggers on width *or* horizon change > 1px (`weather-layer.ts` ~1250)
+  - [x] fair clouds no longer pop at the dusk flip — crossfade, and suppression follows the ramp
+  - [ ] strike glow draws over the near deck — lightning still draws at z 5 while creatures span z 4–7
+  - [ ] viewports under ~256px give `fy <= 0` — `fy()` is still a bare `horizonY / 182`, unclamped
+- [ ] **Weather-menu affordance (awaiting go-ahead) — smaller than first scoped.** The pinned-chip highlight already existed at `ea05233`; all that is actually missing is a "dev override active — menu muted" line when `at`/`day`/`weather`/`palette` are present in the URL. Note the menu does not read `location.search` at all today — only `theme/store.ts:148` does — `packages/web/src/ui/weather-menu.ts`
+- [ ] M5 implementation plan — writing-plans against `docs/superpowers/specs/2026-08-22-projects-village-remap-design.md` (it covers M5 + M6); no plan file exists yet
+- [ ] LICENSE decision (user's call; MIT suggested) — there is still no LICENSE file in the repo
 - [ ] Optional: Pages landing refresh
 - [ ] Playtest leftovers from M4 final review (bubble occlusion, meter granularity, trackpad tap + double-click)
 - [ ] Backlog: project breeding (parked)
+- [ ] Housekeeping: 8 branches are fully merged into main and are deletion candidates (`custom-game-agents-3335c5`, `swarm-adoption-engine-b85a0a`, `token-drain-investigation-8cf0e3`, `flying-skills-missing-778900`, `volumetric-clouds`, `multiplayer-hub-interaction-b9ec2f`, `project-visualization-686f3c`, `skill-creatures-sound-engine-53779b`); 2 stashes are still parked on main
 - [ ] Non-repo: restart/reload the Chunks Minecraft server so the chunks.games.place rebrand shows
 
-_Updated: 2026-08-23 — main_
+_Updated: 2026-08-25 — claude/todo-list-review-255aba · verified against `7a56211`; 898/898 tests + typecheck green_
