@@ -60,6 +60,44 @@ not the exception, and Task 11 sizes it accordingly.
 
 ---
 
+## Decisions taken 2026-08-25, after re-reading the approved mockup
+
+The direction-check artifact **"Projects Move In"**
+(`https://claude.ai/code/artifact/a14b2b1c-94c3-42c0-bc22-ec334405a80f`,
+approved 2026-08-23) was not consulted when Tasks 1–13 were written. Reading it
+afterwards confirmed most of the plan — one helper drawn beside every project
+that uses it, the commons, read-only scanning at boot + 5 min, retirement to
+the Adoption Center — and its data-flow chip reads
+`~/.claude/projects/**/*.jsonl`, which independently backs the recursive-walk
+correction above. Two things it shows were missing, and the user ruled on both:
+
+1. **Every helper is winged; projects are the only grounded villagers.** The
+   mockup's masthead reads *"Skills and agents fold into winged helpers"*, and
+   every helper it draws — `tdd`, `brainstorming`, `make-pdf`, `canary`,
+   `scrape`, all **skills** — has wings. This **overrides spec §4's "winged
+   tell unchanged"** and the current `types.ts` rule that wings mean agent.
+   Grounded now reads as "this is a project". **Task 14.**
+2. **A project's presence scales with its helper count, aura included.** The
+   mockup's headline annotation is *"the project is the tamagotchi — bigger
+   aura, more helpers commanded"*, drawn at scale **1.75** for three helpers,
+   **1.45** for two, against helpers at **0.75–0.8**. This was originally
+   deferred out of this plan as cosmetic; that was the wrong call, since size
+   is the primary way a project is told from a helper at a glance. **Task 15.**
+
+**Ordering note:** Tasks 14 and 15 were appended rather than renumbered into
+place, so every "Task N" cross-reference above still resolves. Task 14
+therefore **amends** two things earlier tasks build: the `winged` rule in
+Task 1's `generateAppearance`, and the v4→v5 migration written in Task 10,
+which stops being a bare version stamp and starts doing real work. Run the
+tasks in order 1 → 15 and the result is correct; just expect Task 14 to edit
+code Tasks 1 and 10 wrote.
+
+**Still M6, unchanged by this:** the health/droop meter, the "last worked 12
+days ago / misses: tdd, ship" sign, chat-with-the-project, and the Adoption
+Center's contents. The mockup shows all four; none is in this plan.
+
+---
+
 ## Global Constraints
 
 Copied from the spec and from rules this repo already enforces. Every task's
@@ -3216,6 +3254,569 @@ git commit -m "feat(web): one creature, many bodies — the scene draws instance
 
 ---
 
+
+## Task 14: Every helper flies
+
+**Files:**
+- Modify: `packages/core/src/types.ts` (the `winged` doc comment)
+- Modify: `packages/core/src/appearance/generate.ts`
+- Modify: `packages/server/src/state/schema.ts` (amends Task 10's v4→v5 step)
+- Test: `packages/core/src/appearance/generate.test.ts` (append)
+- Test: `packages/server/src/state/schema.test.ts` (append — created in Task 10)
+
+**Interfaces:**
+- Consumes: `CreatureKind` including `'project'` (Task 1); the v4→v5 migration step (Task 10).
+- Produces: `generateAppearance` now sets `winged: kind !== 'project'`; new export `regroundAppearance(kind: CreatureKind, name: string, appearance: CreatureAppearance): CreatureAppearance`.
+
+**Why this needs a migration, and it is the whole point of the task.** A
+creature's appearance is **stored in state**, generated once when it moves in,
+and `reconcile` deliberately preserves it — editing a skill teaches its
+creature something, it does not restyle it. So changing the rule in
+`generateAppearance` affects only creatures that have never been seen before.
+The 75 villagers in the live save would keep `winged: false` forever and the
+change would look like it silently failed. The migration is what actually
+grounds the decision.
+
+**Know what else moves.** `winged` is not only a look:
+`packages/web/src/motion/behaviour.ts` branches on it to decide who flies, and
+`creature.ts` gives a winged creature a fainter contact shadow (opacity `0.1`
+vs `0.18`). After this task **72 skills that walked will hover**, and their
+shadows will lighten. That is the intended reading — the mockup's helpers
+"hover beside every project" — but it is a bigger change than the word
+"appearance" suggests, and it is the thing to look hardest at in Task 15's
+Step 7.
+
+**Expect red tests.** Thirteen test files assert on `winged` today. The ones
+that will fail are the ones that encoded "skill ⇒ grounded" as the rule:
+`core/appearance/generate.test.ts`, `core/types.test.ts`,
+`server/bridge/creature.test.ts`, `web/motion/behaviour.test.ts`,
+`web/render/compose.test.ts`. **Each of those is a real assertion about the
+old rule, so update it to the new rule — do not delete it.** A test that
+becomes "a skill is winged" is still guarding something.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `packages/core/src/appearance/generate.test.ts`:
+
+```ts
+describe('wings mark a helper, not an agent', () => {
+  it('gives a skill wings', () => {
+    expect(generateAppearance({ kind: 'skill', name: 'brainstorming' }).winged).toBe(true);
+  });
+
+  it('gives an agent wings', () => {
+    expect(generateAppearance({ kind: 'agent', name: 'code-reviewer' }).winged).toBe(true);
+  });
+
+  it('leaves a project on the ground — grounded is how you read "this is a project"', () => {
+    expect(generateAppearance({ kind: 'project', name: 'C--w-atlas' }).winged).toBe(false);
+  });
+
+  it('gives a lanky skill a rest posture, which only winged creatures have', () => {
+    const lanky = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l']
+      .map((n) => generateAppearance({ kind: 'skill', name: `posture-probe-${n}` }))
+      .find((a) => a.body === 'lanky');
+    // Not every probe name lands on `lanky`; if none did, the assertion below
+    // is vacuous rather than wrong, and the dna test already covers the pick.
+    if (lanky) expect(lanky.restPosture).not.toBeNull();
+  });
+});
+
+describe('regroundAppearance', () => {
+  it('flips a stored grounded skill to winged without touching its body or colours', () => {
+    const stored = { ...generateAppearance({ kind: 'skill', name: 'brainstorming' }), winged: false, restPosture: null };
+    const after = regroundAppearance('skill', 'brainstorming', stored);
+    expect(after.winged).toBe(true);
+    expect(after.body).toBe(stored.body);
+    expect(after.crown).toBe(stored.crown);
+    expect(after.palette).toEqual(stored.palette);
+  });
+
+  it('keeps an agent\'s frontmatter-derived hue, which cannot be re-derived from the name alone', () => {
+    const stored = { ...generateAppearance({ kind: 'agent', name: 'x', agentColor: 'purple' }) };
+    expect(regroundAppearance('agent', 'x', stored).palette).toEqual(stored.palette);
+  });
+
+  it('grounds a project even if it was somehow stored winged', () => {
+    const stored = { ...generateAppearance({ kind: 'skill', name: 'was-a-skill' }) };
+    expect(regroundAppearance('project', 'was-a-skill', stored).winged).toBe(false);
+    expect(regroundAppearance('project', 'was-a-skill', stored).restPosture).toBeNull();
+  });
+
+  it('is idempotent — running it twice changes nothing', () => {
+    const once = regroundAppearance('skill', 'brainstorming', generateAppearance({ kind: 'skill', name: 'brainstorming' }));
+    expect(regroundAppearance('skill', 'brainstorming', once)).toEqual(once);
+  });
+});
+```
+
+Add `regroundAppearance` to the file's import from `./generate.js`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run packages/core/src/appearance/generate.test.ts`
+Expected: FAIL — `expected false to be true`, plus `regroundAppearance is not a function`.
+
+- [ ] **Step 3: Change the rule and add the regrounder**
+
+In `packages/core/src/appearance/generate.ts`, replace:
+
+```ts
+  const winged = input.kind === 'agent';
+```
+
+with:
+
+```ts
+  // Wings mark a *helper*, not an agent. Skills and agents alike are the
+  // "powers" a project commands, and they hover beside it; a project is the
+  // villager doing the work and stands on the ground. Grounded-vs-flying is
+  // therefore how you read role at a glance, and size (see the presence scale
+  // in the renderer) is how you read standing.
+  const winged = input.kind !== 'project';
+```
+
+Then add at the end of the file:
+
+```ts
+/**
+ * Re-derive only the parts of a stored appearance that the creature's *kind*
+ * decides, keeping everything its identity decided.
+ *
+ * Body, crown and palette are left exactly as stored, which matters most for
+ * agents: their hue can come from `color:` frontmatter that a Creature does
+ * not carry, so regenerating from scratch would restyle every coloured agent.
+ * Only `winged` — and `restPosture`, which exists only for winged lankies —
+ * are recomputed. Idempotent, so a migration may run it twice safely.
+ */
+export function regroundAppearance(
+  kind: CreatureKind,
+  name: string,
+  appearance: CreatureAppearance,
+): CreatureAppearance {
+  const winged = kind !== 'project';
+  const restPosture = winged && appearance.body === 'lanky'
+    ? pickFrom(dnaSeed(kind, name), DNA_OFFSET.posture, REST_POSTURE_IDS)
+    : null;
+  return { ...appearance, winged, restPosture };
+}
+```
+
+The imports it needs (`dnaSeed`, `DNA_OFFSET`, `pickFrom`, `REST_POSTURE_IDS`,
+`CreatureAppearance`, `CreatureKind`) are already at the top of this file.
+
+- [ ] **Step 4: Update the type's own documentation**
+
+In `packages/core/src/types.ts`, inside `CreatureAppearance`, replace:
+
+```ts
+  /** Agents only: wings, and a tapered underside in place of feet. */
+  winged: boolean;
+  /** Only set for winged `lanky` creatures; null for everything else. */
+  restPosture: RestPostureId | null;
+```
+
+with:
+
+```ts
+  /**
+   * Helpers only — skills and agents both. Wings and a tapered underside in
+   * place of feet. A project is the one kind that stands on the ground, which
+   * is how the eye separates the villager doing the work from the powers it
+   * commands.
+   */
+  winged: boolean;
+  /** Only set for winged `lanky` creatures; null for everything else. */
+  restPosture: RestPostureId | null;
+```
+
+- [ ] **Step 5: Make the v5 migration do the regrounding**
+
+This amends the step Task 10 wrote. In `packages/server/src/state/schema.ts`,
+add `regroundAppearance` to the `@village/core` import, then replace:
+
+```ts
+  if (state.version === 4) state = { ...state, version: 5 };
+```
+
+with:
+
+```ts
+  if (state.version === 4) {
+    // v5 is where wings stopped meaning "agent" and started meaning "helper".
+    // A creature's appearance is generated once and then preserved for life,
+    // so without this pass every villager already in the save keeps the old
+    // rule and the change looks like it silently did nothing.
+    const creatures: Record<string, Creature> = {};
+    for (const [id, creature] of Object.entries(state.creatures)) {
+      creatures[id] = {
+        ...creature,
+        appearance: regroundAppearance(creature.kind, creature.name, creature.appearance),
+      };
+    }
+    state = { ...state, version: 5, creatures };
+  }
+```
+
+Also update the `migrateState` doc comment's v4→v5 sentence, which Task 10
+wrote as a version stamp, to:
+
+```ts
+ * v4 -> v5 gives every helper already in the save its wings, because
+ * appearance is stored once and never regenerated.
+```
+
+- [ ] **Step 6: Write the failing migration test**
+
+Append to `packages/server/src/state/schema.test.ts`:
+
+```ts
+describe('v5 gives the existing village its wings', () => {
+  const grounded = (id: string, kind: 'skill' | 'agent' | 'project', name: string) => ({
+    id, kind, name, nickname: '',
+    appearance: { ...generateAppearance({ kind, name }), winged: false, restPosture: null },
+    stats: { mood: 70, energy: 70, bond: 10, xp: 0 },
+    stage: 'adult', personality: null, sourcePath: '', friendships: {}, lastSeenAt: 0,
+  });
+
+  const v4Save = (...creatures: ReturnType<typeof grounded>[]) => ({
+    version: 4, createdAt: 0, updatedAt: 0,
+    creatures: Object.fromEntries(creatures.map((c) => [c.id, c])),
+    problems: [], llm: defaultLlmState(0), robot: { residentId: null },
+  }) as unknown as VillageState;
+
+  it('lifts a stored skill off the ground', () => {
+    const save = v4Save(grounded('skill:a', 'skill', 'a'));
+    expect(migrateState(save, 1000).creatures['skill:a']!.appearance.winged).toBe(true);
+  });
+
+  it('leaves a project on the ground', () => {
+    const save = v4Save(grounded('project:p', 'project', 'p'));
+    expect(migrateState(save, 1000).creatures['project:p']!.appearance.winged).toBe(false);
+  });
+
+  it('does not restyle anyone — only the wings change', () => {
+    const save = v4Save(grounded('skill:a', 'skill', 'a'));
+    const before = save.creatures['skill:a']!.appearance;
+    const after = migrateState(save, 1000).creatures['skill:a']!.appearance;
+    expect(after.body).toBe(before.body);
+    expect(after.crown).toBe(before.crown);
+    expect(after.palette).toEqual(before.palette);
+  });
+
+  it('keeps everything else about the creature', () => {
+    const save = v4Save(grounded('skill:a', 'skill', 'a'));
+    save.creatures['skill:a']!.nickname = 'Bramble';
+    const after = migrateState(save, 1000).creatures['skill:a']!;
+    expect(after.nickname).toBe('Bramble');
+    expect(after.stats).toEqual({ mood: 70, energy: 70, bond: 10, xp: 0 });
+  });
+});
+```
+
+Add `generateAppearance` to the file's imports from `@village/core`.
+
+- [ ] **Step 7: Run everything and fix the honestly-broken tests**
+
+Run: `npm test`
+Expected: the new tests pass, and roughly five existing files go red because
+they asserted the old rule. Update each to the new rule:
+
+- `core/appearance/generate.test.ts` — any "a skill is not winged" case.
+- `core/types.test.ts` — same.
+- `server/bridge/creature.test.ts` — `creatureFromSkill` now produces a winged
+  creature.
+- `web/motion/behaviour.test.ts` — cases built on "a skill does not fly". The
+  behaviour itself is unchanged; the input it is given is.
+- `web/render/compose.test.ts` — a skill's grid now composes wings.
+
+Then: `npm run typecheck`
+Expected: clean.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add packages/core/src/appearance/generate.ts packages/core/src/appearance/generate.test.ts packages/core/src/types.ts packages/server/src/state/schema.ts packages/server/src/state/schema.test.ts packages/core/src/types.test.ts packages/server/src/bridge/creature.test.ts packages/web/src/motion/behaviour.test.ts packages/web/src/render/compose.test.ts
+git commit -m "feat: wings mark a helper, not an agent — and the existing village gets them"
+```
+
+---
+
+## Task 15: A project's presence
+
+**Files:**
+- Modify: `packages/web/src/layout/instances.ts`
+- Modify: `packages/web/src/layout/zones.ts`
+- Modify: `packages/web/src/scene/creature.ts`
+- Modify: `packages/web/src/scene/village.ts`
+- Test: `packages/web/src/layout/instances.test.ts` (append)
+- Test: `packages/web/src/layout/zones.test.ts` (append)
+
+**Interfaces:**
+- Consumes: `RenderInstance`, `planInstances`, `placeVillage`, `placeInHomes` (Task 12); `helperIdsOf` (Task 1); `spawnCreature` (Task 13's call site).
+- Produces:
+  - from `instances.ts`: `PRESENCE_BASE`, `PRESENCE_PER_HELPER`, `PRESENCE_MAX`, `HELPER_PRESENCE`; `presenceFor(creature: { kind: CreatureKind; helperIds?: string[] }): number`
+  - from `zones.ts`: `placeInHomes(ids, lo, hi, presenceOf?)` gains an optional fourth parameter `(id: string) => number` defaulting to `() => 1`; `placeVillage(plan, presenceOf?)` likewise
+  - from `creature.ts`: `SpawnOptions` gains `presence?: number` (default `1`)
+
+**The numbers, from the mockup.** Projects are drawn at **1.75** with three
+helpers and **1.45** with two, helpers at **0.75–0.8**. That is very close to
+a base of 1 plus a quarter per helper, so: `PRESENCE_BASE = 1`,
+`PRESENCE_PER_HELPER = 0.25`, capped at `PRESENCE_MAX = 1.9` (a project with
+twelve helpers must not eat the row), and `HELPER_PRESENCE = 0.8`. Two helpers
+gives 1.5, three gives 1.75 — the mockup, near enough that the difference is
+tuning, not design.
+
+- [ ] **Step 1: Write the failing presence test**
+
+Append to `packages/web/src/layout/instances.test.ts`:
+
+```ts
+describe('presenceFor', () => {
+  it('draws a helper smaller than any project', () => {
+    expect(presenceFor({ kind: 'skill' })).toBe(HELPER_PRESENCE);
+    expect(presenceFor({ kind: 'skill' })).toBeLessThan(presenceFor({ kind: 'project' }));
+  });
+
+  it('grows a project by a quarter for each helper it commands', () => {
+    expect(presenceFor({ kind: 'project', helperIds: [] })).toBe(1);
+    expect(presenceFor({ kind: 'project', helperIds: ['a', 'b'] })).toBe(1.5);
+    expect(presenceFor({ kind: 'project', helperIds: ['a', 'b', 'c'] })).toBe(1.75);
+  });
+
+  it('caps a project that commands the whole village', () => {
+    const many = Array.from({ length: 40 }, (_, i) => `skill:${i}`);
+    expect(presenceFor({ kind: 'project', helperIds: many })).toBe(PRESENCE_MAX);
+  });
+
+  it('treats a project with no links field as a project with no links', () => {
+    expect(presenceFor({ kind: 'project' })).toBe(1);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run packages/web/src/layout/instances.test.ts`
+Expected: FAIL — `presenceFor is not a function`.
+
+- [ ] **Step 3: Write presenceFor**
+
+Append to `packages/web/src/layout/instances.ts` (and add `CreatureKind` to
+its type import from `@village/core/visual`):
+
+```ts
+/** A project commanding nothing is still a project, and still bigger than a helper. */
+export const PRESENCE_BASE = 1;
+/** Each helper a project commands adds a quarter, matching the approved mockup. */
+export const PRESENCE_PER_HELPER = 0.25;
+/** A project that commands half the village must not swallow its own row. */
+export const PRESENCE_MAX = 1.9;
+/** Helpers are drawn smaller than any project — the mockup's 0.75-0.8. */
+export const HELPER_PRESENCE = 0.8;
+
+/**
+ * How large this villager is drawn, as a multiple of the ordinary body size.
+ *
+ * This is the whole "genie" reading: a project is the tamagotchi, and the more
+ * powers it commands the more it fills the frame. Combined with the wings rule
+ * (grounded = project, flying = helper) it means role and standing are both
+ * legible from across the village without reading a single label.
+ */
+export function presenceFor(creature: { kind: CreatureKind; helperIds?: string[] }): number {
+  if (creature.kind !== 'project') return HELPER_PRESENCE;
+  const commanded = creature.helperIds?.length ?? 0;
+  return Math.min(PRESENCE_MAX, PRESENCE_BASE + PRESENCE_PER_HELPER * commanded);
+}
+```
+
+- [ ] **Step 4: Give the seating engine room for a big villager**
+
+A 1.9× project standing at a 1× creature's spacing will overlap its
+neighbours, because `personalSpace` is derived from the widest *body* and
+knows nothing about scale. Append to `packages/web/src/layout/zones.test.ts`:
+
+```ts
+describe('presence-aware spacing', () => {
+  it('leaves more room around a large villager than a small one', () => {
+    const ids = ['a:1', 'a:2', 'a:3', 'a:4'];
+    const big = placeInHomes(ids, HOMES_LO, HOMES_LO + 900, () => 1.9);
+    const small = placeInHomes(ids, HOMES_LO, HOMES_LO + 900, () => 0.8);
+
+    const spread = (spots: Map<string, Spot>) => {
+      const xs = [...spots.values()].map((s) => s.x).sort((p, q) => p - q);
+      return xs.at(-1)! - xs[0]!;
+    };
+    expect(spread(big)).toBeGreaterThan(spread(small));
+  });
+
+  it('still places everyone when they are all large', () => {
+    const ids = Array.from({ length: 8 }, (_, i) => `x:${i}`);
+    expect(placeInHomes(ids, HOMES_LO, HOMES_LO + 900, () => 1.9).size).toBe(8);
+  });
+});
+```
+
+Then in `zones.ts`, replace `personalSpace` with a presence-aware version,
+keeping the old export so nothing else breaks:
+
+```ts
+export function personalSpace(id: string): number {
+  return personalSpaceFor(id, 1);
+}
+
+/**
+ * Half the breathing room a villager claims, scaled by how large it is drawn.
+ * A project at 1.9 is nearly twice as wide as the body this was originally
+ * measured from, and spacing that ignores that seats it inside its neighbours.
+ */
+export function personalSpaceFor(id: string, presence: number): number {
+  return (WIDEST_BODY * presence) / 2 + 3 + ((hash(id) >>> 16) % 22);
+}
+```
+
+Give `placeInHomes` the lookup, defaulting so every existing caller is
+unaffected:
+
+```ts
+export function placeInHomes(
+  ids: readonly string[],
+  lo: number,
+  hi: number,
+  presenceOf: (id: string) => number = () => 1,
+): Map<string, Spot> {
+```
+
+and inside it, replace `r: personalSpace(id),` with:
+
+```ts
+      r: personalSpaceFor(id, presenceOf(id)),
+```
+
+Finally thread it through `placeVillage`:
+
+```ts
+export function placeVillage(
+  plan: readonly RenderInstance[],
+  presenceOf: (key: string) => number = () => 1,
+): Map<string, Spot> {
+```
+
+and pass `presenceOf` as the fourth argument to both `placeInHomes` calls
+inside it.
+
+- [ ] **Step 5: Run the layout tests**
+
+Run: `npx vitest run packages/web/src/layout/`
+Expected: PASS — the new cases and every Task 12 case, since the new parameter
+defaults to the old behaviour.
+
+- [ ] **Step 6: Draw it bigger, with an aura**
+
+In `packages/web/src/scene/creature.ts`, add `presence` to the options
+parameter of `spawnCreature` (the object that currently carries the fonts),
+defaulting to 1, and immediately after `const root = k.add(...)` introduce the
+scaled unit:
+
+```ts
+  // Sprite geometry is authored in units of U. Scaling *that* rather than the
+  // root is deliberate: a scaled root would drag the nameplate and the speech
+  // bubble with it, and a project's label should grow a little, not by 90%.
+  const S = U * presence;
+```
+
+Then convert the sprite geometry from `U` to `S`:
+
+- the shadow's width: `k.rect(bw * 0.78 * presence, 10 * presence, { radius: 5 })`
+- the body sprite: `k.scale(S)` in place of `k.scale(U)`
+- the wing sprites: `k.scale(S * side, S)` in place of `k.scale(U * side, U)`
+- the eye overlays and lid/lash rects: every `U *` in their `k.rect(...)` and
+  `k.pos(...)` becomes `S *`
+
+Then **grep the rest of the function** and convert what is left:
+
+```bash
+grep -n "U \*\|\* U\|k.scale(U" packages/web/src/scene/creature.ts
+```
+
+Convert every hit that positions or sizes **sprite geometry**. Leave alone
+anything on a line with `TEXT_SS` — that is text chrome (the nameplate, the
+bubble, the thought dots), which keeps its own scale on purpose.
+
+Add the aura just after the shadow, so it sits behind everything:
+
+```ts
+  // The mockup's radial glow. KAPLAY has no gradient fill, so three nested
+  // rounded rects at falling opacity approximate the falloff — the same
+  // primitive the shadow and the nameplate box already use. Only projects get
+  // one, and only once they command something: an aura on every villager is
+  // just a brighter village.
+  const aura = presence > 1
+    ? [1.0, 0.72, 0.46].map((ring, i) => {
+        const d = bw * 2.1 * presence * ring;
+        return root.add([
+          k.rect(d, d, { radius: d / 2 }),
+          k.pos(0, -restH * presence * 0.4),
+          k.anchor('center'),
+          k.color(k.Color.fromHex('#FFFFFF')),
+          k.opacity([0.05, 0.07, 0.09][i]!),
+          k.z(-2),
+        ]);
+      })
+    : [];
+```
+
+`aura` is bound rather than discarded so a later teardown path has it; if the
+linter objects to an unused binding, prefix it with `void aura;` beside the
+existing `unsubscribeTheme` precedent in `village.ts`.
+
+- [ ] **Step 7: Pass presence in from the scene, and look at it**
+
+In `packages/web/src/scene/village.ts`, add `presenceFor` to the import from
+`../layout/instances.js`, then:
+
+- build the placement with it —
+  `const spots = placeVillage(plan, (key) => { const c = byId.get(creatureIdOf(key)); return c ? presenceFor(c) : 1; });`
+  (move the `byId` construction above this line);
+- pass it to the spawn —
+  `spawnCreature(k, creature, spot, { pixel: pixelFont, mono: monoFont, presence: presenceFor(creature) })`;
+- include it in the respawn test, so a project that gains a helper is redrawn
+  at its new size — replace the `changed` line with:
+
+```ts
+        const changed = before && (
+          JSON.stringify(before.appearance) !== JSON.stringify(creature.appearance) ||
+          presenceFor(before) !== presenceFor(creature)
+        );
+```
+
+Run: `npm test && npm run typecheck`
+Expected: green.
+
+Then `npm run dev` and check by eye, at a full window — this is the task with
+no unit test for what actually matters:
+
+1. **Projects read as bigger** than the helpers around them, immediately,
+   without reading a label.
+2. **A project with more helpers is visibly bigger** than one with fewer.
+3. **The aura is a suggestion, not a headlight.** If it reads as a bug or
+   fights the weather layer, drop the opacities before changing anything else.
+4. **Nobody overlaps** — especially a large project against its own retinue.
+5. **The whole helper population now hovers** (Task 14). Check this at night
+   and in rain, where `behaviour.ts` grounds flyers, and check the lighter
+   contact shadow still grounds them rather than leaving them floating — the
+   "everything must be grounded" rule this project has been held to.
+6. **The commons still reads as a neighbourhood**, now that everyone in it is
+   airborne.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add packages/web/src/layout/instances.ts packages/web/src/layout/instances.test.ts packages/web/src/layout/zones.ts packages/web/src/layout/zones.test.ts packages/web/src/scene/creature.ts packages/web/src/scene/village.ts
+git commit -m "feat(web): a project's presence grows with the powers it commands"
+```
+
+---
 ## Self-Review
 
 **1. Spec coverage.** Every M5 requirement, and where it lands:
@@ -3240,14 +3841,20 @@ git commit -m "feat(web): one creature, many bodies — the scene draws instance
 | §4 Homes hosts the projects | 12 |
 | §4 helpers drawn beside every project that uses them; one persona, one panel | 12, 13 |
 | §4 the commons for unlinked helpers | 12 |
+| §4 a project's presence scales with its helper count | 15 |
+| Mockup: every helper winged, projects grounded (**overrides** §4's "winged tell unchanged") | 14 |
 | §6 scanner units, sandbox with a fake `~/.claude/projects`, no test reads the real one | 3, 4, 5, 6, 7 — every test runs against `makeSandbox()`. |
 
-**Two spec items deliberately not implemented, and why.** §4's *"a project's
-drawn presence scales mildly with its helper count"* is the one M5 line this
-plan leaves out: it needs the stage/scale machinery in `creature.ts`, it is
-purely cosmetic, and it is much better judged with real projects on screen
-than specified blind. Raise it as a playtest item after Task 13. §5 in its
-entirety (the care loop, chat with the project, release/re-adopt) is M6.
+**What is deliberately not implemented, and why.** §5 in its entirety — the
+care loop, the health/droop curve, the "last worked 12 days ago" sign, chat
+with the project, release and re-adopt — is M6. The `retired` field (Task 1)
+and reconcile's guard for it (Task 8) are the only forward-compatibility
+hooks this plan lays down for it.
+
+*Superseded:* an earlier draft of this plan also deferred §4's presence
+scaling as "purely cosmetic". Re-reading the approved mockup showed it is the
+primary way a project is told from a helper, and the user confirmed. It is
+now Task 15.
 
 **2. Placeholder scan.** No step says "add error handling", "similar to Task
 N", or "write tests for the above". Every code step carries the code. The two
@@ -3275,6 +3882,15 @@ re-checking if something does not link.
   x will move. That is expected; a pinned coordinate gets updated, a broken
   invariant does not.
 - **Task 13 has no unit tests.** Step 6 is not optional.
+- **Task 14 changes how 72 existing villagers look and move**, via a state
+  migration — not just a rule change. It will turn ~5 test files red, and
+  every one of those is a real assertion about the old rule that should be
+  *updated*, never deleted.
+- **Task 15 edits the most delicate file in the renderer.** `creature.ts`
+  carries hard-won fixes (the eye-lid overscan against a 1px white fringe, the
+  overlay tint multiply) that assume geometry in units of `U`. Introducing `S`
+  risks reopening exactly those. If a white fringe reappears around eyes at
+  scale, that is the cause.
 
 ---
 
@@ -3286,6 +3902,22 @@ re-checking if something does not link.
 
 **2. Inline Execution** — execute tasks in this session using executing-plans, batch execution with checkpoints.
 
-Tasks 1–11 are server- and data-side and land cleanly in sequence. Tasks 12
-and 13 are the ones that change what the village looks like, and both want the
-user's eyes before the branch merges.
+Tasks 1–11 are server- and data-side and land cleanly in sequence. Tasks 12,
+13, 14 and 15 are the ones that change what the village looks like, and all
+four want the user's eyes before the branch merges.
+
+### Recommended model per task
+
+Two tiers, split on whether the task's code is *given* or *judged*.
+
+| Tasks | Model | Why |
+|---|---|---|
+| 1–11, 14 | **Sonnet 5** | Fully specified TDD against exact code. The test is written, the implementation is written, the file and the insertion point are named. This is transcription with a compiler checking it, and Sonnet does it faster and far cheaper. Task 14's one judgement call — which red tests encode the old rule — is bounded by the five files named in its Step 7. |
+| 12, 13, 15 | **Opus 5** | The three tasks where the plan is directive rather than complete. Task 12 refactors the seating engine's bounds through four functions; Task 13 re-keys the actor map across a 704-line KAPLAY scene with no tests; Task 15 says "convert the sprite geometry from `U` to `S`, then grep for what's left" — that last step is judgement, not transcription, in the file carrying the eye-fringe and overlay-tint fixes. |
+| Review between tasks | **Opus 5** | The point of reviewing is catching what the implementer's own reading missed. |
+
+**Never Haiku for any of these.** Every task ends in a commit, and this repo
+has already been bitten by implementer subagents committing to the parent
+repo's `main` from inside a worktree. Whatever tier you pick, a committing
+subagent needs `git -C <worktree>` and a `git rev-parse --show-toplevel`
+check before it commits, and Sonnet is the floor.
