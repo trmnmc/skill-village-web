@@ -19,14 +19,21 @@ export interface RefillPlan {
  *
  *  - A case dated today is never rebuilt, judged or not. Without this a server
  *    restart would draw a fresh case on every boot and bill the player for it.
- *  - An unjudged case carries forward whole. No verdict means nothing changed,
- *    so there is nothing to regenerate and nothing to spend — the player simply
- *    gets the same five sketches next visit.
+ *  - An unjudged case carries forward whole, however many sketches it holds.
+ *    No verdict means nothing changed, so there is nothing to regenerate and
+ *    nothing to spend — this holds even for a short case, e.g. an artist that
+ *    only managed 3 of 5 before the player never got around to judging it.
+ *    It stays a 3-sketch case, unpadded, until it is judged; MIN_JUDGEABLE_CASE
+ *    keeps it playable in the meantime. Only a *judged* case from an earlier
+ *    day asks for fresh sketches, to fill the gap the culled one left behind.
  */
 export function planRefill(gallery: GalleryState, today: string): RefillPlan {
   const current = gallery.case;
   if (current && current.day === today) {
     return { carried: current.sketches, freshNeeded: 0, ready: true };
+  }
+  if (current && !current.judged) {
+    return { carried: current.sketches, freshNeeded: 0, ready: false };
   }
   const carried = current ? current.sketches : [];
   return { carried, freshNeeded: Math.max(0, CASE_SIZE - carried.length), ready: false };

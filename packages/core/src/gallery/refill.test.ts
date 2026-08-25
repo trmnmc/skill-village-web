@@ -41,6 +41,14 @@ describe('planRefill', () => {
     expect(plan.carried.map((s) => s.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 
+  it('carries an unjudged SHORT case forward whole too — no verdict, nothing to spend', () => {
+    const sketches = [sketch('a'), sketch('b')];
+    const gallery = withCase({ case: { day: YESTERDAY, sketches, judged: false } });
+    const plan = planRefill(gallery, TODAY);
+    expect(plan.freshNeeded).toBe(0);
+    expect(plan.carried.map((s) => s.id)).toEqual(['a', 'b']);
+  });
+
   it('refills the gaps a judged case left behind', () => {
     const gallery = withCase({
       case: { day: YESTERDAY, sketches: [sketch('a'), sketch('b')], judged: true },
