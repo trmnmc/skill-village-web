@@ -9,7 +9,7 @@ import kaplay, {
   type TextComp,
   type ZComp,
 } from 'kaplay';
-import { PEDDLER_LINE, type Creature } from '@village/core/visual';
+import type { Creature } from '@village/core/visual';
 import { TEXT_SS } from '../theme.js';
 import { themeStore } from '../theme/index.js';
 import type { Tokens, ResolvedTheme } from '../theme/store.js';
@@ -421,9 +421,14 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   };
 
   /**
-   * Clicking the peddler: speak its one line in a bubble over its head (the
-   * existing speech-bubble treatment, via `peddlerHandle.say`), then open
-   * the case. Guarded against re-entry — a second click landing on the
+   * Clicking the peddler opens the case. `peddlerHandle.say` used to fire
+   * the peddler's one line into the world's speech bubble here, but that
+   * bubble sits at z~6.5 on the peddler's own creature root and the overlay
+   * this immediately starts building mounts a scrim at z=200,000 — by the
+   * time five portraits finish baking (openCaseOverlay's own await chain)
+   * the bubble has already vanished under it, unread. `case.ts` now renders
+   * the line itself, inside the overlay, above the row — see its own doc
+   * comment. Guarded against re-entry — a second click landing on the
    * peddler's screen position while the modal already covers it (see the
    * mousedown/panning guards below for why the world can still see a raw
    * click there) must not stack a second overlay.
@@ -432,7 +437,6 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     if (overlayHandle || overlayOpening || peddlerHandle === null) return;
     const caseData = latestView?.peddlerCase;
     if (!caseData) return;
-    peddlerHandle.say(PEDDLER_LINE);
     overlayOpening = true;
     void openCaseOverlay(
       k,

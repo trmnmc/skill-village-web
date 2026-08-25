@@ -9,7 +9,7 @@ import type {
   FixedComp,
   ZComp,
 } from 'kaplay';
-import { INK, derivePalette, type CaseView, type SketchView } from '@village/core/visual';
+import { INK, PEDDLER_LINE, derivePalette, type CaseView, type SketchView } from '@village/core/visual';
 import { U, TEXT_SS } from '../theme.js';
 import { themeStore } from '../theme/index.js';
 import { sceneryColor } from './retint.js';
@@ -17,7 +17,7 @@ import { composeSketchGrid, type ComposedGrid } from '../render/compose.js';
 import { bakePixels } from '../render/bake.js';
 import { roleMap } from '../render/roles.js';
 import { createDragTracker } from '../input/drag.js';
-import { escapeStyled, toCanvas, loadSprite, type CreatureFonts } from './creature.js';
+import { escapeStyled, toCanvas, loadSprite, wrapToWidth, type CreatureFonts } from './creature.js';
 
 /** Margin between a portrait and its own frame's inner edge — frames hug, they never share one width. */
 const FRAME_MARGIN = 14;
@@ -33,6 +33,32 @@ const ROW_TOP_Y = 130;
 /** Outline weight, ordinary vs the ring drawn around the selected sketch pending confirmation. */
 const FRAME_OUTLINE = 2;
 const FRAME_OUTLINE_SELECTED = 4;
+
+/**
+ * The row's natural width (every slot at its unscaled size) can run wider
+ * than the viewport — five ~40-char titles measure to roughly 1754px
+ * against a 1280px window, which would otherwise strand the end slots (and
+ * their hit boxes) off-canvas on a row nothing can pan. `openCaseOverlay`
+ * shrinks slot widths, gaps, frame/sprite scale and plaque text by one
+ * factor so the whole row always fits between these margins, however many
+ * pixels the titles ask for.
+ */
+const ROW_VIEWPORT_MARGIN = 64;
+
+/**
+ * The peddler's one line, shown once above the row — see `openCaseOverlay`'s
+ * own doc comment for why it moved off the world's speech bubble.
+ */
+const PEDDLER_LINE_SIZE = 15;
+const PEDDLER_LINE_LEADING = 6;
+const PEDDLER_LINE_MAX_W = 640;
+const PEDDLER_LINE_PAD = 14;
+const PEDDLER_LINE_Y = 56;
+
+/** The overlay's own exit control, top-right — Escape (see `close()`) is its keyboard twin. */
+const CLOSE_SIZE = 28;
+const CLOSE_MARGIN = 16;
+const CLOSE_TEXT_SIZE = 15;
 
 /**
  * Every draw call in KAPLAY sorts *all* of one parent's children together by
@@ -111,6 +137,18 @@ function hex(k: KAPLAYCtx, v: string) {
  * rather than KAPLAY's own `area()`/`onClick()`. That keeps every click in
  * this scene resolved by the one hand-rolled system already proven here,
  * instead of mixing in a second, untested one for a five-target modal.
+ *
+ * The peddler's line is rendered here, above the row, rather than left in
+ * the world's speech bubble `village.ts` used to trigger on open: that
+ * bubble sits at z~6.5 on a creature root, and this overlay's scrim mounts
+ * at `OVERLAY_Z` (200,000) the moment the portraits finish baking — burying
+ * it before a player can read more than a word or two of it. The line is
+ * the spec's entire fictional framing for this exchange, so it belongs
+ * somewhere the modal cannot cover.
+ *
+ * Exit is Escape or the ✕ in the top-right corner, both routed through the
+ * same `close()` every other exit (cull-confirm, the peddler leaving) uses —
+ * see that function's own comment for why `onClose` fires synchronously.
  */
 export async function openCaseOverlay(
   k: KAPLAYCtx,
@@ -173,6 +211,76 @@ export async function openCaseOverlay(
     k.z(OVERLAY_Z),
   ]);
 
+  // The peddler's line, centred above the row in the same box+text idiom the
+  // plaques below use — wrapped with the same `wrapToWidth`/`escapeStyled`
+  // pair `peddler.ts`'s own (now-buried) world bubble uses, just measured
+  // via `k.formatText` instead of a throwaway text component.
+  const measurePeddlerLine = (line: string) =>
+    k.formatText({ text: escapeStyled(line), font: fonts.mono, size: PEDDLER_LINE_SIZE * TEXT_SS }).width / TEXT_SS;
+  const peddlerLineText = wrapToWidth(measurePeddlerLine, PEDDLER_LINE, PEDDLER_LINE_MAX_W)
+    .map(escapeStyled)
+    .join('\n');
+  const peddlerLineMetrics = k.formatText({
+    text: peddlerLineText,
+    font: fonts.mono,
+    size: PEDDLER_LINE_SIZE * TEXT_SS,
+    lineSpacing: PEDDLER_LINE_LEADING * TEXT_SS,
+  });
+  const peddlerLineW = peddlerLineMetrics.width / TEXT_SS;
+  const peddlerLineH = peddlerLineMetrics.height / TEXT_SS;
+  root.add([
+    k.rect(peddlerLineW + PEDDLER_LINE_PAD * 2, peddlerLineH + PEDDLER_LINE_PAD * 2, { radius: 6 }),
+    k.pos(k.width() / 2, PEDDLER_LINE_Y),
+    k.anchor('center'),
+    k.color(bubbleCol),
+    k.outline(2, inkCol),
+    k.fixed(),
+    k.z(OVERLAY_Z + 1),
+  ]);
+  root.add([
+    k.text(peddlerLineText, {
+      size: PEDDLER_LINE_SIZE * TEXT_SS,
+      font: fonts.mono,
+      align: 'center',
+      lineSpacing: PEDDLER_LINE_LEADING * TEXT_SS,
+    }),
+    k.pos(k.width() / 2, PEDDLER_LINE_Y),
+    k.anchor('center'),
+    k.scale(1 / TEXT_SS),
+    k.color(inkCol),
+    k.fixed(),
+    k.z(OVERLAY_Z + 2),
+  ]);
+
+  // The overlay's own exit control: a fixed top-right corner square, well
+  // clear of the row and its plaques regardless of how the row's own scale
+  // (below) shrinks. `closeRect` is read again by `hitTest`, so it is
+  // declared here rather than folded into the click-handling section.
+  const closeRect = {
+    x: k.width() - CLOSE_MARGIN - CLOSE_SIZE,
+    y: CLOSE_MARGIN,
+    w: CLOSE_SIZE,
+    h: CLOSE_SIZE,
+  };
+  root.add([
+    k.rect(closeRect.w, closeRect.h, { radius: 5 }),
+    k.pos(closeRect.x, closeRect.y),
+    k.anchor('topleft'),
+    k.color(bubbleCol),
+    k.outline(2, inkCol),
+    k.fixed(),
+    k.z(OVERLAY_Z + 10),
+  ]);
+  root.add([
+    k.text(escapeStyled('✕'), { size: CLOSE_TEXT_SIZE * TEXT_SS, font: fonts.mono }),
+    k.pos(closeRect.x + closeRect.w / 2, closeRect.y + closeRect.h / 2),
+    k.anchor('center'),
+    k.scale(1 / TEXT_SS),
+    k.color(inkCol),
+    k.fixed(),
+    k.z(OVERLAY_Z + 11),
+  ]);
+
   let selectedId: string | null = null;
   const frameObjs = new Map<
     string,
@@ -181,18 +289,28 @@ export async function openCaseOverlay(
   const frameRects = new Map<string, FrameRect>();
 
   const totalW = portraits.reduce((sum, p) => sum + p.slotW, 0) + FRAME_GAP * Math.max(0, portraits.length - 1);
-  let cursorX = k.width() / 2 - totalW / 2;
+  // One factor for the whole row: five ~40-char titles can measure wider
+  // than the viewport (see ROW_VIEWPORT_MARGIN above), and letting only the
+  // overflow spill would strand the end slots — and their hit boxes — off
+  // whatever a fixed, unpannable row can show. Slot widths, gaps, frame and
+  // sprite scale, and plaque text below all multiply by this one number, so
+  // nothing can drift out of step with what actually lands on screen.
+  const scale = totalW > 0 ? Math.min(1, (k.width() - ROW_VIEWPORT_MARGIN) / totalW) : 1;
+  let cursorX = k.width() / 2 - (totalW * scale) / 2;
 
   for (const p of portraits) {
     const fy = ROW_TOP_Y;
+    const slotW = p.slotW * scale;
+    const frameW = p.frameW * scale;
+    const frameH = p.frameH * scale;
     // Frame and plaque both centre on the slot's own centre, not on each
     // other — a slot widened by its plaque must not drag the (still
     // frame-sized) frame sideways with it.
-    const slotCenterX = cursorX + p.slotW / 2;
-    const fx = slotCenterX - p.frameW / 2;
+    const slotCenterX = cursorX + slotW / 2;
+    const fx = slotCenterX - frameW / 2;
 
     const frame = root.add([
-      k.rect(p.frameW, p.frameH, { radius: 6 }),
+      k.rect(frameW, frameH, { radius: 6 }),
       k.pos(fx, fy),
       k.anchor('topleft'),
       k.color(creamCol),
@@ -203,13 +321,13 @@ export async function openCaseOverlay(
     frameObjs.set(p.sketch.id, frame);
 
     const portraitCenterX = slotCenterX;
-    const portraitBottomY = fy + FRAME_MARGIN + p.h;
+    const portraitBottomY = fy + FRAME_MARGIN * scale + p.h * scale;
 
     root.add([
       k.sprite(p.key),
       k.pos(portraitCenterX, portraitBottomY),
       k.anchor('bot'),
-      k.scale(U),
+      k.scale(U * scale),
       k.fixed(),
       k.z(OVERLAY_Z + 3),
     ]);
@@ -217,11 +335,11 @@ export async function openCaseOverlay(
     // Static pupils: creature.ts's own per-eye placement math, with sx=sy=1
     // fixed (no breathing squash) and no shut/lid/lash state at all.
     for (const anchor of p.grid.eyes) {
-      const baseX = (anchor.c - p.grid.w / 2 + 1) * U;
-      const baseY = (anchor.r - p.grid.h + 1) * U;
+      const baseX = (anchor.c - p.grid.w / 2 + 1) * U * scale;
+      const baseY = (anchor.r - p.grid.h + 1) * U * scale;
       root.add([
-        k.rect(U * 0.95, U * 1.15),
-        k.pos(portraitCenterX + baseX, portraitBottomY + baseY + U * 0.125),
+        k.rect(U * 0.95 * scale, U * 1.15 * scale),
+        k.pos(portraitCenterX + baseX, portraitBottomY + baseY + U * 0.125 * scale),
         k.anchor('center'),
         k.color(hex(k, INK.mouth)),
         k.fixed(),
@@ -233,11 +351,14 @@ export async function openCaseOverlay(
     // let this slot reserve the right width in the first place), so the box
     // is sized from it directly rather than re-measuring a freshly created
     // text object — same text, same font, same size, so the two numbers can
-    // never disagree.
-    const plaqueY = fy + p.frameH + PLAQUE_GAP;
+    // never disagree. Box and text shrink by the same `scale` as everything
+    // else, so a squeezed row never truncates a title instead.
+    const plaqueW = p.plaqueW * scale;
+    const plaqueH = PLAQUE_H * scale;
+    const plaqueY = fy + frameH + PLAQUE_GAP * scale;
     root.add([
-      k.rect(p.plaqueW, PLAQUE_H, { radius: 4 }),
-      k.pos(portraitCenterX, plaqueY + PLAQUE_H / 2),
+      k.rect(plaqueW, plaqueH, { radius: 4 }),
+      k.pos(portraitCenterX, plaqueY + plaqueH / 2),
       k.anchor('center'),
       k.color(bubbleCol),
       k.outline(2, inkCol),
@@ -246,9 +367,9 @@ export async function openCaseOverlay(
     ]);
     root.add([
       k.text(escapeStyled(p.sketch.title), { size: PLAQUE_TEXT_SIZE * TEXT_SS, font: fonts.mono }),
-      k.pos(portraitCenterX, plaqueY + PLAQUE_H / 2),
+      k.pos(portraitCenterX, plaqueY + plaqueH / 2),
       k.anchor('center'),
-      k.scale(1 / TEXT_SS),
+      k.scale(scale / TEXT_SS),
       k.color(inkCol),
       k.fixed(),
       k.z(OVERLAY_Z + 6),
@@ -256,15 +377,17 @@ export async function openCaseOverlay(
 
     // The hit box covers the *whole slot*, not just the (possibly narrower)
     // frame — a click on an overflowing title must still resolve to this
-    // sketch rather than its neighbour or nothing.
+    // sketch rather than its neighbour or nothing. Scaled identically to the
+    // frame and plaque it sits under, so the box that catches a click always
+    // matches the box the eye sees.
     frameRects.set(p.sketch.id, {
       x: cursorX,
       y: fy,
-      w: p.slotW,
-      hitH: p.frameH + PLAQUE_GAP + PLAQUE_H,
+      w: slotW,
+      hitH: frameH + PLAQUE_GAP * scale + plaqueH,
     });
 
-    cursorX += p.slotW + FRAME_GAP;
+    cursorX += slotW + FRAME_GAP * scale;
   }
 
   const refreshSelection = () => {
@@ -279,8 +402,12 @@ export async function openCaseOverlay(
   // trackable gesture at all" (see input/drag.ts), so a background press
   // needs its own non-null id to come back as a resolvable click.
   const BACKGROUND = '__case_background__';
+  const CLOSE_BUTTON = '__case_close__';
 
   const hitTest = (x: number, y: number): string => {
+    if (x >= closeRect.x && x <= closeRect.x + closeRect.w && y >= closeRect.y && y <= closeRect.y + closeRect.h) {
+      return CLOSE_BUTTON;
+    }
     for (const [id, rect] of frameRects) {
       if (x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.hitH) return id;
     }
@@ -296,12 +423,13 @@ export async function openCaseOverlay(
   };
 
   /**
-   * Torn down exactly once, from either caller: the confirm handler below
-   * (self-close, before `onCull` even starts) or `village.ts` calling the
-   * returned handle's `close()` directly (the peddler leaving while the
-   * case is still open). `onClose` fires synchronously, in the same tick as
-   * the rest of the teardown — the caller's own "the overlay is gone" state
-   * must not lag behind a network round trip it has no reason to wait on.
+   * Torn down exactly once, from any of: the confirm handler below
+   * (self-close, before `onCull` even starts), the close control or Escape
+   * below, or `village.ts` calling the returned handle's `close()` directly
+   * (the peddler leaving while the case is still open). `onClose` fires
+   * synchronously, in the same tick as the rest of the teardown — the
+   * caller's own "the overlay is gone" state must not lag behind a network
+   * round trip it has no reason to wait on.
    */
   const close = () => {
     if (closed) return;
@@ -309,10 +437,17 @@ export async function openCaseOverlay(
     k.canvas.removeEventListener('mousedown', onMouseDown);
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', onMouseUp);
+    window.removeEventListener('keydown', onKeyDown);
     k.destroy(root);
     onClose();
   };
 
+  // A missed day costs nothing but progress — spec's own words — so the
+  // player must be able to walk away without culling anything. Escape is
+  // the keyboard twin of the ✕ control drawn above; both just call `close()`.
+  function onKeyDown(event: KeyboardEvent) {
+    if (event.key === 'Escape') close();
+  }
   function onMouseDown(event: MouseEvent) {
     if (event.button !== 0) return;
     const p = canvasPos(event.clientX, event.clientY);
@@ -326,6 +461,10 @@ export async function openCaseOverlay(
     const gesture = tracker.release(event.clientX, event.clientY);
     if (gesture.type !== 'click') return;
 
+    if (gesture.targetId === CLOSE_BUTTON) {
+      close();
+      return;
+    }
     if (gesture.targetId === BACKGROUND) {
       selectedId = null;
       refreshSelection();
@@ -348,6 +487,7 @@ export async function openCaseOverlay(
   k.canvas.addEventListener('mousedown', onMouseDown);
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
+  window.addEventListener('keydown', onKeyDown);
 
   return { close };
 }

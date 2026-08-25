@@ -626,6 +626,30 @@ describe('the peddler', () => {
     expect(village.getState().gallery.case!.sketches).toHaveLength(CASE_SIZE);
   });
 
+  it('builds the gallery from artistFactory when no ready-made artist is given', async () => {
+    // main.ts (the only production caller) never has an `artist` in hand at
+    // construction time — only a factory that needs the village's own `llm`
+    // service, which does not exist until createVillage builds it. This is
+    // the boot path a village with only `artist` (every other test in this
+    // file) can never exercise: without it, createGalleryRuntime is never
+    // built in production and the peddler can never appear.
+    sandbox = await makeSandbox();
+    let handedLlm: unknown;
+    village = await createVillage({
+      paths: sandbox.paths,
+      now: () => NOON,
+      artistFactory: (llm) => {
+        handedLlm = llm;
+        return artist;
+      },
+    });
+    await village.tick();
+    await village.settleGallery();
+
+    expect(handedLlm).toBeDefined();
+    expect(village.getState().gallery.case!.sketches).toHaveLength(CASE_SIZE);
+  });
+
   it('does not redraw the case on a second tick the same day', async () => {
     sandbox = await makeSandbox();
     let calls = 0;
@@ -659,6 +683,20 @@ describe('the peddler', () => {
     const sketches = village.getState().gallery.case!.sketches;
     expect(await village.cull(sketches[0]!.id)).toBe(true);
     expect(await village.cull(sketches[1]!.id)).toBe(false);
+  });
+
+  it('logs a swallowed refill failure instead of hiding it entirely', async () => {
+    sandbox = await makeSandbox();
+    const throwing: SketchArtist = { ...artist, async draw() { throw new Error('kaboom'); } };
+    const lines: string[] = [];
+    village = await createVillage({
+      paths: sandbox.paths, now: () => NOON, artist: throwing, log: (line) => lines.push(line),
+    });
+    await village.tick();
+    await village.settleGallery();
+
+    expect(village.getState().gallery.case).toBeNull();
+    expect(lines.some((l) => l.includes('gallery: refill failed') && l.includes('kaboom'))).toBe(true);
   });
 
   it('writes no events, so the notice board never spells out the secret', async () => {

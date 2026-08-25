@@ -6,6 +6,7 @@
 import { createApp } from './api/app.js';
 import { DEFAULT_PORT, resolvePaths } from './config/paths.js';
 import { createWatcher } from './bridge/watcher.js';
+import { createSketchArtist } from './gallery/artist.js';
 import { clearInstance, isVillageServing, readInstance, writeInstance } from './instance.js';
 import { createLlmService } from './llm/service.js';
 import { createVillage } from './village.js';
@@ -44,6 +45,15 @@ async function main(): Promise<void> {
         // and duration, so a canned fallback is never a mystery again.
         log: (line) => console.error(line),
       }),
+    // The peddler's own model calls, run through the same `llm` service the
+    // factory above just built — this is the one production call site for
+    // createSketchArtist; without it the gallery runtime never exists and
+    // the peddler can never appear no matter what the simulation decides.
+    artistFactory: (llm) => createSketchArtist({ llm }),
+    // Same console line the LLM service's own `log` writes to, just above —
+    // a swallowed refill failure is otherwise indistinguishable from an
+    // ordinary day with no peddler.
+    log: (line) => console.error(line),
   });
   if (village.startupNote) console.log(village.startupNote);
 

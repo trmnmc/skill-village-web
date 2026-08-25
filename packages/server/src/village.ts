@@ -61,6 +61,23 @@ export interface VillageOptions {
    * is exactly right for a village with no language model.
    */
   artist?: SketchArtist;
+  /**
+   * Build the artist from the village's own `llm` service — the real
+   * production path, since the artist needs the same service the chat and
+   * persona calls share, and that service does not exist until the village
+   * has built it (see `llmFactory` above for the same shape). Called once,
+   * right after `llm` is constructed. Ignored when `artist` is also given:
+   * an explicit `artist` always wins, then `artistFactory(llm)`, then
+   * neither — no gallery at all, the same as omitting both today.
+   */
+  artistFactory?: (llm: LlmService) => SketchArtist;
+  /**
+   * One line when the daily gallery refill silently fails, so "no peddler
+   * today" is never a mystery. Same idiom as `createLlmService`'s own `log`
+   * option: absent here so tests stay quiet, wired to the console by
+   * main.ts, the only production caller.
+   */
+  log?: (line: string) => void;
 }
 
 export type VillageListener = (state: VillageState) => void;
@@ -278,7 +295,13 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
     return flight;
   };
 
-  const gallery = options.artist ? createGalleryRuntime({ artist: options.artist }) : null;
+  // The explicit `artist` wins over the factory, the same precedence
+  // `llm`/`llmFactory` already follow just above — and for the same reason:
+  // tests hand over a ready-made fake, production hands over a factory that
+  // needs the `llm` this village just built.
+  const artist = options.artist ?? options.artistFactory?.(llm);
+  const gallery = artist ? createGalleryRuntime({ artist }) : null;
+  const log = options.log ?? (() => {});
   // Single-flight: one refill at a time, and the tick never waits on it.
   let refilling: Promise<void> | null = null;
 
@@ -291,8 +314,11 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
         // Re-read state rather than closing over it: minutes may have passed
         // inside the model call, and a care action may have committed since.
         if (next) await commit({ ...state, gallery: next, updatedAt: now() }, []);
-      } catch {
-        // A refill that throws costs the player a peddler, never the village.
+      } catch (error) {
+        // A refill that throws costs the player a peddler, never the
+        // village — but the loss must not be silent, or "no peddler today"
+        // is the only symptom anyone ever sees of it.
+        log(`gallery: refill failed — ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         refilling = null;
       }
