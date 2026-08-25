@@ -23,7 +23,7 @@
   - [ ] strike glow draws over the near deck — lightning still draws at z 5 while creatures span z 4–7
   - [ ] viewports under ~256px give `fy <= 0` — `fy()` is still a bare `horizonY / 182`, unclamped
 - [x] **Weather-menu affordance — shipped and then some (`cc8041b`).** Not just the note: a menu click now strips the dev params via `history.replaceState` and takes effect immediately, and the store re-reads `location.search` on every resolve. The amber note (`skyOverrideKeys`) shows only until that first click
-- [ ] M5 implementation plan — writing-plans against `docs/superpowers/specs/2026-08-22-projects-village-remap-design.md` (it covers M5 + M6); no plan file exists yet
+- [ ] **M5 execution** — the plan now exists at `docs/superpowers/plans/2026-08-25-m5-projects-move-in.md` (13 tasks, written 2026-08-25 against the remap spec). Not started. Note the plan corrects two stale spec assumptions: the transcript store is 486 files / 200 MB (not 314 / 20 MB), and most transcripts are nested under `<session>/subagents/`, so discovery must walk recursively
 - [ ] LICENSE decision (user's call; MIT suggested) — there is still no LICENSE file in the repo
 - [ ] Optional: Pages landing refresh
 - [ ] Playtest leftovers from M4 final review (bubble occlusion, meter granularity, trackpad tap + double-click)
