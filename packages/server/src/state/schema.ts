@@ -1,8 +1,8 @@
-import { STAT_FLOOR, type Creature } from '@village/core';
+import { emptyGallery, STAT_FLOOR, type Creature, type GalleryState } from '@village/core';
 import { defaultLlmState, type LlmState } from '../llm/ledger.js';
 
 /** Bump when the shape changes incompatibly. loadState refuses anything higher. */
-export const STATE_VERSION = 4;
+export const STATE_VERSION = 5;
 
 /** A file that could not be imported. Surfaced as a quiet note, never blocking. */
 export interface ImportProblem {
@@ -26,6 +26,11 @@ export interface VillageState {
   llm: LlmState;
   /** Who currently lives in the physical robot (R1/R2). */
   robot: RobotState;
+  /**
+   * The hidden art-direction engine (M4.5). Only `gallery.case` is ever sent to
+   * the browser — see toClientState in the API.
+   */
+  gallery: GalleryState;
 }
 
 export function emptyState(now: number): VillageState {
@@ -37,6 +42,7 @@ export function emptyState(now: number): VillageState {
     problems: [],
     llm: defaultLlmState(now),
     robot: { residentId: null },
+    gallery: emptyGallery(),
   };
 }
 
@@ -58,13 +64,13 @@ function rested(creature: Creature): Creature {
 /**
  * Upgrade an older on-disk state in memory. v1 -> v2 adds the llm block with
  * spec defaults; v2 -> v3 lifts stats stranded below the resting floor;
- * v3 -> v4 adds the robot house. Each step is pinned to its own version number,
- * so a save arriving at any floor picks up every upgrade above it. Called only
- * after the caller has validated `parsed` as a known-version state shape —
- * never with an arbitrary unknown.
+ * v3 -> v4 adds the robot house; v4 -> v5 adds the gallery slice. Each step is
+ * pinned to its own version number, so a save arriving at any floor picks up
+ * every upgrade above it. Called only after the caller has validated `parsed`
+ * as a known-version state shape — never with an arbitrary unknown.
  */
 export function migrateState(
-  parsed: VillageState & { llm?: LlmState; robot?: RobotState },
+  parsed: VillageState & { llm?: LlmState; robot?: RobotState; gallery?: GalleryState },
   now: number,
 ): VillageState {
   // v1: everything v1 validated still holds; it only lacks the llm block.
@@ -76,5 +82,6 @@ export function migrateState(
     state = { ...state, version: 3, creatures };
   }
   if (state.version === 3) state = { ...state, version: 4, robot: { residentId: null } };
+  if (state.version === 4) state = { ...state, version: 5, gallery: emptyGallery() };
   return state;
 }

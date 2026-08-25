@@ -1,8 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFile, writeFile, rm } from 'node:fs/promises';
+import { emptyGallery } from '@village/core';
 import { makeSandbox, type Sandbox } from '../testing/sandbox.js';
 import { loadState, saveState } from './store.js';
-import { emptyState, STATE_VERSION } from './schema.js';
+import { emptyState, migrateState, STATE_VERSION } from './schema.js';
 
 let sandbox: Sandbox | null = null;
 afterEach(async () => { await sandbox?.cleanup(); sandbox = null; });
@@ -256,5 +257,76 @@ describe('saveState', () => {
     await saveState(sandbox.paths, state);
     const raw = await readFile(sandbox.paths.statePath, 'utf8');
     expect(() => JSON.parse(raw)).not.toThrow();
+  });
+});
+
+describe('state v5 — the gallery slice', () => {
+  it('gives a v4 save an empty gallery', () => {
+    const v4 = {
+      version: 4,
+      createdAt: 1,
+      updatedAt: 1,
+      creatures: {},
+      problems: [],
+      llm: {
+        ledger: { day: '2026-08-22', interactiveIn: 0, interactiveOut: 0, autonomousIn: 0, autonomousOut: 0 },
+        config: { interactiveCap: 500_000, autonomousCap: 100_000, autonomousEnabled: false },
+      },
+      robot: { residentId: null },
+    } as unknown as Parameters<typeof migrateState>[0];
+
+    const migrated = migrateState(v4, Date.UTC(2026, 7, 22));
+    expect(migrated.version).toBe(STATE_VERSION);
+    expect(migrated.gallery).toEqual(emptyGallery());
+  });
+
+  it('migrates a v1 save all the way up, gaining a gallery along with llm and robot', () => {
+    const v1 = {
+      version: 1,
+      createdAt: 5,
+      updatedAt: 9,
+      creatures: {},
+      problems: [],
+    } as unknown as Parameters<typeof migrateState>[0];
+
+    const migrated = migrateState(v1, Date.UTC(2026, 7, 22));
+    expect(migrated.version).toBe(STATE_VERSION);
+    expect(migrated.gallery).toEqual(emptyGallery());
+  });
+
+  it('leaves an existing populated gallery untouched', () => {
+    const gallery = { ...emptyGallery(), nextSketchNumber: 7 };
+    const v5 = {
+      version: 5,
+      createdAt: 1,
+      updatedAt: 1,
+      creatures: {},
+      problems: [],
+      llm: {
+        ledger: { day: '2026-08-22', interactiveIn: 0, interactiveOut: 0, autonomousIn: 0, autonomousOut: 0 },
+        config: { interactiveCap: 500_000, autonomousCap: 100_000, autonomousEnabled: false },
+      },
+      robot: { residentId: null },
+      gallery,
+    } as unknown as Parameters<typeof migrateState>[0];
+
+    const migrated = migrateState(v5, Date.UTC(2026, 7, 22));
+    expect(migrated.gallery.nextSketchNumber).toBe(7);
+  });
+
+  it('starts a fresh village with an empty gallery', () => {
+    expect(emptyState(Date.UTC(2026, 7, 22)).gallery).toEqual(emptyGallery());
+  });
+
+  it('refuses a v5 save whose gallery is not an object, falling back like other invalid states', async () => {
+    sandbox = await makeSandbox();
+    const broken = { ...emptyState(1), gallery: 'nonsense' };
+    await writeFile(sandbox.paths.statePath, JSON.stringify(broken), 'utf8');
+
+    const loaded = await loadState(sandbox.paths, 9999);
+    expect(loaded.recovered).toBe(true);
+    expect(loaded.note).toMatch(/backup|fresh|new/i);
+    expect(loaded.state.createdAt).toBe(9999);
+    expect(loaded.state.gallery).toEqual(emptyGallery());
   });
 });
