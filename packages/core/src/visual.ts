@@ -17,3 +17,4 @@ export * from './appearance/palette.js';
 // grids — no node builtins, no parsers. The web needs both to draw a sketch.
 export * from './gallery/types.js';
 export * from './gallery/validate.js';
+export * from './gallery/peddler.js';
