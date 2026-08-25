@@ -12,6 +12,7 @@ export * from './gallery/validate.js';
 export * from './gallery/peddler.js';
 export * from './gallery/ladder.js';
 export * from './gallery/refill.js';
+export * from './gallery/prompt.js';
 
 export * from './files/names.js';
 export * from './files/frontmatter.js';
