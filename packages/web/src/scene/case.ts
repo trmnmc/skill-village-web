@@ -21,12 +21,13 @@ import { escapeStyled, toCanvas, loadSprite, type CreatureFonts } from './creatu
 
 /** Margin between a portrait and its own frame's inner edge — frames hug, they never share one width. */
 const FRAME_MARGIN = 14;
-/** Gap between adjacent frames in the row. */
+/** Gap between adjacent slots in the row. */
 const FRAME_GAP = 26;
 /** Gap between a frame's bottom edge and its title plaque. */
 const PLAQUE_GAP = 10;
 const PLAQUE_PAD_X = 10;
 const PLAQUE_H = 24;
+const PLAQUE_TEXT_SIZE = 13;
 /** Fixed-viewport y every frame's top edge shares — a gallery rail, not a floor: frames vary in height below it. */
 const ROW_TOP_Y = 130;
 /** Outline weight, ordinary vs the ring drawn around the selected sketch pending confirmation. */
@@ -54,13 +55,28 @@ interface Portrait {
   sketch: SketchView;
   grid: ComposedGrid;
   key: string;
+  /** Portrait pixel size, `grid.{w,h} * U`. */
   w: number;
   h: number;
+  /** The frame's own size — hugs the portrait plus FRAME_MARGIN, nothing else. */
+  frameW: number;
+  frameH: number;
+  /** The title plaque's width, measured before layout (see below) so the row can reserve room for it. */
+  plaqueW: number;
+  /**
+   * What the row layout actually reserves for this sketch: `max(frameW,
+   * plaqueW)`. A title wider than its portrait (routine at up to ~40 mono
+   * characters — titles are the artist's own voice and must never truncate)
+   * would otherwise overlap a neighbour, since frame spacing used to be
+   * measured off the portrait alone.
+   */
+  slotW: number;
 }
 
 interface FrameRect {
   x: number;
   y: number;
+  /** The full slot width — same reservation the layout used, not just the frame's own width. */
   w: number;
   /** Frame height plus the plaque band below it — the sketch's whole clickable footprint. */
   hitH: number;
@@ -77,6 +93,9 @@ function hex(k: KAPLAYCtx, v: string) {
  * Every game object here is a child of one `root`, exactly the way
  * `creature.ts`'s `spawnCreature` roots a whole villager under one `root` —
  * `close()` is a single `k.destroy(root)`, the same one-call teardown.
+ * `close()` also fires `onClose` synchronously, before any caller-supplied
+ * cull promise has even started — see the confirm handler below for why
+ * that ordering matters.
  *
  * Sketches are drawings, not creatures (the brief's own words): unlike a
  * villager's baked sprite, a portrait is drawn full-bright, untouched by the
@@ -98,6 +117,7 @@ export async function openCaseOverlay(
   caseData: CaseView,
   fonts: CreatureFonts,
   onCull: (sketchId: string) => void | Promise<void>,
+  onClose: () => void,
 ): Promise<CaseOverlayHandle> {
   const { tokens, tint } = themeStore.current();
   const inkCol = hex(k, sceneryColor(tokens, tint, 'ink'));
@@ -108,6 +128,14 @@ export async function openCaseOverlay(
   // Compose every sketch up front — a sketch that fails to compose (the
   // validator refusing something the server somehow let through) is skipped
   // rather than drawn broken, same rule `composeSketchGrid` itself documents.
+  //
+  // Each title is also measured here, before any layout math runs, via
+  // `k.formatText` — the same text-formatting routine a `text()` component
+  // uses internally, but one that returns metrics without adding anything to
+  // the scene. Sizing the row from the portrait alone (the earlier version
+  // of this file) let a long title overlap its neighbour, since nothing
+  // reserved room for it; measuring first is what lets the row give each
+  // slot exactly as much width as its wider of {frame, plaque} needs.
   const portraits: Portrait[] = [];
   for (const sketch of caseData.sketches) {
     const grid = composeSketchGrid({ rows: sketch.rows, crown: sketch.crown });
@@ -116,7 +144,17 @@ export async function openCaseOverlay(
     if (!k.getSprite(key)) {
       await loadSprite(k, key, toCanvas(bakePixels(grid, roleMap(derivePalette(sketch.hue)))));
     }
-    portraits.push({ sketch, grid, key, w: grid.w * U, h: grid.h * U });
+    const w = grid.w * U;
+    const h = grid.h * U;
+    const frameW = w + FRAME_MARGIN * 2;
+    const frameH = h + FRAME_MARGIN * 2;
+    const titleMetrics = k.formatText({
+      text: escapeStyled(sketch.title),
+      font: fonts.mono,
+      size: PLAQUE_TEXT_SIZE * TEXT_SS,
+    });
+    const plaqueW = titleMetrics.width / TEXT_SS + PLAQUE_PAD_X * 2;
+    portraits.push({ sketch, grid, key, w, h, frameW, frameH, plaqueW, slotW: Math.max(frameW, plaqueW) });
   }
 
   const root = k.add([k.pos(0, 0), k.fixed(), k.z(OVERLAY_Z)]);
@@ -142,18 +180,19 @@ export async function openCaseOverlay(
   >();
   const frameRects = new Map<string, FrameRect>();
 
-  const frameWs = portraits.map((p) => p.w + FRAME_MARGIN * 2);
-  const totalW = frameWs.reduce((a, b) => a + b, 0) + FRAME_GAP * Math.max(0, portraits.length - 1);
+  const totalW = portraits.reduce((sum, p) => sum + p.slotW, 0) + FRAME_GAP * Math.max(0, portraits.length - 1);
   let cursorX = k.width() / 2 - totalW / 2;
 
   for (const p of portraits) {
-    const frameW = p.w + FRAME_MARGIN * 2;
-    const frameH = p.h + FRAME_MARGIN * 2;
-    const fx = cursorX;
     const fy = ROW_TOP_Y;
+    // Frame and plaque both centre on the slot's own centre, not on each
+    // other — a slot widened by its plaque must not drag the (still
+    // frame-sized) frame sideways with it.
+    const slotCenterX = cursorX + p.slotW / 2;
+    const fx = slotCenterX - p.frameW / 2;
 
     const frame = root.add([
-      k.rect(frameW, frameH, { radius: 6 }),
+      k.rect(p.frameW, p.frameH, { radius: 6 }),
       k.pos(fx, fy),
       k.anchor('topleft'),
       k.color(creamCol),
@@ -163,7 +202,7 @@ export async function openCaseOverlay(
     ]);
     frameObjs.set(p.sketch.id, frame);
 
-    const portraitCenterX = fx + frameW / 2;
+    const portraitCenterX = slotCenterX;
     const portraitBottomY = fy + FRAME_MARGIN + p.h;
 
     root.add([
@@ -190,22 +229,14 @@ export async function openCaseOverlay(
       ]);
     }
 
-    // Plaque: sized to hug the title, same order-of-operations as
-    // creature.ts's nameplate — add the text, read its measured width back,
-    // then size the box from it.
-    const plaqueY = fy + frameH + PLAQUE_GAP;
-    const title = root.add([
-      k.text(escapeStyled(p.sketch.title), { size: 13 * TEXT_SS, font: fonts.mono }),
-      k.pos(portraitCenterX, plaqueY + PLAQUE_H / 2),
-      k.anchor('center'),
-      k.scale(1 / TEXT_SS),
-      k.color(inkCol),
-      k.fixed(),
-      k.z(OVERLAY_Z + 6),
-    ]);
-    const plaqueW = title.width / TEXT_SS + PLAQUE_PAD_X * 2;
+    // Plaque: `p.plaqueW` was already measured before layout (that is what
+    // let this slot reserve the right width in the first place), so the box
+    // is sized from it directly rather than re-measuring a freshly created
+    // text object — same text, same font, same size, so the two numbers can
+    // never disagree.
+    const plaqueY = fy + p.frameH + PLAQUE_GAP;
     root.add([
-      k.rect(plaqueW, PLAQUE_H, { radius: 4 }),
+      k.rect(p.plaqueW, PLAQUE_H, { radius: 4 }),
       k.pos(portraitCenterX, plaqueY + PLAQUE_H / 2),
       k.anchor('center'),
       k.color(bubbleCol),
@@ -213,15 +244,27 @@ export async function openCaseOverlay(
       k.fixed(),
       k.z(OVERLAY_Z + 5),
     ]);
+    root.add([
+      k.text(escapeStyled(p.sketch.title), { size: PLAQUE_TEXT_SIZE * TEXT_SS, font: fonts.mono }),
+      k.pos(portraitCenterX, plaqueY + PLAQUE_H / 2),
+      k.anchor('center'),
+      k.scale(1 / TEXT_SS),
+      k.color(inkCol),
+      k.fixed(),
+      k.z(OVERLAY_Z + 6),
+    ]);
 
+    // The hit box covers the *whole slot*, not just the (possibly narrower)
+    // frame — a click on an overflowing title must still resolve to this
+    // sketch rather than its neighbour or nothing.
     frameRects.set(p.sketch.id, {
-      x: fx,
+      x: cursorX,
       y: fy,
-      w: frameW,
-      hitH: frameH + PLAQUE_GAP + PLAQUE_H,
+      w: p.slotW,
+      hitH: p.frameH + PLAQUE_GAP + PLAQUE_H,
     });
 
-    cursorX += frameW + FRAME_GAP;
+    cursorX += p.slotW + FRAME_GAP;
   }
 
   const refreshSelection = () => {
@@ -252,6 +295,14 @@ export async function openCaseOverlay(
     return { x: clientX - rect.left, y: clientY - rect.top };
   };
 
+  /**
+   * Torn down exactly once, from either caller: the confirm handler below
+   * (self-close, before `onCull` even starts) or `village.ts` calling the
+   * returned handle's `close()` directly (the peddler leaving while the
+   * case is still open). `onClose` fires synchronously, in the same tick as
+   * the rest of the teardown — the caller's own "the overlay is gone" state
+   * must not lag behind a network round trip it has no reason to wait on.
+   */
   const close = () => {
     if (closed) return;
     closed = true;
@@ -259,6 +310,7 @@ export async function openCaseOverlay(
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', onMouseUp);
     k.destroy(root);
+    onClose();
   };
 
   function onMouseDown(event: MouseEvent) {
@@ -282,7 +334,8 @@ export async function openCaseOverlay(
     if (selectedId === gesture.targetId) {
       // Confirm: close first — "as soon as the cull is posted, not waiting
       // for the server" — then fire the cull. The socket's next frame is
-      // what actually removes the peddler; this overlay does not wait for it.
+      // what actually removes the peddler; this overlay does not wait for
+      // it, and neither does anything gated on `onClose` having already run.
       const id = gesture.targetId;
       close();
       void onCull(id);

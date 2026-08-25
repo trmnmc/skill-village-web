@@ -407,10 +407,17 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   let peddlerHandle: PeddlerHandle | null = null;
   let peddlerOpening = false;
   let overlayHandle: CaseOverlayHandle | null = null;
+  // Guards the same async gap `peddlerOpening` guards for `addPeddler`, just
+  // for `openCaseOverlay`: `overlayHandle` is still null for the whole time
+  // its five portraits are baking, so a second click landing in that window
+  // (a fast double-click, or a re-fired peddler onClick while the modal
+  // already visually covers it) must not start a second build — the first
+  // build's KAPLAY objects and DOM listeners would never be reachable again
+  // once `overlayHandle` finished pointing at the second one.
+  let overlayOpening = false;
 
   const closeOverlay = () => {
     overlayHandle?.close();
-    overlayHandle = null;
   };
 
   /**
@@ -422,20 +429,50 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
    * click there) must not stack a second overlay.
    */
   const openCase = () => {
-    if (overlayHandle || peddlerHandle === null) return;
+    if (overlayHandle || overlayOpening || peddlerHandle === null) return;
     const caseData = latestView?.peddlerCase;
     if (!caseData) return;
     peddlerHandle.say(PEDDLER_LINE);
-    void openCaseOverlay(k, caseData, { pixel: pixelFont, mono: monoFont }, async (id) => {
-      await postCull(id);
-      closeOverlay();
-    }).then((handle) => {
+    overlayOpening = true;
+    void openCaseOverlay(
+      k,
+      caseData,
+      { pixel: pixelFont, mono: monoFont },
+      // `postCull` runs for its own sake — the overlay has already torn
+      // itself down and called `onClose` (below) by the time this fires, so
+      // nothing here gates any interaction on the network round trip.
+      async (id) => {
+        await postCull(id);
+      },
+      // Fired synchronously from inside the overlay's own `close()` —
+      // whether that's this confirm path (via the async onCull above,
+      // *after* close() already ran) or `village.ts` calling `.close()`
+      // directly from the `!view.peddler` branch below. Clearing the
+      // reference here, not after any await, is what keeps the world's own
+      // `if (overlayHandle) return;` guards from freezing background
+      // panning/clicking for the length of a cull request that has nothing
+      // to do with them.
+      () => {
+        overlayHandle = null;
+      },
+    ).then((handle) => {
+      overlayOpening = false;
       // The same staleness check `setView`'s own peddler spawn uses: the
       // day can turn (an unjudged case never survives past midnight) while
       // five portraits are still baking, and a case for a visitor who has
       // already left must not appear.
       if (!latestView?.peddler) { handle.close(); return; }
       overlayHandle = handle;
+    }).catch(() => {
+      // A failed portrait sprite load leaves nothing to show — same
+      // unhandled-rejection guard `spawnCreature`'s own call carries, for
+      // the same underlying cause (creature.ts's `loadSprite` rejects via
+      // `onError`). Resetting the flag here (not just swallowing the
+      // rejection) is the part that matters: without it, `overlayOpening`
+      // would stay true forever and no case could ever open again this
+      // session — a stuck flag is worse than the double-open bug it exists
+      // to prevent.
+      overlayOpening = false;
     });
   };
 
@@ -675,6 +712,13 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
             // one.
             if (!latestView?.peddler) { handle.destroy(); return; }
             peddlerHandle = handle;
+          })
+          .catch(() => {
+            // Same guard as spawnCreature's own call, and the same reason
+            // openCase's build needs one: a failed sprite load must reset
+            // `peddlerOpening`, or no peddler could ever spawn again this
+            // session.
+            peddlerOpening = false;
           });
       } else if (!view.peddler && peddlerHandle) {
         peddlerHandle.destroy();
