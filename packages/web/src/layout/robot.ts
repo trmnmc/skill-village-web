@@ -35,4 +35,4 @@ export function inRobotHouse(worldX: number, worldY: number): boolean {
  * Where the resident stands: on the front row beside the house, visible at a
  * glance (spec §4: the creature is shown at the house, never hidden inside).
  */
-export const PORCH_SPOT: Spot = Object.freeze({ x: ROBOT_HOUSE_X + 150, y: GROUND_Y });
+export const PORCH_SPOT: Spot = Object.freeze({ x: ROBOT_HOUSE_X + 150, y: GROUND_Y, wander: 0 });

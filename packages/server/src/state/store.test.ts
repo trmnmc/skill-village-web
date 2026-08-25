@@ -221,7 +221,7 @@ describe('robot block (v4)', () => {
     const { state, recovered, note } = await loadState(sandbox.paths, 1_000);
     expect(recovered).toBe(true);
     expect(note).toMatch(/backup|fresh|new/i);
-    expect(state.version).toBe(3);
+    expect(state.version).toBe(STATE_VERSION);
     expect(state.llm).toBeDefined();
     expect(state.robot).toEqual({ residentId: null });
   });

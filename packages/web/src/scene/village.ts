@@ -453,13 +453,14 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
       // Both created (or neither) — checking both, not just `ghost`, is
       // what lets TS narrow `ghostLabel` to non-null below too.
       if (!ghost || !ghostLabel) {
-        ghost = k.add([k.rect(18, 18), k.color(hex(k, THEME.accent)), k.pos(0, 0), k.anchor('center'), k.z(60)]);
+        ghost = k.add([k.rect(18, 18), k.color(hex(k, sceneryColor(themeStore.current().tokens, themeStore.current().tint, 'accent'))), k.pos(0, 0), k.anchor('center'), k.z(60), tokenTag('accent')]);
         ghostLabel = k.add([
           k.text('', { size: 12 * TEXT_SS, font: monoFont }),
           k.scale(1 / TEXT_SS),
           k.pos(0, 0),
           k.anchor('center'),
-          k.color(hex(k, THEME.ink)),
+          k.color(hex(k, sceneryColor(themeStore.current().tokens, themeStore.current().tint, 'ink'))),
+          tokenTag('ink'),
           k.z(61),
         ]);
       }
