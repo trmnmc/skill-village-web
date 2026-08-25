@@ -1,9 +1,14 @@
 import { readFile } from 'node:fs/promises';
-import { applyCare, chatSystemPrompt, spokenSystemPrompt, type CareVerb, type Creature } from '@village/core';
+import {
+  applyCare, chatSystemPrompt, peddlerIsVisiting, spokenSystemPrompt, type CareVerb, type Creature,
+} from '@village/core';
 import type { VillagePaths } from './config/paths.js';
 import { archiveFromShadow, updateShadow } from './bridge/archive.js';
 import { reconcile } from './bridge/reconcile.js';
 import { scanVillage } from './bridge/scan.js';
+import type { SketchArtist } from './gallery/artist.js';
+import { createGalleryRuntime } from './gallery/runtime.js';
+import { dayOf } from './llm/ledger.js';
 import type { LlmConfig, LlmState } from './llm/ledger.js';
 import { generatePersona } from './llm/persona.js';
 import type { LlmMode, LlmReply, LlmService } from './llm/service.js';
@@ -51,6 +56,11 @@ export interface VillageOptions {
    * Ignored when `llm` is also given.
    */
   llmFactory?: (hooks: LlmHooks) => LlmService;
+  /**
+   * Draws the peddler's sketches. Omit it and the peddler never visits — which
+   * is exactly right for a village with no language model.
+   */
+  artist?: SketchArtist;
 }
 
 export type VillageListener = (state: VillageState) => void;
@@ -97,6 +107,12 @@ export interface Village {
   startupNote: string | null;
   /** Where this village keeps its files. The events route needs it. */
   getPaths(): VillagePaths;
+  /** Throw out a sketch. False when the cull was refused; never throws. */
+  cull(sketchId: string): Promise<boolean>;
+  /** Await the in-flight daily refill, if any. Tests only. */
+  settleGallery(): Promise<void>;
+  /** True when a peddler should be drawn right now. */
+  peddlerVisiting(): boolean;
 }
 
 /** Deterministic pick that shifts as the relationship grows. */
@@ -262,6 +278,27 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
     return flight;
   };
 
+  const gallery = options.artist ? createGalleryRuntime({ artist: options.artist }) : null;
+  // Single-flight: one refill at a time, and the tick never waits on it.
+  let refilling: Promise<void> | null = null;
+
+  const startRefill = () => {
+    if (!gallery || refilling) return;
+    refilling = (async () => {
+      try {
+        const today = dayOf(now());
+        const next = await gallery.refillIfDue(state.gallery, today);
+        // Re-read state rather than closing over it: minutes may have passed
+        // inside the model call, and a care action may have committed since.
+        if (next) await commit({ ...state, gallery: next, updatedAt: now() }, []);
+      } catch {
+        // A refill that throws costs the player a peddler, never the village.
+      } finally {
+        refilling = null;
+      }
+    })();
+  };
+
   await refresh();
 
   return {
@@ -280,6 +317,7 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
     async tick() {
       const result = applyTick(state, now());
       await commit(result.state, result.events);
+      startRefill();
     },
 
     async care(creatureId, verb) {
@@ -398,6 +436,22 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
         { ...state, updatedAt: at, llm: { ...state.llm, config: { ...state.llm.config, ...patch } } },
         [],
       );
+    },
+
+    peddlerVisiting() {
+      return peddlerIsVisiting(state.gallery, dayOf(now()));
+    },
+
+    async cull(sketchId) {
+      if (!gallery) return false;
+      const next = await gallery.cull(state.gallery, sketchId, dayOf(now()));
+      if (!next) return false;
+      await commit({ ...state, gallery: next, updatedAt: now() }, []);
+      return true;
+    },
+
+    async settleGallery() {
+      await refilling;
     },
 
     subscribe(listener) {

@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { rm } from 'node:fs/promises';
+import { CASE_SIZE } from '@village/core';
 import { readArchived } from './bridge/archive.js';
 import { readEvents } from './state/events.js';
 import { makeSandbox, skillFixture, agentFixture, type Sandbox } from './testing/sandbox.js';
@@ -8,6 +9,7 @@ import { MS_PER_HOUR } from './sim/tick.js';
 import { defaultLlmState } from './llm/ledger.js';
 import { createLlmService, type LlmRequest, type LlmService } from './llm/service.js';
 import { fakeCliCommand } from './llm/testing/fake.js';
+import type { SketchArtist } from './gallery/artist.js';
 
 let sandbox: Sandbox | null = null;
 let village: Village | null = null;
@@ -594,5 +596,79 @@ describe('the robot house', () => {
     expect(village.robotActivityAt()).toBe(null);
     await village.chat('skill:code-review', 'hi', 'spoken');
     expect(village.robotActivityAt()).toBe(NOW);
+  });
+});
+
+describe('the peddler', () => {
+  const NOON = 1_000;
+  const ROWS = ['.XXXXX.', 'XXXXXXX', 'XWWXWWX', 'XWWXWWX', 'XXXKXXX', 'XXXXXXX', '.DD.DD.'];
+
+  /** An artist that always draws, so the case is deterministic. */
+  const artist: SketchArtist = {
+    async draw({ count, gallery, day }) {
+      return {
+        sketches: Array.from({ length: count }, (_, i) => ({
+          id: `sketch-${gallery.nextSketchNumber + i}`, rows: ROWS, crown: 'none' as const,
+          hue: '#e58c68', title: `t${i}`, createdDay: day, survivals: 0,
+        })),
+        nextNumber: gallery.nextSketchNumber + count,
+      };
+    },
+    async distil() { return 'guide'; },
+  };
+
+  it('fills the case on the first tick and persists it', async () => {
+    sandbox = await makeSandbox();
+    village = await createVillage({ paths: sandbox.paths, now: () => NOON, artist });
+    await village.tick();
+    await village.settleGallery();
+
+    expect(village.getState().gallery.case!.sketches).toHaveLength(CASE_SIZE);
+  });
+
+  it('does not redraw the case on a second tick the same day', async () => {
+    sandbox = await makeSandbox();
+    let calls = 0;
+    const counting: SketchArtist = { ...artist, async draw(r) { calls++; return artist.draw(r); } };
+    village = await createVillage({ paths: sandbox.paths, now: () => NOON, artist: counting });
+    await village.tick();
+    await village.settleGallery();
+    await village.tick();
+    await village.settleGallery();
+
+    expect(calls).toBe(1);
+  });
+
+  it('accepts a cull and reports it, moving the sketch to the rejects', async () => {
+    sandbox = await makeSandbox();
+    village = await createVillage({ paths: sandbox.paths, now: () => NOON, artist });
+    await village.tick();
+    await village.settleGallery();
+
+    const victim = village.getState().gallery.case!.sketches[0]!.id;
+    expect(await village.cull(victim)).toBe(true);
+    expect(village.getState().gallery.rejects.map((s) => s.id)).toEqual([victim]);
+  });
+
+  it('refuses a second cull the same day without throwing', async () => {
+    sandbox = await makeSandbox();
+    village = await createVillage({ paths: sandbox.paths, now: () => NOON, artist });
+    await village.tick();
+    await village.settleGallery();
+
+    const sketches = village.getState().gallery.case!.sketches;
+    expect(await village.cull(sketches[0]!.id)).toBe(true);
+    expect(await village.cull(sketches[1]!.id)).toBe(false);
+  });
+
+  it('writes no events, so the notice board never spells out the secret', async () => {
+    sandbox = await makeSandbox();
+    village = await createVillage({ paths: sandbox.paths, now: () => NOON, artist });
+    await village.tick();
+    await village.settleGallery();
+    await village.cull(village.getState().gallery.case!.sketches[0]!.id);
+
+    const events = await readEvents(sandbox.paths, {});
+    expect(events.some((e) => JSON.stringify(e).includes('sketch'))).toBe(false);
   });
 });
