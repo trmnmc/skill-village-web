@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BODIES, CROWNS, FLIGHT_UNDERSIDE, POSTURES, derivePalette, HUES, type CreatureAppearance, type RestPostureId } from '@village/core/visual';
-import { composeGrid } from './compose.js';
+import { composeGrid, composeSketchGrid } from './compose.js';
 
 const palette = derivePalette(HUES[0]!);
 
@@ -147,5 +147,52 @@ describe('composeGrid — determinism', () => {
     const a = composeGrid(appearance({ body: 'boxy', crown: 'horns' }));
     const b = composeGrid(appearance({ body: 'boxy', crown: 'horns' }));
     expect(a).toEqual(b);
+  });
+});
+
+describe('composeSketchGrid', () => {
+  const ROWS = ['.XXXXX.', 'XXXXXXX', 'XWWXWWX', 'XWWXWWX', 'XXXKXXX', 'XXXXXXX', '.DD.DD.'];
+
+  it('draws a crownless sketch exactly as authored', () => {
+    const grid = composeSketchGrid({ rows: ROWS, crown: 'none' })!;
+    expect(grid.rows).toEqual(ROWS);
+    expect(grid.w).toBe(7);
+    expect(grid.h).toBe(7);
+    expect(grid.crownRows).toBe(0);
+  });
+
+  it('derives the eyes rather than trusting anyone', () => {
+    expect(composeSketchGrid({ rows: ROWS, crown: 'none' })!.eyes)
+      .toEqual([{ c: 1, r: 2 }, { c: 4, r: 2 }]);
+  });
+
+  it('stacks the crown above and shifts the eyes down by exactly its height', () => {
+    const grid = composeSketchGrid({ rows: ROWS, crown: 'crest' })!;
+    expect(grid.h).toBe(ROWS.length + 3);
+    expect(grid.crownRows).toBe(3);
+    expect(grid.eyes).toEqual([{ c: 1, r: 5 }, { c: 4, r: 5 }]);
+    expect(grid.rows.every((row) => row.length === 7)).toBe(true);
+  });
+
+  it('fits the crown to the sketch’s own width, not a body’s', () => {
+    const wide = ['...XXXXXX...', '.XXXXXXXXXX.', 'XXWWXXXXWWXX', 'XXWWXXXXWWXX',
+                  'XXXXXKKXXXXX', 'XXXXXXXXXXXX', '.DD......DD.'];
+    const grid = composeSketchGrid({ rows: wide, crown: 'ears' })!;
+    expect(grid.w).toBe(12);
+    expect(grid.rows[0]!.length).toBe(12);
+  });
+
+  it('refuses a grid the validator refuses, rather than drawing nonsense', () => {
+    expect(composeSketchGrid({ rows: ['XX', 'XX'], crown: 'none' })).toBeNull();
+  });
+
+  it('still composes the six real creatures the old way', () => {
+    const grid = composeGrid({
+      body: 'round', crown: 'none',
+      palette: { hue: '#e58c68', lite: '#f0b49a', dark: '#b96a4a' },
+      winged: false, restPosture: null,
+    });
+    expect(grid.w).toBe(9);
+    expect(grid.eyes).toEqual([{ c: 2, r: 2 }, { c: 5, r: 2 }]);
   });
 });

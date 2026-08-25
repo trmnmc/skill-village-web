@@ -186,3 +186,51 @@ describe('robot fields', () => {
     expect(view!.robotLastTurnAt).toBe(null);
   });
 });
+
+describe('the peddler’s case', () => {
+  const ROWS = ['.XXXXX.', 'XXXXXXX', 'XWWXWWX', 'XWWXWWX', 'XXXKXXX', 'XXXXXXX', '.DD.DD.'];
+  const sketch = (id: string, over: Record<string, unknown> = {}) =>
+    ({ id, rows: ROWS, crown: 'none', hue: '#e58c68', title: id, ...over });
+
+  const payload = (over: Record<string, unknown>) =>
+    ({ creatures: {}, problems: [], startupNote: null, ...over });
+
+  const caseOf = (...sketches: unknown[]) => ({ day: '2026-08-22', sketches });
+
+  it('carries a well-formed case through', () => {
+    const view = toView(payload({ peddlerCase: caseOf(sketch('a'), sketch('b')) }))!;
+    expect(view.peddler).toBe(true);
+    expect(view.peddlerCase!.sketches.map((s) => s.id)).toEqual(['a', 'b']);
+  });
+
+  it('is empty-handed when the server sends no case', () => {
+    const view = toView(payload({ peddlerCase: null }))!;
+    expect(view.peddlerCase).toBeNull();
+    expect(view.peddler).toBe(false);
+  });
+
+  it('is empty-handed when the payload has no case field at all', () => {
+    const view = toView(payload({}))!;
+    expect(view.peddlerCase).toBeNull();
+    expect(view.peddler).toBe(false);
+  });
+
+  it('drops an undrawable sketch instead of losing the whole case', () => {
+    const view = toView(payload({
+      peddlerCase: caseOf(
+        sketch('good'), sketch('good2'),
+        sketch('bad', { rows: ['XX', 'XX'] }),
+        sketch('worse', { crown: 'antlers' }),
+      ),
+    }))!;
+    expect(view.peddlerCase!.sketches.map((s) => s.id)).toEqual(['good', 'good2']);
+  });
+
+  it('withholds the peddler when a mangled case leaves too few to judge', () => {
+    const view = toView(payload({
+      peddlerCase: caseOf(sketch('good'), sketch('bad', { rows: ['XX'] })),
+    }))!;
+    expect(view.peddlerCase).toBeNull();
+    expect(view.peddler).toBe(false);
+  });
+});

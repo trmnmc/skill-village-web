@@ -1,6 +1,6 @@
 import {
-  BODIES, CROWNS, FLIGHT_UNDERSIDE, POSTURES,
-  type CreatureAppearance, type EyeAnchor, type PostureId,
+  BODIES, CROWNS, FLIGHT_UNDERSIDE, POSTURES, deriveSketchEyes, validateSketchGrid,
+  type CreatureAppearance, type CrownId, type EyeAnchor, type PostureId,
 } from '@village/core/visual';
 
 export type { EyeAnchor };
@@ -18,6 +18,32 @@ export interface ComposedGrid {
 
 function pad(row: string, w: number): string {
   return row.length >= w ? row.slice(0, w) : row + '.'.repeat(w - row.length);
+}
+
+/**
+ * Stack a crown above a body and pad the result square. Crowns are parametric
+ * in width, which is the whole reason one definition sits correctly on a
+ * 7-wide villager and a 12-wide dream-sketch alike.
+ */
+function stackCrown(bodyRows: string[], w: number, crownId: CrownId): { rows: string[]; crownRows: number } {
+  const crown = CROWNS[crownId];
+  const crownRows: string[] = [];
+
+  if (crown.h > 0) {
+    const cells = crown.cells(w);
+    for (let r = -crown.h; r < 0; r++) {
+      const chars = Array.from({ length: w }, () => '.');
+      for (const [col, row] of cells) {
+        if (row === r && col >= 0 && col < w) chars[col] = 'X';
+      }
+      crownRows.push(chars.join(''));
+    }
+  }
+
+  return {
+    rows: [...crownRows, ...bodyRows].map((row) => pad(row, w)),
+    crownRows: crown.h,
+  };
 }
 
 /**
@@ -41,7 +67,6 @@ export function composeGrid(
   posture?: PostureId,
 ): ComposedGrid {
   const body = BODIES[appearance.body];
-  const crown = CROWNS[appearance.crown];
   const w = body.w;
 
   let bodyRows = [...body.rows];
@@ -64,29 +89,41 @@ export function composeGrid(
     }
   }
 
-  // Crown rows sit above the body, drawn in the body role.
-  const crownRows: string[] = [];
-  if (crown.h > 0) {
-    const cells = crown.cells(w);
-    for (let r = -crown.h; r < 0; r++) {
-      const chars = Array.from({ length: w }, () => '.');
-      for (const [col, row] of cells) {
-        if (row === r && col >= 0 && col < w) chars[col] = 'X';
-      }
-      crownRows.push(chars.join(''));
-    }
-  }
-
-  const rows = [...crownRows, ...bodyRows].map((row) => pad(row, w));
+  const stacked = stackCrown(bodyRows, w, appearance.crown);
 
   return {
-    rows,
+    rows: stacked.rows,
     w,
-    h: rows.length,
+    h: stacked.rows.length,
     eyes: [
-      { c: body.eyes[0].c, r: body.eyes[0].r + crown.h },
-      { c: body.eyes[1].c, r: body.eyes[1].r + crown.h },
+      { c: body.eyes[0].c, r: body.eyes[0].r + stacked.crownRows },
+      { c: body.eyes[1].c, r: body.eyes[1].r + stacked.crownRows },
     ],
-    crownRows: crown.h,
+    crownRows: stacked.crownRows,
+  };
+}
+
+/**
+ * Compose a dream-sketch, which brings its own rows instead of a body id.
+ * Returns null for anything the validator refuses: a sketch the server somehow
+ * let through must vanish quietly rather than draw as a broken smear.
+ */
+export function composeSketchGrid(sketch: { rows: string[]; crown: CrownId }): ComposedGrid | null {
+  const validation = validateSketchGrid(sketch.rows);
+  if (!validation.ok) return null;
+
+  const w = sketch.rows[0]!.length;
+  const stacked = stackCrown([...sketch.rows], w, sketch.crown);
+  const eyes = deriveSketchEyes(sketch.rows)!;
+
+  return {
+    rows: stacked.rows,
+    w,
+    h: stacked.rows.length,
+    eyes: [
+      { c: eyes[0].c, r: eyes[0].r + stacked.crownRows },
+      { c: eyes[1].c, r: eyes[1].r + stacked.crownRows },
+    ],
+    crownRows: stacked.crownRows,
   };
 }

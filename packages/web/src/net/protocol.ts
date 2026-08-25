@@ -1,4 +1,7 @@
-﻿import { BODY_IDS, CROWN_IDS, type Creature } from '@village/core/visual';
+﻿import {
+  BODY_IDS, CROWN_IDS, MIN_JUDGEABLE_CASE, validateSketchGrid,
+  type CaseView, type Creature, type SketchView,
+} from '@village/core/visual';
 
 export interface LlmView {
   mode: 'full' | 'silent';
@@ -16,6 +19,9 @@ export interface VillageView {
   robotResidentId: string | null;
   /** When the robot last spoke (server process memory), for the presence glow. */
   robotLastTurnAt: number | null;
+  /** Today's case, or null when nobody is visiting. */
+  peddlerCase: CaseView | null;
+  peddler: boolean;
 }
 
 const BODY_ID_SET: ReadonlySet<string> = new Set(BODY_IDS);
@@ -79,13 +85,46 @@ export function filterRenderable(values: unknown[]): Creature[] {
 }
 
 /**
+ * Checks exactly what the case overlay dereferences. The grid is re-validated
+ * here rather than trusted, because the renderer is the last place a bad grid
+ * can be stopped cheaply.
+ */
+function isDrawableSketch(value: unknown): value is SketchView {
+  if (typeof value !== 'object' || value === null) return false;
+  const s = value as Record<string, unknown>;
+  return (
+    typeof s.id === 'string' &&
+    typeof s.title === 'string' &&
+    typeof s.hue === 'string' &&
+    typeof s.crown === 'string' && CROWN_ID_SET.has(s.crown) &&
+    Array.isArray(s.rows) && s.rows.every((row) => typeof row === 'string') &&
+    validateSketchGrid(s.rows as string[]).ok
+  );
+}
+
+/**
+ * One undrawable sketch must not cost the player the other four — the same
+ * rule the creature list follows. If dropping the bad ones leaves too few to
+ * judge, there is no round to play and the peddler simply is not here.
+ */
+function toCase(value: unknown): CaseView | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const c = value as Record<string, unknown>;
+  if (typeof c.day !== 'string' || !Array.isArray(c.sketches)) return null;
+
+  const sketches = c.sketches.filter(isDrawableSketch);
+  if (sketches.length < MIN_JUDGEABLE_CASE) return null;
+  return { day: c.day, sketches };
+}
+
+/**
  * Turn a server state payload into what the renderer needs. Anything the
  * renderer cannot draw is dropped rather than crashing the village: one bad
  * creature must not cost you the other sixty-nine.
  */
 export function toView(payload: unknown): VillageView | null {
   if (typeof payload !== 'object' || payload === null) return null;
-  const p = payload as { creatures?: unknown; problems?: unknown; startupNote?: unknown; llm?: unknown; robot?: unknown; robotLastTurnAt?: unknown };
+  const p = payload as { creatures?: unknown; problems?: unknown; startupNote?: unknown; llm?: unknown; robot?: unknown; robotLastTurnAt?: unknown; peddlerCase?: unknown };
   if (typeof p.creatures !== 'object' || p.creatures === null) return null;
 
   const creatures = filterRenderable(Object.values(p.creatures as Record<string, unknown>));
@@ -120,6 +159,8 @@ export function toView(payload: unknown): VillageView | null {
   const rawTurn = (p as { robotLastTurnAt?: unknown }).robotLastTurnAt;
   const robotLastTurnAt = typeof rawTurn === 'number' ? rawTurn : null;
 
+  const peddlerCase = toCase(p.peddlerCase);
+
   return {
     creatures,
     problems: Array.isArray(p.problems) ? p.problems : [],
@@ -127,6 +168,8 @@ export function toView(payload: unknown): VillageView | null {
     robotResidentId,
     robotLastTurnAt,
     llm,
+    peddlerCase,
+    peddler: peddlerCase !== null,
   };
 }
 
