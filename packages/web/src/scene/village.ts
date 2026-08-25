@@ -39,6 +39,7 @@ import { HAPPY_ABOVE, SLEEP_BELOW } from '../motion/behaviour.js';
 import { mountSky } from './sky.js';
 import { mountWeather } from './weather-layer.js';
 import { createRobotHouse } from './robotHouse.js';
+import { buildGroundTexture, retintGroundTexture, groundPreset } from './ground.js';
 import { PORCH_SPOT, inRobotHouse } from '../layout/robot.js';
 import { createDragTracker } from '../input/drag.js';
 import { displayName } from '../render/label.js';
@@ -230,6 +231,14 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // 250px wall once GROUND_TOP moved up to give the back row real field.
   block(k, 0, GROUND_TOP, WORLD_W, 14, 'groundDark', 0);
   block(k, 0, GROUND_TOP + 14, WORLD_W, k.height() * 2, 'ground', 0);
+
+  // Ground texture (default preset `b`; `?ground=a|c|off` to compare).
+  // Mounted directly on the two field rects above and repainted by
+  // `applyTheme` below, so it follows palette, weather and night tint
+  // without knowing about any of them.
+  const preset = groundPreset();
+  const texCount = buildGroundTexture(k, preset, themeStore.current());
+  if (texCount) console.info(`[ground] preset ${preset}: ${texCount} texture rects`);
 
   const homes = ZONES.find((z) => z.id === 'homes')!;
 
@@ -565,6 +574,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         if (outlined.outline) outlined.outline.color = inkCol;
       }
     }
+    retintGroundTexture(k, t);
     const cTint = hex(k, creatureTintColor(t.tint));
     for (const obj of k.get('themed:creature', { recursive: true })) {
       (obj as unknown as { color: unknown }).color = cTint;
