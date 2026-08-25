@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { menuModel, TIME_CHIPS } from './weather-menu.js';
+import { menuModel, TIME_CHIPS, skyOverrideKeys } from './weather-menu.js';
 
 describe('menuModel', () => {
   it('always has the four mode rows, in order', () => {
@@ -104,5 +104,22 @@ describe('menuModel — palette chips', () => {
     expect(menuModel('pick', 'clear', null, null).paletteChips).toBeDefined();
     expect(menuModel('real', 'clear', null, null).paletteChips).toBeDefined();
     expect(menuModel('journey', 'clear', null, '1a').paletteChips).toBeUndefined();
+  });
+});
+
+describe('skyOverrideKeys', () => {
+  it('names the sky dev-override params present in a search string', () => {
+    expect(skyOverrideKeys('?weather=snow&day=wed&at=12:00')).toEqual(['at', 'day', 'weather']);
+    expect(skyOverrideKeys('?palette=1e')).toEqual(['palette']);
+  });
+
+  it('is empty for a clean URL or unrelated params', () => {
+    expect(skyOverrideKeys('')).toEqual([]);
+    expect(skyOverrideKeys('?foo=bar')).toEqual([]);
+  });
+
+  it('ignores malformed values the store would reject anyway', () => {
+    // The note must only appear when the store would actually be overridden.
+    expect(skyOverrideKeys('?weather=tornado&at=99:99&day=someday&palette=9z')).toEqual([]);
   });
 });

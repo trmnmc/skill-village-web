@@ -354,3 +354,21 @@ describe('createThemeStore — daylight-corrected special days', () => {
     expect(blueness(s.current().tokens.sky1)).toBeGreaterThan(blueness(PALETTES['1f'].skies.day[1]));
   });
 });
+
+describe('createThemeStore — live URL overrides', () => {
+  it('re-reads the search string every resolve, so stripping a dev override takes effect on the next tick', () => {
+    let search = '?weather=snow';
+    const s = createThemeStore({ now: at('2026-08-18T12:00:00'), storage: mem(), search: () => search });
+    s.tick();
+    expect(s.current().weather.kind).toBe('snow');
+    search = '';
+    s.tick();
+    expect(s.current().weather.kind).toBe('clear');
+  });
+
+  it('still accepts a plain string for search, as every older test and caller passes', () => {
+    const s = createThemeStore({ now: at('2026-08-18T12:00:00'), storage: mem(), search: '?weather=fog' });
+    s.tick();
+    expect(s.current().weather.kind).toBe('fog');
+  });
+});

@@ -10,6 +10,46 @@ export interface MenuModel { rows: MenuRow[]; chips: MenuRow[]; timeChips?: Menu
 /** Palette-pin presets: 'auto' (follow the schedule) then every palette, by name. */
 export const PALETTE_IDS = Object.keys(PALETTES) as PaletteId[];
 
+/** Sky dev-override params — the ones theme/store.ts parseOverrides honours. */
+const OVERRIDE_KEYS = ['at', 'day', 'weather', 'palette'] as const;
+
+const VALID_DAYS = new Set(['sat', 'sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'weave']);
+
+/**
+ * Which sky dev-override params in a search string would actually override
+ * the store — mirrors parseOverrides's own validation, so the menu's
+ * "override active" note never shows for a malformed param the store
+ * ignores anyway. Sorted for a stable render/test order.
+ */
+export function skyOverrideKeys(search: string): string[] {
+  const params = new URLSearchParams(search);
+  const present: string[] = [];
+  const at = params.get('at');
+  if (at && /^([01]?\d|2[0-3]):[0-5]\d$/.test(at)) present.push('at');
+  const day = params.get('day');
+  if (day && VALID_DAYS.has(day)) present.push('day');
+  const weather = params.get('weather');
+  if (weather && (ALL_WEATHERS as string[]).includes(weather)) present.push('weather');
+  const palette = params.get('palette');
+  if (palette && Object.hasOwn(PALETTES, palette)) present.push('palette');
+  return present.sort();
+}
+
+/**
+ * The player's click beats the dev URL: strip every sky override so the menu
+ * takes effect immediately (the store re-reads location.search each tick).
+ * Overrides exist to LOAD a deterministic scene, not to deadlock the controls
+ * — leaving them armed after a click is how "the menu is broken" reports
+ * happen. replaceState keeps history clean (no back-button spam).
+ */
+function takeOverFromUrl(): void {
+  if (typeof window === 'undefined') return;
+  if (skyOverrideKeys(window.location.search).length === 0) return;
+  const url = new URL(window.location.href);
+  for (const key of OVERRIDE_KEYS) url.searchParams.delete(key);
+  window.history.replaceState(null, '', url);
+}
+
 const MODE_ROWS: { id: WeatherMode; label: string }[] = [
   { id: 'off', label: 'Off' },
   { id: 'pick', label: 'Pick' },
@@ -198,12 +238,20 @@ export function mountWeatherMenu(store: ThemeStore, container: HTMLElement): voi
         ? `<div id="weather-menu-journey-label">${journeyAt(Date.now()).a.label}</div>`
         : '';
 
+    // A dev URL loads a fixed sky; until the player clicks something here,
+    // the menu is overridden by it — say so instead of looking broken. Any
+    // click strips the params (takeOverFromUrl) and this line disappears.
+    const overridden = typeof window !== 'undefined' ? skyOverrideKeys(window.location.search) : [];
+    const overrideHtml = overridden.length
+      ? `<div id="weather-menu-override-note">dev URL is setting ${overridden.join(', ')} — click anything here to take over</div>`
+      : '';
     const noteHtml = note ? `<div id="weather-menu-note">${note}</div>` : '';
 
-    popover.innerHTML = `${paletteChipsHtml}${timeChipsHtml}${rowsHtml}${chipsHtml}${journeyHtml}${noteHtml}`;
+    popover.innerHTML = `${overrideHtml}${paletteChipsHtml}${timeChipsHtml}${rowsHtml}${chipsHtml}${journeyHtml}${noteHtml}`;
 
     popover.querySelectorAll<HTMLButtonElement>('#weather-menu-palette-chips .weather-menu-chip').forEach((el) => {
       el.addEventListener('click', () => {
+        takeOverFromUrl();
         const id = el.dataset.palette!;
         store.setPinnedPalette(id === 'auto' ? null : (id as PaletteId));
         store.tick();
@@ -213,6 +261,7 @@ export function mountWeatherMenu(store: ThemeStore, container: HTMLElement): voi
 
     popover.querySelectorAll<HTMLButtonElement>('#weather-menu-time-chips .weather-menu-chip').forEach((el) => {
       el.addEventListener('click', () => {
+        takeOverFromUrl();
         const id = el.dataset.time!;
         const minute = id === 'auto' ? null : TIME_CHIPS.find((c) => c.id === id)!.minute;
         store.setPinnedTime(minute);
@@ -223,6 +272,7 @@ export function mountWeatherMenu(store: ThemeStore, container: HTMLElement): voi
 
     popover.querySelectorAll<HTMLButtonElement>('.weather-menu-row').forEach((el) => {
       el.addEventListener('click', () => {
+        takeOverFromUrl();
         const m = el.dataset.mode as WeatherMode;
         note = '';
         // Bump the generation here (not inside teardownReal, which the
@@ -239,6 +289,7 @@ export function mountWeatherMenu(store: ThemeStore, container: HTMLElement): voi
 
     popover.querySelectorAll<HTMLButtonElement>('#weather-menu-chips .weather-menu-chip').forEach((el) => {
       el.addEventListener('click', () => {
+        takeOverFromUrl();
         store.setPicked(el.dataset.weather as WeatherKind);
         store.tick();
         render();

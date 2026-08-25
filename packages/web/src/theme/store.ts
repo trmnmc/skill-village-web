@@ -160,12 +160,17 @@ function parseOverrides(search: string): Overrides {
 export function createThemeStore(deps?: {
   now?: () => Date;
   storage?: Pick<Storage, 'getItem' | 'setItem'>;
-  search?: string;
+  search?: string | (() => string);
   real?: RealWeatherSource | null;
 }): ThemeStore {
   const now = deps?.now ?? (() => new Date());
   const storage = deps?.storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
-  const search = deps?.search ?? (typeof window !== 'undefined' ? window.location.search : '');
+  // Read live on every resolve, never captured: the gear menu strips dev
+  // overrides out of the URL when the player takes over, and a frozen copy
+  // would keep the menu muted until a full reload.
+  const searchDep = deps?.search;
+  const getSearch = (): string =>
+    typeof searchDep === 'function' ? searchDep() : searchDep ?? (typeof window !== 'undefined' ? window.location.search : '');
   // Mutable: setRealSource() overrides this at runtime (the gear menu's Real
   // mode wires up a live createRealWeatherSource here); deps.real is only the
   // initial value.
@@ -193,7 +198,7 @@ export function createThemeStore(deps?: {
 
   function resolve(n: Date): ResolvedTheme {
     const nowMs = n.getTime();
-    const ov = parseOverrides(search);
+    const ov = parseOverrides(getSearch());
 
     // Real solar anchors, used for both the clock timeline and the sun/moon arc.
     const reading = real?.latest() ?? null;
