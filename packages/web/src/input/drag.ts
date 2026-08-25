@@ -17,6 +17,7 @@ export interface DragTracker {
   move(clientX: number, clientY: number): void;
   release(clientX: number, clientY: number): GestureEnd;
   cancel(): void;
+  /** Null when no creature-press is live; `dragging` once past the slop. */
   current(): { targetId: string; dragging: boolean } | null;
 }
 

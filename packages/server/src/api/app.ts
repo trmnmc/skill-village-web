@@ -1,15 +1,24 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import type { CareVerb } from '@village/core';
 import { remaining, type LlmConfig } from '../llm/ledger.js';
 import { readEvents } from '../state/events.js';
 import type { Village } from '../village.js';
+import { parseChatRequest, lastUserMessage, chatCompletionJson, sseFrames } from '../robot/openai.js';
 
 const ALL_CARE_VERBS: CareVerb[] = ['pet', 'play', 'chat', 'train'];
 
 function isCareVerb(value: unknown): value is CareVerb {
   return typeof value === 'string' && (ALL_CARE_VERBS as string[]).includes(value);
 }
+
+/** Spec §5: the house is never mute, even with nobody home. */
+const EMPTY_HOUSE_LINE =
+  'Nobody lives in me yet. Open the village and drag a villager onto my little house, and I will be them.';
+const MOVED_AWAY_LINE =
+  'The villager who lived in me seems to have moved away. Drag someone new onto my house in the village.';
 
 /**
  * The whole API surface. Every route reads from the village runtime and every
@@ -29,6 +38,9 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
   const withMode = (state: ReturnType<Village['getState']>) => ({
     ...state,
     llm: { ...state.llm, mode: village.llmMode() },
+    // In-memory, not persisted: the presence glow wants "is he talking right
+    // now", which a saved timestamp from last week must never answer.
+    robotLastTurnAt: village.robotActivityAt(),
   });
 
   app.get('/api/state', async () => ({
@@ -163,6 +175,97 @@ export async function createApp(village: Village): Promise<FastifyInstance> {
       }
     });
     socket.on('close', unsubscribe);
+  });
+
+  const robotSnapshot = () => {
+    const s = village.getState();
+    const residentId = s.robot.residentId;
+    return {
+      residentId,
+      resident: residentId ? s.creatures[residentId] ?? null : null,
+      lastTurnAt: village.robotActivityAt(),
+    };
+  };
+
+  app.get('/api/robot', async () => robotSnapshot());
+
+  app.put<{ Body: { creatureId?: unknown } }>('/api/robot/resident', async (request, reply) => {
+    const creatureId = request.body?.creatureId;
+    if (creatureId !== null && typeof creatureId !== 'string') {
+      return reply.code(400).send({ error: 'creatureId must be a creature id string, or null to move the resident out' });
+    }
+    try {
+      await village.setRobotResident(creatureId);
+    } catch (error) {
+      return reply.code(404).send({ error: (error as Error).message });
+    }
+    return robotSnapshot();
+  });
+
+  // ---- The robot shim: an OpenAI-compatible brain for the voice gateway ----
+  // The gateway is configured with this server as its one "LLM provider"; it
+  // never knows claude exists. Which creature answers is looked up per turn,
+  // so a drag-and-drop swap changes the speaker mid-conversation (spec §5).
+
+  app.get('/v1/models', async () => ({
+    object: 'list',
+    data: [{ id: 'skill-village-resident', object: 'model', created: 0, owned_by: 'skill-village' }],
+  }));
+
+  app.post('/v1/chat/completions', async (request, reply) => {
+    // R1 fixture capture (spec §11): with the env set, every request body the
+    // real gateway sends is kept verbatim, to be committed as test fixtures.
+    const fixtureDir = process.env.SKILL_VILLAGE_ROBOT_FIXTURES;
+    if (fixtureDir) {
+      await mkdir(fixtureDir, { recursive: true });
+      await writeFile(
+        join(fixtureDir, `chat-${Date.now()}.json`),
+        JSON.stringify(request.body, null, 2),
+        'utf8',
+      );
+    }
+
+    const parsed = parseChatRequest(request.body);
+    const message = parsed ? lastUserMessage(parsed) : null;
+    if (!parsed || message === null) {
+      return reply
+        .code(400)
+        .send({ error: { message: 'Expected an OpenAI chat request with at least one user message.', type: 'invalid_request_error' } });
+    }
+
+    const residentId = village.getState().robot.residentId;
+    let text: string;
+    if (residentId === null) {
+      text = EMPTY_HOUSE_LINE;
+    } else {
+      try {
+        // Never mute (spec §5): chat() itself falls back to canned lines on
+        // model failure or budget exhaustion, so every path out of here talks.
+        text = (await village.chat(residentId, message, 'spoken')).text;
+      } catch {
+        // The resident's creature left the village while it lived here.
+        text = MOVED_AWAY_LINE;
+      }
+    }
+
+    const meta = {
+      id: `chatcmpl-${Date.now().toString(36)}`,
+      created: Math.floor(Date.now() / 1000),
+      model: parsed.model ?? 'skill-village-resident',
+    };
+
+    if (parsed.stream) {
+      reply.hijack();
+      reply.raw.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+      });
+      for (const frame of sseFrames(text, meta)) reply.raw.write(frame);
+      reply.raw.end();
+      return;
+    }
+    return chatCompletionJson(text, meta);
   });
 
   return app;

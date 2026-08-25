@@ -523,3 +523,76 @@ describe('ensurePersona (public prefetch surface)', () => {
     await expect(village.ensurePersona('skill:ghost')).resolves.toBeUndefined();
   });
 });
+
+describe('the robot house', () => {
+  const NOW = 1_000;
+
+  it('sets, persists, and evicts a resident, with events', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('code-review', skillFixture('code-review'));
+    village = await createVillage({ paths: sandbox.paths, now: () => NOW }); // no llm: defaults silent
+
+    await village.setRobotResident('skill:code-review');
+    expect(village.getState().robot.residentId).toBe('skill:code-review');
+
+    await village.setRobotResident(null);
+    expect(village.getState().robot.residentId).toBe(null);
+
+    const events = await readEvents(sandbox.paths);
+    const types = events.map((e) => e.type);
+    expect(types).toContain('robot-moved-in');
+    expect(types).toContain('robot-moved-out');
+  });
+
+  it('refuses an unknown resident', async () => {
+    sandbox = await makeSandbox();
+    village = await createVillage({ paths: sandbox.paths, now: () => NOW });
+    await expect(village.setRobotResident('skill:nobody')).rejects.toThrow('Creature not found');
+  });
+
+  it('the resident survives a reload', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('code-review', skillFixture('code-review'));
+    village = await createVillage({ paths: sandbox.paths, now: () => NOW });
+    await village.setRobotResident('skill:code-review');
+    await village.close();
+
+    const reopened = await createVillage({ paths: sandbox.paths, now: () => NOW }); // no llm: defaults silent
+    expect(reopened.getState().robot.residentId).toBe('skill:code-review');
+    await reopened.close();
+  });
+
+  it('spoken chat sends the spoken system prompt to the CLI', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('code-review', skillFixture('code-review'));
+    village = await createVillage({
+      paths: sandbox.paths,
+      now: () => NOW,
+      llmFactory: (hooks) => createLlmService({ command: fakeCliCommand('inspect'), ...hooks }),
+    });
+    await village.probeLlm();
+
+    const reply = await village.chat('skill:code-review', 'hello robot', 'spoken');
+    expect(reply.source).toBe('llm');
+    const seen = JSON.parse(reply.text);
+    expect(seen.system).toContain('speaking aloud');
+    expect(seen.system).not.toContain('speech bubble');
+  });
+
+  it('spoken chat stamps robot activity; bubble chat does not', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('code-review', skillFixture('code-review'));
+    village = await createVillage({
+      paths: sandbox.paths,
+      now: () => NOW,
+      llmFactory: (hooks) => createLlmService({ command: fakeCliCommand('inspect'), ...hooks }),
+    });
+    await village.probeLlm();
+
+    expect(village.robotActivityAt()).toBe(null);
+    await village.chat('skill:code-review', 'hi', 'bubble');
+    expect(village.robotActivityAt()).toBe(null);
+    await village.chat('skill:code-review', 'hi', 'spoken');
+    expect(village.robotActivityAt()).toBe(NOW);
+  });
+});

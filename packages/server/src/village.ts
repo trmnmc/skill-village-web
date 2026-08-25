@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { applyCare, chatSystemPrompt, type CareVerb, type Creature } from '@village/core';
+import { applyCare, chatSystemPrompt, spokenSystemPrompt, type CareVerb, type Creature } from '@village/core';
 import type { VillagePaths } from './config/paths.js';
 import { archiveFromShadow, updateShadow } from './bridge/archive.js';
 import { reconcile } from './bridge/reconcile.js';
@@ -68,8 +68,17 @@ export interface Village {
   /** Advance the simulation to the current time. */
   tick(): Promise<void>;
   care(creatureId: string, verb: CareVerb): Promise<void>;
-  /** Say something to a creature and hear back. Never rejects on a model failure. */
-  chat(creatureId: string, message: string): Promise<ChatReply>;
+  /**
+   * Say something to a creature and hear back. Never rejects on a model
+   * failure. `style` picks the voice and the closing instruction: `'bubble'`
+   * (the default) writes for the on-screen speech bubble; `'spoken'` writes
+   * for the physical robot's speaker and stamps `robotActivityAt()`.
+   */
+  chat(creatureId: string, message: string, style?: 'bubble' | 'spoken'): Promise<ChatReply>;
+  /** Move a creature into (or out of, with null) the physical robot. */
+  setRobotResident(creatureId: string | null): Promise<void>;
+  /** When the robot last spoke through this process, or null. In-memory only. */
+  robotActivityAt(): number | null;
   /**
    * Write the creature's personality card ahead of time, so the first chat
    * doesn't pay for two model calls in a row. Single-flight, quiet on every
@@ -149,6 +158,9 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
 
   /** One persona flight per creature, so a race cannot write two of them. */
   const pendingPersona = new Map<string, Promise<void>>();
+
+  /** Epoch millis of the last spoken (robot) turn this process served. */
+  let robotLastTurnAt: number | null = null;
 
   const refresh = async () => {
     const at = now();
@@ -289,7 +301,7 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
       await commit(next, [{ at, type: 'cared-for', creatureId, detail: verb }]);
     },
 
-    async chat(creatureId, message) {
+    async chat(creatureId, message, style = 'bubble') {
       const creature = state.creatures[creatureId];
       if (!creature) throw new Error(`Creature not found: ${creatureId}`);
 
@@ -303,11 +315,13 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
 
       // The card travels as the call's actual system prompt — not prepended
       // to the user turn, where it read as a footnote and the voice went mid.
-      const system = chatSystemPrompt(fresh);
+      const system = style === 'spoken' ? spokenSystemPrompt(fresh) : chatSystemPrompt(fresh);
       const prompt = [
         `The player says to you: "${message}"`,
         '',
-        'Reply as yourself, in one or two short sentences.',
+        style === 'spoken'
+          ? 'Reply as yourself, out loud, in one to three short sentences.'
+          : 'Reply as yourself, in one or two short sentences.',
       ].join('\n');
 
       // A request can throw as well as refuse: the service books its spend
@@ -329,6 +343,7 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
       const present = state.creatures[creatureId] ?? fresh;
       const cared: Creature = { ...present, stats: applyCare(present.stats, 'chat'), lastSeenAt: at };
       const text = reply.ok ? reply.text : pickCannedLine(cared);
+      if (style === 'spoken') robotLastTurnAt = at;
       await commit(
         {
           ...state,
@@ -342,6 +357,27 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
         [{ at, type: 'chatted', creatureId, detail: reply.ok ? 'llm' : 'canned' }],
       );
       return { text, source: reply.ok ? 'llm' : 'canned' };
+    },
+
+    async setRobotResident(creatureId) {
+      if (creatureId === state.robot.residentId) return;
+      const at = now();
+      const events: VillageEvent[] = [];
+      const previous = state.robot.residentId;
+      if (previous !== null) {
+        const old = state.creatures[previous];
+        events.push({ at, type: 'robot-moved-out', creatureId: previous, detail: old ? old.nickname || old.name : previous });
+      }
+      if (creatureId !== null) {
+        const creature = state.creatures[creatureId];
+        if (!creature) throw new Error(`Creature not found: ${creatureId}`);
+        events.push({ at, type: 'robot-moved-in', creatureId, detail: creature.nickname || creature.name });
+      }
+      await commit({ ...state, updatedAt: at, robot: { residentId: creatureId } }, events);
+    },
+
+    robotActivityAt() {
+      return robotLastTurnAt;
     },
 
     llmMode() {
