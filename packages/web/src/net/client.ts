@@ -56,6 +56,23 @@ export function connect(handlers: ClientHandlers): { close(): void } {
 }
 
 /**
+ * Throw out a sketch. A 409 means the cull was refused — a race with midnight
+ * or a double click — and the socket's next frame re-syncs us, so there is
+ * nothing to report and nothing to show the player.
+ */
+export async function postCull(sketchId: string): Promise<void> {
+  try {
+    await fetch('/api/gallery/cull', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sketchId }),
+    });
+  } catch {
+    // Offline. The village keeps running; the case is unchanged.
+  }
+}
+
+/**
  * Move a creature into (or out of, with null) the robot. True on success;
  * false is "the server said no or is away", which the caller treats as
  * "nothing happened" — the next state frame is the truth either way.

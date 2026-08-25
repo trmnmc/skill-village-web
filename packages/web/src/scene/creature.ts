@@ -26,15 +26,20 @@ import {
 } from '../motion/motion.js';
 import type { Spot } from '../layout/zones.js';
 
-/** Speech-bubble geometry, all in screen pixels. */
-const BUBBLE_SIZE = 13;
-const BUBBLE_PAD = 10;
+/**
+ * Speech-bubble geometry, all in screen pixels. Exported so `peddler.ts` and
+ * `case.ts` can build a bubble and wrapped text in the exact same box this
+ * file uses for a villager's — the peddler is a stranger, not a different
+ * rendering system.
+ */
+export const BUBBLE_SIZE = 13;
+export const BUBBLE_PAD = 10;
 /** Extra leading between wrapped lines; KAPLAY's own default is none. */
-const BUBBLE_LEADING = 4;
+export const BUBBLE_LEADING = 4;
 /** Where a long line breaks. A short quip never reaches it — see `say`. */
-const BUBBLE_MAX_W = 180;
+export const BUBBLE_MAX_W = 180;
 /** How far above the feet the bubble's tail sits — clear of the hover sign. */
-const BUBBLE_LIFT = 50;
+export const BUBBLE_LIFT = 50;
 
 /**
  * The creature's contact shadow. Fixed regardless of theme, unlike every
@@ -42,7 +47,7 @@ const BUBBLE_LIFT = 50;
  * scene's ambient tint (the `themed:creature` multiply on the sprite above
  * it) is what carries the day/night mood, not the shadow itself.
  */
-const SHADOW = '#5A4628';
+export const SHADOW = '#5A4628';
 
 /**
  * A token colour struck from the *current* resolved theme, for chrome that
@@ -128,7 +133,7 @@ export interface CreatureActor {
  * literally, cannot throw, and does not change the measured width: the parser
  * strips the backslashes before anything is laid out.
  */
-function escapeStyled(text: string): string {
+export function escapeStyled(text: string): string {
   return text.replace(/[\\[]/g, (ch) => `\\${ch}`);
 }
 
@@ -138,7 +143,7 @@ function escapeStyled(text: string): string {
  * so every glyph advances by the same width and the character budget for a
  * line follows exactly from the measured width of the run.
  */
-function splitLongWord(measure: (line: string) => number, word: string, maxWidth: number): string[] {
+export function splitLongWord(measure: (line: string) => number, word: string, maxWidth: number): string[] {
   const width = measure(word);
   if (width <= maxWidth) return [word];
   // Code points, not UTF-16 units: slicing a surrogate pair in half would
@@ -160,7 +165,7 @@ function splitLongWord(measure: (line: string) => number, word: string, maxWidth
  * hug it. Whitespace collapses on the way through: a reply's own newlines are
  * the LLM's paragraphing, not this bubble's.
  */
-function wrapToWidth(measure: (line: string) => number, text: string, maxWidth: number): string[] {
+export function wrapToWidth(measure: (line: string) => number, text: string, maxWidth: number): string[] {
   const lines: string[] = [];
   let line = '';
   for (const word of text.split(/\s+/)) {
@@ -180,7 +185,7 @@ function wrapToWidth(measure: (line: string) => number, text: string, maxWidth: 
 }
 
 /** Paint raw pixels onto a canvas so KAPLAY can load it as a sprite. */
-function toCanvas(baked: { w: number; h: number; data: Uint8ClampedArray }): HTMLCanvasElement {
+export function toCanvas(baked: { w: number; h: number; data: Uint8ClampedArray }): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = baked.w;
   canvas.height = baked.h;
@@ -203,7 +208,7 @@ function toCanvas(baked: { w: number; h: number; data: Uint8ClampedArray }): HTM
  * `ImageSource` (part of `LoadSpriteSrc`) includes `HTMLCanvasElement`
  * directly, so the canvas is passed straight in — no `toDataURL()` detour.
  */
-function loadSprite(k: KAPLAYCtx, name: string, canvas: HTMLCanvasElement): Promise<void> {
+export function loadSprite(k: KAPLAYCtx, name: string, canvas: HTMLCanvasElement): Promise<void> {
   return new Promise((resolve, reject) => {
     k.loadSprite(name, canvas).onLoad(() => resolve()).onError(reject);
   });

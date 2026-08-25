@@ -9,7 +9,7 @@ import kaplay, {
   type TextComp,
   type ZComp,
 } from 'kaplay';
-import type { Creature } from '@village/core/visual';
+import { PEDDLER_LINE, type Creature } from '@village/core/visual';
 import { TEXT_SS } from '../theme.js';
 import { themeStore } from '../theme/index.js';
 import type { Tokens, ResolvedTheme } from '../theme/store.js';
@@ -30,8 +30,11 @@ import {
   type Spot,
 } from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
+import { postCull } from '../net/client.js';
 import { ZOOM, screenToWorld, clampCamX } from './camera.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
+import { addPeddler, type PeddlerHandle } from './peddler.js';
+import { openCaseOverlay, type CaseOverlayHandle } from './case.js';
 import { sound } from '../sound/player.js';
 import { voiceParamsFor } from '../sound/voice.js';
 import { viewSoundEvents, type CreatureSnapshot } from '../sound/arrivals.js';
@@ -297,6 +300,11 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     panning = false;
   };
   k.onMouseDown('left', () => {
+    // The case overlay is a modal: while it is open, the world underneath
+    // must not silently pan behind it (the camera would otherwise jump the
+    // instant the overlay closes, from a drag the player never saw land on
+    // the world at all).
+    if (overlayHandle) return;
     if (tracker.current() === null) panning = true;
   });
   k.onMouseMove((_pos, delta) => {
@@ -389,6 +397,52 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
 
   const tracker = createDragTracker(CLICK_SLOP);
   let residentId: string | null = null;
+
+  // The peddler and its case overlay. Both null whenever nobody is visiting
+  // — `setView` is the only place either gets created, driven off
+  // `view.peddler`/`view.peddlerCase`. `peddlerOpening` guards the async
+  // window between `addPeddler` being called and its sprite load resolving,
+  // the same shape `generations` guards for creatures, but as a single flag
+  // rather than a per-id map: there is only ever one peddler.
+  let peddlerHandle: PeddlerHandle | null = null;
+  let peddlerOpening = false;
+  let overlayHandle: CaseOverlayHandle | null = null;
+
+  const closeOverlay = () => {
+    overlayHandle?.close();
+    overlayHandle = null;
+  };
+
+  /**
+   * Clicking the peddler: speak its one line in a bubble over its head (the
+   * existing speech-bubble treatment, via `peddlerHandle.say`), then open
+   * the case. Guarded against re-entry — a second click landing on the
+   * peddler's screen position while the modal already covers it (see the
+   * mousedown/panning guards below for why the world can still see a raw
+   * click there) must not stack a second overlay.
+   */
+  const openCase = () => {
+    if (overlayHandle || peddlerHandle === null) return;
+    const caseData = latestView?.peddlerCase;
+    if (!caseData) return;
+    peddlerHandle.say(PEDDLER_LINE);
+    void openCaseOverlay(k, caseData, { pixel: pixelFont, mono: monoFont }, async (id) => {
+      await postCull(id);
+      closeOverlay();
+    }).then((handle) => {
+      // The same staleness check `setView`'s own peddler spawn uses: the
+      // day can turn (an unjudged case never survives past midnight) while
+      // five portraits are still baking, and a case for a visitor who has
+      // already left must not appear.
+      if (!latestView?.peddler) { handle.close(); return; }
+      overlayHandle = handle;
+    });
+  };
+
+  // The most recent view, held only so `openCase` (called from a click
+  // handler with no view in hand) can read `peddlerCase` without village.ts
+  // threading it through the peddler's onClick closure.
+  let latestView: VillageView | null = null;
 
   // The drag ghost's game objects, live only while a drag is in progress. See
   // the onUpdate block below. Typed explicitly (rather than
@@ -515,6 +569,10 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // still be reporting a stale position during a fast gesture.
   k.canvas.addEventListener('mousedown', (event) => {
     if (event.button !== 0) return;
+    // The case overlay owns every click while it is open — see the pan
+    // guard above for why the world system has to step aside rather than
+    // also resolving a click on whatever villager happens to sit behind it.
+    if (overlayHandle) return;
     tracker.press(event.clientX, event.clientY, hoveredId);
   });
 
@@ -525,6 +583,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   window.addEventListener('mouseup', (event) => {
     if (event.button !== 0) return;
     const gesture = tracker.release(event.clientX, event.clientY);
+    if (overlayHandle) return;
     if (gesture.type === 'click') {
       const creature = known.get(gesture.targetId);
       if (creature) opts.onCreatureClick?.(creature);
@@ -596,6 +655,33 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   return {
     k,
     setView(view) {
+      latestView = view;
+
+      // The peddler: appears/disappears with `view.peddler`, exactly the
+      // presence/absence rule creature actors follow for `seen`/`known`
+      // below, just for a single non-creature actor rather than a map of
+      // them. `peddlerOpening` covers the async gap between the call and
+      // the sprite load resolving — a view update landing mid-load (a
+      // server tick between "the peddler arrived" and the sprite finishing)
+      // must not start a second one.
+      if (view.peddler && !peddlerHandle && !peddlerOpening) {
+        peddlerOpening = true;
+        void addPeddler(k, { pixel: pixelFont, mono: monoFont }, openCase)
+          .then((handle) => {
+            peddlerOpening = false;
+            // The day could have already turned again while the sprite
+            // loaded (an unjudged case never survives past midnight) — a
+            // stale peddler must not linger onto a day that no longer wants
+            // one.
+            if (!latestView?.peddler) { handle.destroy(); return; }
+            peddlerHandle = handle;
+          });
+      } else if (!view.peddler && peddlerHandle) {
+        peddlerHandle.destroy();
+        peddlerHandle = null;
+        closeOverlay();
+      }
+
       counter.text = `${view.creatures.length} villagers`;
       const llm = view.llm;
       meter.text = llm
