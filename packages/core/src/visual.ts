@@ -18,3 +18,7 @@ export * from './appearance/palette.js';
 export * from './gallery/types.js';
 export * from './gallery/validate.js';
 export * from './gallery/peddler.js';
+
+// refill.ts imports only types — no node builtins, no parsers — so it is
+// browser-safe. The web needs MIN_JUDGEABLE_CASE from here.
+export * from './gallery/refill.js';
