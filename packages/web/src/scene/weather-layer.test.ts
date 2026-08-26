@@ -14,6 +14,13 @@ import {
   CLOUD_LAYERS,
   OVERCAST_CLOUD_CLUSTERS,
   FAIR_CLOUD_CLUSTERS,
+  STORM_CLOUD_CLUSTERS,
+  strikeOrigin,
+  driftedClusterRects,
+  CLOUD_DRIFT_PERIOD,
+  CLOUD_MAX_EXTENT,
+  CLOUD_DRIFT_LEFT_MARGIN,
+  BILLOW_CEILING,
   hash,
   strikeParams,
   activeStrike,
@@ -371,11 +378,14 @@ describe('overcastCloudSpecs', () => {
     expect(overcastCloudSpecs('cloudy', false, 3.2, 120, 800, 180)).toEqual(overcastCloudSpecs('cloudy', false, 3.2, 120, 800, 180));
   });
 
-  it('returns 8 rects: the reference\'s 4 clusters, the two big ones grown a belly strip', () => {
-    expect(overcastCloudSpecs('cloudy', false, 0, 0, 480, 182)).toHaveLength(8);
+  it('materializes every rect of the four puff clusters', () => {
+    const perCluster = OVERCAST_CLOUD_CLUSTERS.map((c) => c.rects.length);
+    expect(overcastCloudSpecs('cloudy', false, 0, 0, 480, 182)).toHaveLength(
+      perCluster.reduce((a, b) => a + b, 0),
+    );
   });
 
-  it('keeps the reference tone per kind as the body colour (far clusters are single body rects)', () => {
+  it('keeps the reference tone per kind as the body colour (rect 0 is each cluster\'s body slab)', () => {
     const toneOf = (kind: 'cloudy' | 'rain' | 'snow' | 'fog') => overcastCloudSpecs(kind, false, 0, 0, 480, 182)[0]!.color;
     expect(toneOf('cloudy')).toBe('#B4BABE');
     expect(toneOf('rain')).toBe('#9AA6AE');
@@ -383,11 +393,13 @@ describe('overcastCloudSpecs', () => {
     expect(toneOf('fog')).toBe('#CFCCC0');
   });
 
-  it('shades each near cluster in three tones: a lit cap, the body, a darker belly', () => {
+  it('shades each cluster in three gentle tones: a lit cap, the body, a darker belly', () => {
     const colours = new Set(overcastCloudSpecs('cloudy', false, 0, 0, 480, 182).map((b) => b.color));
     expect(colours.size).toBe(3);
-    expect(colours.has(mix('#B4BABE', '#FFFFFF', 0.3))).toBe(true);
-    expect(colours.has(mix('#B4BABE', '#1A2028', 0.28))).toBe(true);
+    // 0.16/0.15 mixes — soft steps, down from the reference's 0.3/0.28
+    // after the playtest called the old jumps "gradients too extreme".
+    expect(colours.has(mix('#B4BABE', '#FFFFFF', 0.16))).toBe(true);
+    expect(colours.has(mix('#B4BABE', '#1A2028', 0.15))).toBe(true);
   });
 
   it('mixes every tone 50% toward #1A2028 at night, extending the reference\'s body rule to the caps and bellies', () => {
@@ -410,15 +422,18 @@ describe('overcastCloudSpecs', () => {
     // Shifts are measured modulo the 700 ref-px drift period — a pan can
     // carry a cloud across the wrap boundary, which reads as re-entering
     // from the other side, not as a huge shift.
-    const period = mapX(700, 480);
+    const period = mapX(CLOUD_DRIFT_PERIOD, 480);
     const shift = (a: number, b: number) => {
       const d = Math.abs(a - b);
       return Math.min(d, period - d);
     };
     const still = overcastCloudSpecs('cloudy', false, 0, 0, 480, 182);
     const panned = overcastCloudSpecs('cloudy', false, 0, 400, 480, 182);
-    const farShift = shift(panned[0]!.x, still[0]!.x); // far cluster body
-    const nearShift = shift(panned[2]!.x, still[2]!.x); // near cluster body
+    // Output is far-layer-first; the near block starts after every far rect.
+    const nearStart = OVERCAST_CLOUD_CLUSTERS.filter((c) => c.layer === 0)
+      .reduce((n, c) => n + c.rects.length, 0);
+    const farShift = shift(panned[0]!.x, still[0]!.x); // far cluster body slab
+    const nearShift = shift(panned[nearStart]!.x, still[nearStart]!.x); // near cluster body slab
     expect(farShift).toBeCloseTo(mapX(400 * CLOUD_LAYERS[0]!.parallax, 480), 4);
     expect(nearShift).toBeCloseTo(mapX(400 * CLOUD_LAYERS[2]!.parallax, 480), 4);
     expect(nearShift).toBeGreaterThan(farShift);
@@ -441,14 +456,17 @@ describe('overcastCloudSpecs', () => {
   });
 
   it('billows upward: the authored size is the floor, and clouds swell well past it', () => {
-    const at = (t: number) => overcastCloudSpecs('cloudy', false, t, 0, 480, 182)[2]!;
+    const far = OVERCAST_CLOUD_CLUSTERS.filter((c) => c.layer === 0);
+    const nearStart = far.reduce((n, c) => n + c.rects.length, 0);
+    const floor = OVERCAST_CLOUD_CLUSTERS.find((c) => c.layer === 2)!.rects[0]!.w;
+    const at = (t: number) => overcastCloudSpecs('cloudy', false, t, 0, 480, 182)[nearStart]!;
     const widths = Array.from({ length: 40 }, (_, i) => at(i * 2.7).w);
     for (const w of widths) {
-      expect(w).toBeGreaterThanOrEqual(96 * 0.999); // never smaller than authored (96 ref px)
-      expect(w).toBeLessThan(96 * 1.4); // ...and swelling stays a swell, not a bloom
+      expect(w).toBeGreaterThanOrEqual(floor * 0.999); // never smaller than authored
+      expect(w).toBeLessThan(floor * BILLOW_CEILING * 1.02); // ...and swelling stays a swell, not a bloom
     }
     // "Bigger sometimes" is real: the swell visits well above the floor.
-    expect(Math.max(...widths)).toBeGreaterThan(96 * 1.2);
+    expect(Math.max(...widths)).toBeGreaterThan(floor * 1.2);
     // One frame at 60fps changes the width imperceptibly — billow never jitters.
     expect(Math.abs(at(10 + 1 / 60).w - at(10).w)).toBeLessThan(0.2);
   });
@@ -456,11 +474,13 @@ describe('overcastCloudSpecs', () => {
   it('scales intra-cluster offsets and sizes by fy(horizonY) on both axes (class-2 cluster)', () => {
     const base = overcastCloudSpecs('cloudy', false, 0, 0, 480, 182); // fy(182) = 1
     const doubled = overcastCloudSpecs('cloudy', false, 0, 0, 480, 364); // fy(364) = 2
-    // Index 2 is the first near cluster's body, index 3 its lit cap. Every
-    // intra-cluster distance — authored dx plus the billow sway — doubles
-    // exactly when fy doubles, as do the rect sizes.
-    const baseOffset = base[3]!.x - base[2]!.x;
-    const doubledOffset = doubled[3]!.x - doubled[2]!.x;
+    // The near block's slab and its first lobe step: every intra-cluster
+    // distance — authored dx plus the billow sway — doubles exactly when fy
+    // doubles, as do the rect sizes.
+    const nearStart = OVERCAST_CLOUD_CLUSTERS.filter((c) => c.layer === 0)
+      .reduce((n, c) => n + c.rects.length, 0);
+    const baseOffset = base[nearStart + 1]!.x - base[nearStart]!.x;
+    const doubledOffset = doubled[nearStart + 1]!.x - doubled[nearStart]!.x;
     expect(doubledOffset).toBeCloseTo(baseOffset * 2, 6);
     expect(doubled[2]!.w).toBeCloseTo(base[2]!.w * 2, 6);
     expect(doubled[2]!.h).toBeCloseTo(base[2]!.h * 2, 6);
@@ -473,7 +493,8 @@ describe('fairCloudSpecs', () => {
   });
 
   it('fills the sky in full day: every layer, day-only clusters included', () => {
-    expect(fairCloudSpecs('day', 0, 0, 480, 182, 0)).toHaveLength(12);
+    const total = FAIR_CLOUD_CLUSTERS.reduce((n, c) => n + c.rects.length, 0);
+    expect(fairCloudSpecs('day', 0, 0, 480, 182, 0)).toHaveLength(total);
   });
 
   it('withholds the day-only cluster outside full day', () => {
@@ -528,59 +549,78 @@ describe('fairCloudSpecs', () => {
   });
 
   it('billows upward from the authored floor, never below it', () => {
+    // The near cluster draws last; its body slab leads its block.
+    const near = FAIR_CLOUD_CLUSTERS.find((c) => c.layer === 2)!;
+    const floor = near.rects[0]!.w;
     const widths = Array.from({ length: 40 }, (_, i) =>
-      fairCloudSpecs('day', i * 2.7, 0, 480, 182, 0).at(-3)!.w,
+      fairCloudSpecs('day', i * 2.7, 0, 480, 182, 0).at(-near.rects.length)!.w,
     );
     for (const w of widths) {
-      expect(w).toBeGreaterThanOrEqual(40 * 0.999); // the near cluster's 40 ref-px body
-      expect(w).toBeLessThan(40 * 1.4);
+      expect(w).toBeGreaterThanOrEqual(floor * 0.999); // the near cluster's own slab
+      expect(w).toBeLessThan(floor * BILLOW_CEILING * 1.02);
     }
-    expect(Math.max(...widths)).toBeGreaterThan(40 * 1.2);
+    expect(Math.max(...widths)).toBeGreaterThan(floor * 1.2);
   });
 });
 
-describe('cloud geometry tables (transcription fidelity)', () => {
-  // Verbatim from the reference painter (village-scene.js lines 300–308).
-  // These tables drive every overcast/fair-weather cloud shape on screen; a
-  // transposed digit here would still pass every other test in this file
-  // (they only check drift/scale *behavior*, not the literal numbers), so
-  // pin the exact rects directly. The volumetric engine's belly strips and
-  // extra ambient clusters are design additions with no reference literal to
-  // pin — the pins below cover exactly the members ported verbatim from the
-  // painter (its `else if (overcast)` blobs and the two fair-weather puffs).
+describe('cloud geometry tables (puff invariants)', () => {
+  // The reference's verbatim slab geometry (village-scene.js lines 300–308)
+  // was retired after the first human storm playtest — flat 15%-height slabs
+  // read as shelves, not clouds. Every cluster is now generated through
+  // `puffRects`, so instead of pinning literals these pin the invariants the
+  // generator must keep: a flat belly base, lit caps above the body mass,
+  // cumulus proportions, and extents inside the drift window's seam margin.
 
-  /** Flattens a cluster's non-belly rects into (baseX+dx, y, w, h) tuples, in raw reference space. */
-  function flattenVerbatim(cluster: {
-    baseX: number;
-    rects: { dx: number; y: number; w: number; h: number; tone: string }[];
-  }) {
-    return cluster.rects.filter((r) => r.tone !== 'belly').map((r) => [cluster.baseX + r.dx, r.y, r.w, r.h]);
-  }
+  const ALL_CLUSTERS = [...OVERCAST_CLOUD_CLUSTERS, ...FAIR_CLOUD_CLUSTERS, ...STORM_CLOUD_CLUSTERS];
 
-  it('OVERCAST_CLOUD_CLUSTERS keeps the reference blob geometry exactly (village-scene.js lines 300–303)', () => {
-    expect(OVERCAST_CLOUD_CLUSTERS.flatMap(flattenVerbatim)).toEqual([
-      [14, 18, 96, 14],
-      [32, 10, 52, 10],
-      [150, 40, 74, 12],
-      [248, 14, 112, 16],
-      [270, 6, 62, 10],
-      [384, 42, 82, 12],
-    ]);
+  it('every cluster carries all three tone roles', () => {
+    for (const c of ALL_CLUSTERS) {
+      const tones = new Set(c.rects.map((r) => r.tone));
+      expect(tones.has('body')).toBe(true);
+      expect(tones.has('lit')).toBe(true);
+      expect(tones.has('belly')).toBe(true);
+    }
   });
 
-  it('the fair always-on cluster keeps the reference puff exactly (village-scene.js line 307)', () => {
-    expect(flattenVerbatim(FAIR_CLOUD_CLUSTERS[0]!)).toEqual([
-      [70, 42, 40, 10],
-      [80, 34, 24, 8],
-    ]);
+  it('rect 0 is the body slab — spec builders key a cluster\'s kind tone off it', () => {
+    for (const c of ALL_CLUSTERS) expect(c.rects[0]!.tone).toBe('body');
   });
 
-  it('the fair day-only cluster keeps the reference puff exactly (village-scene.js line 308)', () => {
-    const dayOnly = FAIR_CLOUD_CLUSTERS.find((c) => c.dayOnly)!;
-    expect(flattenVerbatim(dayOnly)).toEqual([
-      [270, 66, 34, 9],
-      [278, 59, 20, 7],
-    ]);
+  it('the belly base is the lowest rect and every lit cap sits above the slab top', () => {
+    for (const c of ALL_CLUSTERS) {
+      const slab = c.rects[0]!;
+      const bottoms = c.rects.map((r) => r.y + r.h);
+      const belly = c.rects.filter((r) => r.tone === 'belly');
+      expect(Math.max(...belly.map((r) => r.y + r.h))).toBe(Math.max(...bottoms));
+      for (const cap of c.rects.filter((r) => r.tone === 'lit')) {
+        expect(cap.y + cap.h).toBeLessThanOrEqual(slab.y);
+      }
+    }
+  });
+
+  it('reads as cumulus, not contrail: total height at least 30% of width', () => {
+    for (const c of ALL_CLUSTERS) {
+      const top = Math.min(...c.rects.map((r) => r.y));
+      const bottom = Math.max(...c.rects.map((r) => r.y + r.h));
+      const width = Math.max(...c.rects.map((r) => r.dx + r.w));
+      expect((bottom - top) / width).toBeGreaterThanOrEqual(0.3);
+    }
+  });
+
+  it('stays inside the drift window seam margin: no authored extent past CLOUD_MAX_EXTENT', () => {
+    for (const c of ALL_CLUSTERS) {
+      expect(Math.max(...c.rects.map((r) => r.dx + r.w))).toBeLessThanOrEqual(CLOUD_MAX_EXTENT);
+    }
+  });
+
+  it('the drift window clears a fully billowed cluster on both sides', () => {
+    // The seam invariant itself, not just its consequence: a cluster that
+    // wraps must be entirely off-screen at both bounds, or a visible cloud
+    // teleports across the sky in one frame.
+    const sway = 3;
+    const maxDrawn = CLOUD_MAX_EXTENT * BILLOW_CEILING + sway;
+    expect(CLOUD_DRIFT_LEFT_MARGIN).toBeGreaterThanOrEqual(maxDrawn);
+    expect(CLOUD_DRIFT_PERIOD - CLOUD_DRIFT_LEFT_MARGIN).toBeGreaterThanOrEqual(480);
   });
 
   it('never teleports a visible cluster: at the wrap seam every rect is fully off-screen', () => {
@@ -674,6 +714,53 @@ describe('strikeParams', () => {
   });
 });
 
+describe('strikeOrigin', () => {
+  /** The storm's own materialized blobs, as the painter builds them. */
+  const blobs = (t = 0, camRefX = 0) =>
+    driftedClusterRects(STORM_CLOUD_CLUSTERS, 3, t, camRefX, 480, 182);
+
+  it('is born from a real cloud, not a fixed height in clear air', () => {
+    const o = strikeOrigin(blobs(), 0.5, 480, 620, 182);
+    expect(o.fromCloud).toBe(true);
+    const slabs = blobs().filter((b) => b.slab && b.layerIndex >= 1);
+    // The origin is exactly some near/mid slab's bottom-centre.
+    expect(
+      slabs.some((b) => Math.abs(b.x + b.w / 2 - o.x) < 1e-6 && Math.abs(b.y + b.h - o.y) < 1e-6),
+    ).toBe(true);
+  });
+
+  it('picks the cloud nearest the slot\'s intended sky position', () => {
+    const bs = blobs();
+    const slabs = bs.filter((b) => b.slab && b.layerIndex >= 1);
+    for (const x01 of [0.15, 0.4, 0.6, 0.85]) {
+      const o = strikeOrigin(bs, x01, 480, 620, 182);
+      const best = Math.min(...slabs.map((b) => Math.abs(b.x + b.w / 2 - x01 * 480)));
+      expect(Math.abs(o.x - x01 * 480)).toBeCloseTo(best, 6);
+    }
+  });
+
+  it('never draws from the far haze layer — a bolt behind the deck reads as fog', () => {
+    const bs = blobs();
+    const farSlabs = bs.filter((b) => b.slab && b.layerIndex === 0);
+    for (const x01 of [0.15, 0.5, 0.85]) {
+      const o = strikeOrigin(bs, x01, 480, 620, 182);
+      expect(farSlabs.some((b) => Math.abs(b.y + b.h - o.y) < 1e-6 && Math.abs(b.x + b.w / 2 - o.x) < 1e-6)).toBe(false);
+    }
+  });
+
+  it('follows its cloud as the sky drifts, rather than sitting at a fixed x', () => {
+    const xs = [0, 4, 8, 12].map((t) => strikeOrigin(blobs(t), 0.5, 480, 620, 182).x);
+    expect(new Set(xs).size).toBeGreaterThan(1);
+  });
+
+  it('falls back to the raw anchor when no candidate cloud is on screen', () => {
+    const o = strikeOrigin([], 0.5, 480, 620, 182);
+    expect(o.fromCloud).toBe(false);
+    expect(o.x).toBeCloseTo(240, 10);
+    expect(o.y).toBeCloseTo(mapY(38, 182, 620), 10);
+  });
+});
+
 describe('activeStrike', () => {
   it('is deterministic: the same tSec always yields the same strike state', () => {
     expect(activeStrike(53.4)).toEqual(activeStrike(53.4));
@@ -681,7 +768,7 @@ describe('activeStrike', () => {
 
   it('matches the seeded-scheduler formula exactly inside a strike window', () => {
     const slot = 0;
-    const start = slot * 32 + 2 + hash(slot, 0) * 24;
+    const start = slot * 64 + 2 + hash(slot, 0) * 56;
     const dtInside = 0.35;
     const strike = activeStrike(start + dtInside);
     expect(strike).not.toBeNull();
@@ -693,7 +780,7 @@ describe('activeStrike', () => {
 
   it('is null just before a strike window starts and once its 0.7s duration elapses', () => {
     const slot = 3;
-    const start = slot * 32 + 2 + hash(slot, 0) * 24;
+    const start = slot * 64 + 2 + hash(slot, 0) * 56;
     expect(activeStrike(start - 0.001)).toBeNull();
     expect(activeStrike(start + 0.6999)).not.toBeNull();
     // A tiny margin past the exact 0.7s boundary avoids float-cancellation
@@ -701,15 +788,15 @@ describe('activeStrike', () => {
     expect(activeStrike(start + 0.701)).toBeNull();
   });
 
-  it('produces exactly one ~0.7s strike window per 32s slot (cadence)', () => {
-    const stepsPerSlot = 3200; // 0.01s resolution
+  it('produces exactly one ~0.7s strike window per 64s slot (cadence)', () => {
+    const stepsPerSlot = 6400; // 0.01s resolution
     for (let slot = 0; slot < 5; slot++) {
       let activeSamples = 0;
       for (let i = 0; i < stepsPerSlot; i++) {
-        const t = slot * 32 + (i / stepsPerSlot) * 32;
+        const t = slot * 64 + (i / stepsPerSlot) * 64;
         if (activeStrike(t)) activeSamples++;
       }
-      // 0.7s of 32s at 0.01s resolution is ~70 samples; generous slack
+      // 0.7s of 64s at 0.01s resolution is ~70 samples; generous slack
       // absorbs the boundary sample.
       expect(activeSamples).toBeGreaterThan(60);
       expect(activeSamples).toBeLessThan(80);
@@ -720,8 +807,8 @@ describe('activeStrike', () => {
     for (let slot = 0; slot < 5; slot++) {
       let runs = 0;
       let wasActive = false;
-      for (let i = 0; i <= 3200; i++) {
-        const t = slot * 32 + (i / 3200) * 32;
+      for (let i = 0; i <= 6400; i++) {
+        const t = slot * 64 + (i / 6400) * 64;
         const active = activeStrike(t) !== null;
         if (active && !wasActive) runs++;
         wasActive = active;

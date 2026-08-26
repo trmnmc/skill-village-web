@@ -322,6 +322,72 @@ interface CloudClusterDef {
   rects: CloudRectDef[];
 }
 
+/**
+ * The cloud drift wrap window. A cluster's anchor wraps over
+ * `CLOUD_DRIFT_PERIOD` into `[-LEFT_MARGIN, PERIOD - LEFT_MARGIN)`, and both
+ * bounds have to clear the screen (0..480 ref) by more than a fully billowed
+ * cluster's extent, or a still-visible cloud teleports across the sky at the
+ * seam. Widened from 700/160 when the clouds grew: the margin must exceed
+ * `CLOUD_MAX_EXTENT * BILLOW_CEILING`, and `PERIOD - LEFT_MARGIN >= 480`.
+ */
+export const CLOUD_DRIFT_PERIOD = 820;
+export const CLOUD_DRIFT_LEFT_MARGIN = 260;
+/** Widest authored cluster extent (`dx + w`) any table may use — pinned by the suite. */
+export const CLOUD_MAX_EXTENT = 170;
+/** `billow`'s ceiling: authored size x this is the widest a rect ever draws. */
+export const BILLOW_CEILING = 1.35;
+
+/** One lobe of a stepped-dome cumulus: its left offset in the cluster, its width, and how far it rises above the body slab. */
+export interface PuffLobe {
+  dx: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * A cumulus authored as lobes over a flat base, generated into the stepped
+ * rect stack the painter draws. This replaced the reference's slab clouds
+ * (one long body rect + a lit strip, ~15% height-to-width) after the first
+ * human storm playtest read them as flat shelves: a cloud here is a flat
+ * dark belly, a body slab, and domed lobes rising in narrowing steps with a
+ * lit cap set slightly sun-side — proportions closer to 45% tall. Emit order
+ * is paint order: slab first (callers key a cluster's kind tone off rect 0),
+ * then lobe steps, under-lobe shadow strips, lit caps, belly.
+ */
+export function puffRects(baseW: number, baseY: number, slabH: number, lobes: PuffLobe[]): CloudRectDef[] {
+  const even = (v: number) => Math.max(2, Math.round(v / 2) * 2);
+  const rects: CloudRectDef[] = [{ dx: 0, y: baseY, w: baseW, h: slabH, tone: 'body' }];
+  for (const l of lobes) {
+    // Step count scales with lobe height: a tall cumulus domes over 5 narrowing
+    // steps instead of stepping in three coarse jumps. Widths follow a
+    // convex profile so the silhouette bulges out low and tucks in at the
+    // crown — the shape that reads as mass rather than as a ziggurat.
+    const steps = Math.max(2, Math.min(5, Math.round(l.h / 6)));
+    let y = baseY;
+    for (let i = 0; i < steps; i++) {
+      const h = even(l.h / steps);
+      const w = even(l.w * (1 - 0.58 * Math.pow((i + 1) / steps, 1.45)));
+      y -= h;
+      rects.push({ dx: l.dx + even((l.w - w) * 0.42), y, w, h, tone: i === steps - 1 ? 'lit' : 'body' });
+    }
+  }
+  for (const l of lobes) rects.push({ dx: l.dx + 2, y: baseY, w: l.w - 4, h: 2, tone: 'belly' });
+  rects.push({ dx: 4, y: baseY + slabH, w: baseW - 8, h: 4, tone: 'belly' });
+  return rects;
+}
+
+function puffCluster(
+  baseX: number,
+  layer: number,
+  baseW: number,
+  baseY: number,
+  slabH: number,
+  lobes: PuffLobe[],
+  dayOnly?: boolean,
+): CloudClusterDef {
+  return { baseX, layer, ...(dayOnly ? { dayOnly: true } : {}), rects: puffRects(baseW, baseY, slabH, lobes) };
+}
+
 /** One cloud depth layer. Everything rises together toward the camera: near clouds follow the pan harder, drift faster, and draw brighter. */
 export interface CloudLayer {
   /** Fraction of the camera's x this layer tracks — the parallax that makes the sky read deep. */
@@ -337,6 +403,20 @@ export const CLOUD_LAYERS: readonly CloudLayer[] = [
   { parallax: 0.18, speed: 1, alpha: 0.8 },
   { parallax: 0.3, speed: 1.6, alpha: 1 },
 ];
+
+/** A materialized cloud rect in screen space, with the provenance the storm
+ * painter and the lightning need: which depth layer it belongs to, and
+ * whether it is its cluster's body slab (the rect a bolt is born from). */
+export interface CloudBlob {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  tone: CloudTone;
+  layer: CloudLayer;
+  layerIndex: number;
+  slab: boolean;
+}
 
 export interface CloudBlobSpec {
   x: number;
@@ -375,23 +455,23 @@ function billow(tSec: number, seed: number): number {
  * read as volume instead of a backdrop. Output is ordered far layer first,
  * so painting in order stacks near clouds over far ones.
  */
-function driftedClusterRects(
+export function driftedClusterRects(
   clusters: readonly CloudClusterDef[],
   baseSpeed: number,
   tSec: number,
   camRefX: number,
   width: number,
   horizonY: number,
-): { x: number; y: number; w: number; h: number; tone: CloudTone; layer: CloudLayer }[] {
+): CloudBlob[] {
   const s = fy(horizonY);
-  const out: { x: number; y: number; w: number; h: number; tone: CloudTone; layer: CloudLayer }[] = [];
+  const out: CloudBlob[] = [];
   const ordered = [...clusters].sort((a, b) => a.layer - b.layer);
   for (const cluster of ordered) {
     const layer = CLOUD_LAYERS[cluster.layer]!;
     const driftedRefX = wrap(
-      cluster.baseX + 700 - tSec * baseSpeed * layer.speed - camRefX * layer.parallax,
-      700,
-    ) - 160;
+      cluster.baseX + CLOUD_DRIFT_PERIOD - tSec * baseSpeed * layer.speed - camRefX * layer.parallax,
+      CLOUD_DRIFT_PERIOD,
+    ) - CLOUD_DRIFT_LEFT_MARGIN;
     const anchorX = mapX(driftedRefX, width);
     cluster.rects.forEach((r, ri) => {
       const seed = frac(cluster.baseX * 0.317 + ri * 0.611);
@@ -409,6 +489,8 @@ function driftedClusterRects(
         h: r.h * bh * s,
         tone: r.tone,
         layer,
+        layerIndex: cluster.layer,
+        slab: ri === 0,
       });
     });
   }
@@ -416,31 +498,19 @@ function driftedClusterRects(
 }
 
 /**
- * The reference's four overcast clusters (village-scene.js lines 300–303) —
- * geometry verbatim, each grown a tone role and a depth layer: the two big
- * low-y clusters read as the near deck (lit caps, new belly strips), the two
- * small high-y ones hang back as the far layer. Exported so the test suite
- * can pin the reference-verbatim members against the painter's literals.
+ * The overcast sky's four clusters. The anchors and depth layers survive
+ * from the reference (village-scene.js lines 300–303) but the geometry is
+ * post-playtest: `puffRects` cumulus domes at ~45% height-to-width, replacing
+ * the reference's verbatim slabs after they read as flat shelves on screen.
+ * Extents stay ≤ CLOUD_MAX_EXTENT so a fully billowed cluster still fits the
+ * drift window's seam margin (see `driftedClusterRects`). Exported for the
+ * suite.
  */
 export const OVERCAST_CLOUD_CLUSTERS: readonly CloudClusterDef[] = [
-  {
-    baseX: 14, layer: 2,
-    rects: [
-      { dx: 0, y: 18, w: 96, h: 14, tone: 'body' },
-      { dx: 18, y: 10, w: 52, h: 10, tone: 'lit' },
-      { dx: 8, y: 32, w: 78, h: 4, tone: 'belly' },
-    ],
-  },
-  { baseX: 150, layer: 0, rects: [{ dx: 0, y: 40, w: 74, h: 12, tone: 'body' }] },
-  {
-    baseX: 248, layer: 2,
-    rects: [
-      { dx: 0, y: 14, w: 112, h: 16, tone: 'body' },
-      { dx: 22, y: 6, w: 62, h: 10, tone: 'lit' },
-      { dx: 10, y: 30, w: 92, h: 4, tone: 'belly' },
-    ],
-  },
-  { baseX: 384, layer: 0, rects: [{ dx: 0, y: 42, w: 82, h: 12, tone: 'body' }] },
+  puffCluster(14, 2, 148, 34, 16, [{ dx: 8, w: 40, h: 18 }, { dx: 54, w: 60, h: 32 }, { dx: 118, w: 22, h: 12 }]),
+  puffCluster(150, 0, 88, 46, 10, [{ dx: 8, w: 30, h: 12 }, { dx: 44, w: 36, h: 16 }]),
+  puffCluster(248, 2, 160, 30, 16, [{ dx: 10, w: 44, h: 20 }, { dx: 60, w: 64, h: 34 }, { dx: 130, w: 22, h: 12 }]),
+  puffCluster(384, 0, 96, 48, 10, [{ dx: 10, w: 32, h: 13 }, { dx: 48, w: 40, h: 18 }]),
 ];
 
 /** Base (day) tone per overcast kind, verbatim from the reference's `cTone` ternary (`storm` excluded — it keeps its own deck clouds, no blobs). */
@@ -448,9 +518,12 @@ const OVERCAST_TONE: Record<'cloudy' | 'rain' | 'snow' | 'fog', string> = {
   cloudy: '#B4BABE', rain: '#9AA6AE', snow: '#C8D0D6', fog: '#CFCCC0',
 };
 
-/** A kind's body tone shaded into the three-tone set that reads as mass. */
+/** A kind's body tone shaded into the three-tone set that reads as mass.
+ * Gentle steps (0.16/0.15, down from 0.3/0.28): the playtest read the old
+ * jumps as "gradients too extreme" — volume should come from the stepped
+ * silhouette, with tone doing the last 20%. */
 function cloudTones(body: string): Record<CloudTone, string> {
-  return { lit: mix(body, '#FFFFFF', 0.3), body, belly: mix(body, '#1A2028', 0.28) };
+  return { lit: mix(body, '#FFFFFF', 0.16), body, belly: mix(body, '#1A2028', 0.15) };
 }
 
 /**
@@ -477,46 +550,18 @@ export function overcastCloudSpecs(
 }
 
 /**
- * The fair-weather sky: the reference's two clusters (village-scene.js lines
- * 307–308, geometry recognizable in the near and mid entries) grown into a
- * three-layer ambient set — small far puffs low near the horizon, mid
- * clusters, the big near cluster riding high. `dayOnly` keeps the
- * reference's dawn rule: the second cluster sits out everything but full
- * day. Exported so the test suite can pin the reference-verbatim members.
+ * The fair-weather sky: a three-layer ambient set — small far puffs low near
+ * the horizon, mid clusters, the big near cluster riding high. Anchors and
+ * the `dayOnly` dawn rule survive from the reference (village-scene.js lines
+ * 307–308); the geometry is post-playtest `puffRects` domes like every other
+ * cloud in this file. Exported for the suite.
  */
 export const FAIR_CLOUD_CLUSTERS: readonly CloudClusterDef[] = [
-  {
-    baseX: 70, layer: 2,
-    rects: [
-      { dx: 0, y: 42, w: 40, h: 10, tone: 'body' },
-      { dx: 10, y: 34, w: 24, h: 8, tone: 'lit' },
-      { dx: 6, y: 52, w: 30, h: 3, tone: 'belly' },
-    ],
-  },
-  {
-    baseX: 270, layer: 1, dayOnly: true,
-    rects: [
-      { dx: 0, y: 66, w: 34, h: 9, tone: 'body' },
-      { dx: 8, y: 59, w: 20, h: 7, tone: 'lit' },
-      { dx: 5, y: 75, w: 24, h: 3, tone: 'belly' },
-    ],
-  },
-  {
-    baseX: 470, layer: 1,
-    rects: [
-      { dx: 0, y: 78, w: 30, h: 8, tone: 'body' },
-      { dx: 7, y: 72, w: 18, h: 6, tone: 'lit' },
-      { dx: 4, y: 86, w: 22, h: 2, tone: 'belly' },
-    ],
-  },
-  {
-    baseX: 180, layer: 0,
-    rects: [
-      { dx: 0, y: 118, w: 30, h: 7, tone: 'body' },
-      { dx: 8, y: 113, w: 16, h: 5, tone: 'lit' },
-    ],
-  },
-  { baseX: 420, layer: 0, rects: [{ dx: 0, y: 138, w: 26, h: 6, tone: 'body' }] },
+  puffCluster(70, 2, 76, 50, 10, [{ dx: 6, w: 26, h: 13 }, { dx: 36, w: 34, h: 20 }]),
+  puffCluster(270, 1, 58, 72, 8, [{ dx: 5, w: 20, h: 10 }, { dx: 29, w: 24, h: 14 }], true),
+  puffCluster(470, 1, 50, 84, 7, [{ dx: 4, w: 18, h: 9 }, { dx: 26, w: 20, h: 12 }]),
+  puffCluster(180, 0, 42, 122, 6, [{ dx: 4, w: 16, h: 7 }, { dx: 22, w: 16, h: 9 }]),
+  puffCluster(420, 0, 36, 142, 6, [{ dx: 6, w: 20, h: 8 }]),
 ];
 
 /** The sky phase fair clouds are drawn under — derived from the theme flags by the caller. */
@@ -586,18 +631,19 @@ function rect(k: KAPLAYCtx, x: number, y: number, w: number, h: number, colorHex
 }
 
 // ---------------------------------------------------------------------------
-// Storm lightning — a seeded strike about every 30s (not the old 4.5s
+// Storm lightning — a seeded strike about every 60s (not the old 4.5s
 // metronome), a detailed forked bolt, and no strobe: the flash and glow ramp
 // rather than snap on/off. Shared by the in-scene bolt (`drawLightning`,
 // beside the other per-weather draws below) and the front-of-screen flash
 // object (`flash.onDraw` in `mountWeather`).
 // ---------------------------------------------------------------------------
 
-/** Strike slots: one candidate strike per 32s slot, average cadence ≈ 30s. */
-const STRIKE_SLOT_S = 32;
-/** A strike starts 2..26s into its slot (`STRIKE_WINDOW_MIN_S + hash*STRIKE_WINDOW_SPAN_S`). */
+/** Strike slots: one candidate strike per 64s slot, average cadence ≈ 60s
+ * (doubled from 32s on playtest feedback — "timing fine, maybe 2x slower"). */
+const STRIKE_SLOT_S = 64;
+/** A strike starts 2..58s into its slot (`STRIKE_WINDOW_MIN_S + hash*STRIKE_WINDOW_SPAN_S`). */
 const STRIKE_WINDOW_MIN_S = 2;
-const STRIKE_WINDOW_SPAN_S = 24;
+const STRIKE_WINDOW_SPAN_S = 56;
 const STRIKE_DURATION_S = 0.7;
 /** Dim in-cloud flickers between strikes: one candidate per 9s slot. */
 const FLICKER_SLOT_S = 9;
@@ -645,7 +691,7 @@ export interface ActiveStrike {
 
 /**
  * The strike active at `tSec`, or `null` if no strike is currently firing.
- * One strike is scheduled per 32s slot, starting 2..26s in and lasting 0.7s
+ * One strike is scheduled per 64s slot, starting 2..58s in and lasting 0.7s
  * — comfortably shorter than the gap to the next slot's earliest possible
  * start, so slots never need to look at their neighbors.
  */
@@ -807,10 +853,37 @@ function drawRainAndSplashes(
   }
 }
 
+/**
+ * The storm's cloud field: seven `puffRects` cumulus clusters across all
+ * three depth layers. Until the first human storm playtest this was two
+ * flat decks on their own drift clocks with NO parallax term — panning the
+ * village never separated the layers, which is most of why the storm read
+ * as a painted backdrop. Now it rides `driftedClusterRects` like every
+ * other cloud set (parallax, billow, sway for free). Extents ≤
+ * CLOUD_MAX_EXTENT for the drift window's seam margin.
+ */
+export const STORM_CLOUD_CLUSTERS: readonly CloudClusterDef[] = [
+  puffCluster(40, 0, 112, 22, 12, [{ dx: 8, w: 38, h: 14 }, { dx: 52, w: 48, h: 20 }]),
+  puffCluster(320, 0, 104, 18, 12, [{ dx: 10, w: 40, h: 16 }, { dx: 56, w: 40, h: 13 }]),
+  puffCluster(150, 1, 140, 34, 16, [{ dx: 8, w: 44, h: 20 }, { dx: 56, w: 62, h: 32 }, { dx: 120, w: 18, h: 10 }]),
+  puffCluster(450, 1, 132, 30, 16, [{ dx: 10, w: 48, h: 22 }, { dx: 62, w: 58, h: 28 }]),
+  puffCluster(0, 2, 170, 48, 20, [{ dx: 8, w: 46, h: 22 }, { dx: 58, w: 70, h: 38 }, { dx: 132, w: 30, h: 16 }]),
+  puffCluster(230, 2, 158, 52, 20, [{ dx: 10, w: 52, h: 26 }, { dx: 66, w: 68, h: 36 }, { dx: 138, w: 16, h: 10 }]),
+  puffCluster(520, 2, 164, 50, 20, [{ dx: 8, w: 44, h: 20 }, { dx: 56, w: 72, h: 40 }, { dx: 134, w: 24, h: 13 }]),
+];
+
+/** Per-layer pull toward the (already storm-grayed) sky — atmospheric
+ * perspective: the far deck hazes into the sky, the near deck stays full
+ * strength. This value gradient, not tone contrast, is what carries depth. */
+const STORM_HAZE: readonly number[] = [0.45, 0.22, 0];
+/** Per-layer alpha — the storm's own ladder, heavier than CLOUD_LAYERS'
+ * ambient one: a storm far deck at 0.55 washed out under its haze. */
+const STORM_ALPHA: readonly number[] = [0.75, 0.9, 1];
+
 function drawStormClouds(
   k: KAPLAYCtx,
   cur: ResolvedTheme,
-  tSec: number,
+  blobs: readonly CloudBlob[],
   width: number,
   height: number,
   horizonY: number,
@@ -818,40 +891,40 @@ function drawStormClouds(
   const { weather, flags } = cur;
   const ramp = weather.ramp;
   const night = flags.isNight;
-  const deckFar = night ? '#2C343C' : '#68727A';
-  const deckNear = night ? '#20272E' : '#4A545C';
-  const deckRim = night ? '#39424B' : '#7E888F';
-  const drift1 = (tSec * 3) % 520;
-  const drift2 = (tSec * 6) % 520;
+  const body = night ? '#242C34' : '#525C64';
+  // Tone steps stay gentle (0.14/0.16) — the playtest verdict on the old rim
+  // (#7E888F on #4A545C) was "gradients too extreme".
+  const layerTones = STORM_HAZE.map((hz) => {
+    const b = mix(body, cur.tokens.sky1, hz);
+    return { lit: mix(b, '#FFFFFF', 0.14), body: b, belly: mix(b, '#10141A', 0.16) };
+  });
   const s = fy(horizonY);
 
-  // Far deck: class-2 clusters, anchor cfx.
-  for (let cf = 0; cf < 3; cf++) {
-    const cfx = ((cf * 190 + drift1) % 660) - 90;
-    const anchorX = mapX(cfx, width);
-    rect(k, anchorX, mapY(2, horizonY, height), 168 * s, 20 * s, deckFar, ramp);
-    rect(k, anchorX + 24 * s, mapY(20, horizonY, height), 120 * s, 8 * s, deckFar, ramp);
+  // Far deck first, so the rain shafts hang from it and the nearer decks
+  // draw over both.
+  for (const r of blobs) {
+    if (r.layerIndex !== 0) continue;
+    rect(k, r.x, r.y, r.w, r.h, layerTones[0]![r.tone], STORM_ALPHA[0]! * ramp);
   }
 
-  // Distant rain shafts hanging from the far deck: class-3 veils.
+  // Distant rain shafts, hung from the far clusters' own body slabs. They
+  // used to drift on `+drift1` — rightward, while the clouds drift left —
+  // which the playtest saw immediately as "light bars going across the
+  // screen to the right and the clouds to the left". Anchoring them to the
+  // slabs makes that disagreement unrepresentable rather than merely fixed.
   const shaftColour = night ? '#4A5862' : '#8C9AA4';
   const [shaftY, shaftH] = vSpan(30, 180, horizonY, height);
-  for (let sh = 0; sh < 3; sh++) {
-    const shx = ((sh * 176 + drift1 * 0.6) % 520) - 20;
+  for (const r of blobs) {
+    if (r.layerIndex !== 0 || r.tone !== 'body' || r.y > mapY(60, horizonY, height)) continue;
     for (let sk = 0; sk < 5; sk++) {
-      const alpha = (0.1 - sk * 0.016) * ramp;
-      rect(k, mapX(shx + sk * 3, width), shaftY, mapX(30 - sk * 4, width), shaftH, shaftColour, alpha);
+      const alpha = (0.09 - sk * 0.015) * ramp;
+      rect(k, r.x + r.w * 0.2 + sk * 3 * s, shaftY, r.w * 0.55 - sk * 4 * s, shaftH, shaftColour, alpha);
     }
   }
 
-  // Near deck: heavier, lower, lit rims on top — class-2 clusters, anchor cnx.
-  for (let cn = 0; cn < 4; cn++) {
-    const cnx = ((cn * 150 + drift2) % 640) - 100;
-    const anchorX = mapX(cnx, width);
-    const cny = 24 + (cn % 2) * 12;
-    rect(k, anchorX + 8 * s, mapY(cny - 3, horizonY, height), 118 * s, 3 * s, deckRim, ramp);
-    rect(k, anchorX, mapY(cny, horizonY, height), 134 * s, 24 * s, deckNear, ramp);
-    rect(k, anchorX + 18 * s, mapY(cny + 24, horizonY, height), 96 * s, 9 * s, deckNear, ramp);
+  for (const r of blobs) {
+    if (r.layerIndex === 0) continue;
+    rect(k, r.x, r.y, r.w, r.h, layerTones[r.layerIndex]![r.tone], STORM_ALPHA[r.layerIndex]! * ramp);
   }
 
   // Low ground mist whipped up by the rain: class-3 full-width veil.
@@ -859,36 +932,64 @@ function drawStormClouds(
   rect(k, 0, mistY, width, mistH, '#FFFFFF', 0.08 * ramp);
 }
 
-/** The in-cloud glow rect (ref 84x34) around a strike anchor `x01`, or a standalone flicker's fixed anchor — class-2 cluster, see the file header's scaling classes. */
-function drawCloudGlow(k: KAPLAYCtx, x01: number, alpha: number, width: number, height: number, horizonY: number): void {
+/** Where a strike is born. `x01` is the slot's *intended* sky position; the
+ * bolt snaps to the body slab of the nearest near/mid storm cloud, so a bolt
+ * always leaves an actual cloud's belly instead of hanging in clear air at a
+ * fixed height. Falls back to the raw `x01` anchor when no candidate cloud is
+ * on screen (every slab off-screen mid-wrap). */
+export function strikeOrigin(
+  blobs: readonly CloudBlob[],
+  x01: number,
+  width: number,
+  height: number,
+  horizonY: number,
+): { x: number; y: number; fromCloud: boolean } {
+  const want = x01 * width;
+  let best: CloudBlob | null = null;
+  let bestD = Infinity;
+  for (const r of blobs) {
+    if (!r.slab || r.layerIndex < 1) continue;
+    const d = Math.abs(r.x + r.w / 2 - want);
+    if (d < bestD) {
+      bestD = d;
+      best = r;
+    }
+  }
+  if (!best) return { x: want, y: mapY(38, horizonY, height), fromCloud: false };
+  return { x: best.x + best.w / 2, y: best.y + best.h, fromCloud: true };
+}
+
+/** The in-cloud glow rect (ref 84x34), centred on the strike's origin cloud so the flash lights the cloud it came from. */
+function drawCloudGlow(k: KAPLAYCtx, originX: number, originY: number, alpha: number, height: number, horizonY: number): void {
   if (alpha <= 0) return;
   const s = fy(horizonY);
-  const anchorX = x01 * width;
-  rect(k, anchorX - 42 * s, mapY(12, horizonY, height), 84 * s, 34 * s, '#E8DFA8', alpha);
+  rect(k, originX - 42 * s, originY - 30 * s, 84 * s, 34 * s, '#E8DFA8', alpha);
 }
 
 /** The bolt's trunk/fork/glow segments (`boltSegments`) as a class-2 cluster anchored at `x01 * width`. */
 function drawBolt(
   k: KAPLAYCtx,
   variant: number,
-  x01: number,
+  originX: number,
+  originY: number,
   env: StrikeEnvelope,
   ramp: number,
-  width: number,
   height: number,
   horizonY: number,
 ): void {
   if (env.bolt <= 0) return;
   const s = fy(horizonY);
-  const anchorX = x01 * width;
+  // Segment ys are absolute reference space anchored at ref y 38 (the old
+  // fixed spawn height); shifting by the origin hangs the same geometry off
+  // whatever cloud belly this strike was born from.
   for (const seg of boltSegments(variant)) {
     const alpha = (seg.kind === 'glow' ? 0.16 : 1) * env.bolt * ramp;
-    rect(k, anchorX + seg.x * s, mapY(seg.y, horizonY, height), seg.w * s, seg.h * s, seg.color, alpha);
+    rect(k, originX + seg.x * s, originY + (seg.y - 38) * s, seg.w * s, seg.h * s, seg.color, alpha);
   }
 }
 
 /**
- * The storm's lightning: a seeded strike about every 30s (pre-flicker, dark
+ * The storm's lightning: a seeded strike about every 60s (pre-flicker, dark
  * beat, forked bolt with in-cloud glow, a screen flash that ramps down
  * instead of snapping off) plus dim standalone in-cloud flickers between
  * strikes, suppressed while a strike is active (`flickerActive` already
@@ -900,25 +1001,30 @@ function drawLightning(
   cur: ResolvedTheme,
   tSec: number,
   reduced: boolean,
+  blobs: readonly CloudBlob[],
   width: number,
   height: number,
   horizonY: number,
 ): void {
   const ramp = cur.weather.ramp;
+  const originFor = (x01: number) => strikeOrigin(blobs, x01, width, height, horizonY);
 
   if (reduced) {
-    drawBolt(k, REDUCED_MOTION_BOLT_VARIANT, REDUCED_MOTION_BOLT_X01, REDUCED_MOTION_ENVELOPE, ramp, width, height, horizonY);
-    drawCloudGlow(k, REDUCED_MOTION_BOLT_X01, 0.3 * REDUCED_MOTION_ENVELOPE.glow * ramp, width, height, horizonY);
+    const o = originFor(REDUCED_MOTION_BOLT_X01);
+    drawBolt(k, REDUCED_MOTION_BOLT_VARIANT, o.x, o.y, REDUCED_MOTION_ENVELOPE, ramp, height, horizonY);
+    drawCloudGlow(k, o.x, o.y, 0.3 * REDUCED_MOTION_ENVELOPE.glow * ramp, height, horizonY);
     return;
   }
 
   const strike = activeStrike(tSec);
   if (strike) {
     const env = strikeEnvelope(strike.dt);
-    drawBolt(k, strike.variant, strike.x01, env, ramp, width, height, horizonY);
-    drawCloudGlow(k, strike.x01, 0.3 * env.glow * ramp, width, height, horizonY);
+    const o = originFor(strike.x01);
+    drawBolt(k, strike.variant, o.x, o.y, env, ramp, height, horizonY);
+    drawCloudGlow(k, o.x, o.y, 0.3 * env.glow * ramp, height, horizonY);
   } else if (flickerActive(tSec)) {
-    drawCloudGlow(k, FLICKER_GLOW_X01, 0.18 * ramp, width, height, horizonY);
+    const o = originFor(FLICKER_GLOW_X01);
+    drawCloudGlow(k, o.x, o.y, 0.18 * ramp, height, horizonY);
   }
 }
 
@@ -1129,11 +1235,16 @@ export function mountWeather(k: KAPLAYCtx): WeatherLayer {
         drawOvercastCloudBlobs(k, 'rain', cur.flags.isNight, cur.weather.ramp, t, camRefX, width, horizonY);
         drawRainAndSplashes(k, cur, t, reduced, width, height, horizonY);
         break;
-      case 'storm':
+      case 'storm': {
+        // One materialization, shared: the clouds paint from it and the
+        // lightning picks its origin cloud out of it, so a bolt can never
+        // disagree with where the clouds actually are this frame.
+        const stormBlobs = driftedClusterRects(STORM_CLOUD_CLUSTERS, 3, t, camRefX, width, horizonY);
         drawRainAndSplashes(k, cur, t, reduced, width, height, horizonY);
-        drawStormClouds(k, cur, t, width, height, horizonY);
-        drawLightning(k, cur, t, reduced, width, height, horizonY);
+        drawStormClouds(k, cur, stormBlobs, width, height, horizonY);
+        drawLightning(k, cur, t, reduced, stormBlobs, width, height, horizonY);
         break;
+      }
       case 'snow':
         drawOvercastCloudBlobs(k, 'snow', cur.flags.isNight, cur.weather.ramp, t, camRefX, width, horizonY);
         drawSnow(k, cur, t, width, height, horizonY);
