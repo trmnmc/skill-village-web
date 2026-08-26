@@ -1,0 +1,34 @@
+# village.fenley.ai — Caddy vhost (the droplet runs Caddy, not nginx;
+# village.nginx.conf records the same semantics for an nginx host).
+#
+# Append this block to /etc/caddy/Caddyfile and `systemctl reload caddy`.
+# TLS is automatic — no certbot step. The LLM rate limit does NOT live here:
+# stock Caddy has no rate-limit module, so the server enforces it
+# (VILLAGE_LLM_RPM in skill-village.service).
+
+village.fenley.ai {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8262
+	}
+	handle /ws {
+		reverse_proxy 127.0.0.1:8262
+	}
+	# The robot's voice. Public by decision (2026-08-25); the server throttles.
+	handle /v1/* {
+		reverse_proxy 127.0.0.1:8262
+	}
+	handle /assets/* {
+		root * /var/www/village-game
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+	# Single-page app: every unknown path falls back to the game itself.
+	# no-store on index.html, or a deploy leaves clients pinned to a stale
+	# asset graph.
+	handle {
+		root * /var/www/village-game
+		try_files {path} /index.html
+		header Cache-Control "no-store"
+		file_server
+	}
+}

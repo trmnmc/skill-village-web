@@ -20,15 +20,68 @@ const EMPTY_HOUSE_LINE =
 const MOVED_AWAY_LINE =
   'The villager who lived in me seems to have moved away. Drag someone new onto my house in the village.';
 
+export interface AppOptions {
+  /**
+   * Requests per minute each client may spend on /v1 (the robot's voice).
+   * 0 — the default — disables the guard entirely, so local play never
+   * throttles; the public deploy arms it (6 r/min, the posture decided
+   * 2026-08-25) because /v1 spends real API budget for anyone with the URL.
+   */
+  llmRatePerMinute?: number;
+  /** Extra requests a client may burst beyond the steady rate (nginx burst=3). */
+  llmBurst?: number;
+  /** Clock for the refill maths; tests pin it. */
+  now?: () => number;
+}
+
 /**
  * The whole API surface. Every route reads from the village runtime and every
  * mutation goes back through it, so the server has no state of its own.
  */
-export async function createApp(village: Village): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
+export async function createApp(village: Village, opts: AppOptions = {}): Promise<FastifyInstance> {
+  // trustProxy: deployed, the server binds loopback behind the droplet's
+  // proxy, so X-Forwarded-For is the only truthful client identity — without
+  // it every visitor shares one rate bucket. A direct client could forge the
+  // header, but the guard is only armed where the proxy is the only way in.
+  const app = Fastify({ logger: false, trustProxy: true });
   // Awaited, not queued: a { websocket: true } route is only recognised once the
   // plugin has finished registering.
   await app.register(websocket);
+
+  const { llmRatePerMinute = 0, llmBurst = 0, now = Date.now } = opts;
+  const capacity = llmBurst + 1;
+  const buckets = new Map<string, { tokens: number; at: number }>();
+
+  /** Token bucket per client: capacity burst+1, refilling at the steady rate. */
+  function allowShout(ip: string): boolean {
+    if (llmRatePerMinute <= 0) return true;
+    const t = now();
+    // A public endpoint sees unbounded distinct IPs; full buckets are
+    // indistinguishable from absent ones, so drop them rather than grow.
+    if (buckets.size > 10_000) {
+      for (const [key, b] of buckets) {
+        if (b.tokens + ((t - b.at) * llmRatePerMinute) / 60_000 >= capacity) buckets.delete(key);
+      }
+    }
+    const bucket = buckets.get(ip) ?? { tokens: capacity, at: t };
+    bucket.tokens = Math.min(capacity, bucket.tokens + ((t - bucket.at) * llmRatePerMinute) / 60_000);
+    bucket.at = t;
+    const allowed = bucket.tokens >= 1;
+    if (allowed) bucket.tokens -= 1;
+    buckets.set(ip, bucket);
+    return allowed;
+  }
+
+  app.addHook('onRequest', async (request, reply) => {
+    if (!request.url.startsWith('/v1/')) return;
+    if (allowShout(request.ip)) return;
+    return reply.code(429).send({
+      error: {
+        message: `Rate limit: ${llmRatePerMinute} requests per minute per client. Try again in a few seconds.`,
+        type: 'rate_limit_error',
+      },
+    });
+  });
 
   app.get('/api/health', async () => ({ ok: true, creatures: Object.keys(village.getState().creatures).length }));
 

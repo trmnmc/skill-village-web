@@ -10,8 +10,11 @@ Decisions taken by the owner on 2026-08-25, recorded so a later reader does
 not "fix" them:
 
 - **Fully public, LLM voice included.** `/v1/chat/completions` reaches the
-  robot and spends real API budget for anyone with the URL. nginx rate-limits
-  it to 6 r/min per IP (burst 3); that is the only guard.
+  robot and spends real API budget for anyone with the URL. The **server**
+  rate-limits it to 6 r/min per client (burst 3) — armed by `VILLAGE_LLM_RPM`
+  in the systemd unit; that is the only guard. (The guard moved out of the
+  proxy on 2026-08-26: the droplet runs stock Caddy, which has no rate-limit
+  module. `village.nginx.conf` keeps the nginx equivalent for reference.)
 - **Real state is published.** The droplet serves a copy of the owner's local
   `~/.skill-village/state.json`, so villager names — derived from their Claude
   skills and agents — are world-readable.
@@ -36,11 +39,12 @@ set in `packages/web/vite.config.ts`.
 - Static bundle: rsync `packages/web/dist/` → `/var/www/village-game/`
 - Server: repo checked out at `/srv/skill-village`, run by
   `deploy/skill-village.service` with `VILLAGE_HOST=127.0.0.1
-  VILLAGE_PORT=8262`. Confirm the droplet's process manager first — the swarm
-  services set the pattern, and if they are pm2, follow them instead.
-- nginx: `deploy/village.nginx.conf` → `/etc/nginx/sites-available/`, symlink
-  into `sites-enabled/`, then `nginx -t && systemctl reload nginx`.
-- TLS: `certbot --nginx -d village.fenley.ai`.
+  VILLAGE_PORT=8262`. Process manager confirmed 2026-08-26: systemd (the
+  swarm services set the pattern).
+- Proxy: the droplet runs **Caddy**, not nginx. Append the
+  `deploy/village.Caddyfile` block to `/etc/caddy/Caddyfile`, then
+  `caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy`.
+- TLS: automatic — Caddy provisions the certificate itself; no certbot.
 
 ## Seeding the village state
 

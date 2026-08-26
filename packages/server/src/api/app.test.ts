@@ -375,3 +375,71 @@ describe('the robot api', () => {
     expect(state.robotLastTurnAt).toBe(null);
   });
 });
+
+describe('the LLM rate limit', () => {
+  // The public deploy is fully open, voice included (owner's call, 2026-08-25);
+  // a 6 r/min + burst 3 throttle per client is the one guard that stays on.
+  // The droplet's proxy cannot rate-limit, so the server carries the guard:
+  // a burst of 4 passes, then one slot per 10 seconds.
+  let clock = 0;
+
+  async function bootLimited() {
+    clock = 0;
+    sandbox = await makeSandbox();
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000 });
+    return createApp(village, { llmRatePerMinute: 6, llmBurst: 3, now: () => clock });
+  }
+
+  const shout = (app: Awaited<ReturnType<typeof boot>>, ip = '203.0.113.7') =>
+    app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      remoteAddress: ip,
+      payload: { messages: [{ role: 'user', content: 'hello?' }] },
+    });
+
+  it('lets the burst through and refuses the next request with 429', async () => {
+    const app = await bootLimited();
+    for (let i = 0; i < 4; i++) expect((await shout(app)).statusCode).toBe(200);
+    const refused = await shout(app);
+    expect(refused.statusCode).toBe(429);
+    expect(refused.json().error.type).toBe('rate_limit_error');
+  });
+
+  it('refills one slot every 10 seconds', async () => {
+    const app = await bootLimited();
+    for (let i = 0; i < 4; i++) await shout(app);
+    expect((await shout(app)).statusCode).toBe(429);
+    clock += 10_000;
+    expect((await shout(app)).statusCode).toBe(200);
+  });
+
+  it('limits per client, not globally', async () => {
+    const app = await bootLimited();
+    for (let i = 0; i < 4; i++) await shout(app);
+    expect((await shout(app)).statusCode).toBe(429);
+    expect((await shout(app, '198.51.100.9')).statusCode).toBe(200);
+  });
+
+  it('keys a proxied client by X-Forwarded-For, not by the proxy', async () => {
+    const app = await bootLimited();
+    const proxied = (ip: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        remoteAddress: '127.0.0.1',
+        headers: { 'x-forwarded-for': ip },
+        payload: { messages: [{ role: 'user', content: 'hello?' }] },
+      });
+    for (let i = 0; i < 4; i++) await proxied('203.0.113.7');
+    expect((await proxied('203.0.113.7')).statusCode).toBe(429);
+    expect((await proxied('198.51.100.9')).statusCode).toBe(200);
+  });
+
+  it('stays out of the way when no rate is configured', async () => {
+    const app = await boot();
+    for (let i = 0; i < 8; i++) {
+      expect((await shout(app)).statusCode).toBe(200);
+    }
+  });
+});

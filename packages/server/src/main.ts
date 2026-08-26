@@ -47,7 +47,12 @@ async function main(): Promise<void> {
   });
   if (village.startupNote) console.log(village.startupNote);
 
-  const app = await createApp(village);
+  // The LLM guard stays off (0) for local play; the droplet's systemd unit
+  // arms it, because deployed /v1 spends real API budget for anyone.
+  const app = await createApp(village, {
+    llmRatePerMinute: Number(process.env.VILLAGE_LLM_RPM ?? 0),
+    llmBurst: Number(process.env.VILLAGE_LLM_BURST ?? 3),
+  });
   // 127.0.0.1 unless the player opts the server onto the LAN. The Docker-run
   // voice gateway reaches the host via host.docker.internal, which needs a
   // non-loopback bind on some setups; docs/robot/SETUP.md says when to set it.
