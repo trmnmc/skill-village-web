@@ -71,6 +71,11 @@ as a snapshot, and re-seed it the same way whenever it should catch up.
     npm run build:web
     rsync -a --delete packages/web/dist/ <user>@68.183.99.200:/var/www/village-game/
 
+No rsync on the Windows box: scp the dist folder and copy it into place —
+then `chmod -R a+rX /var/www/village-game`, because scp carries Windows
+permissions over as 700 and caddy (which runs as its own user) answers 403
+on everything it cannot traverse. Bitten on the first deploy.
+
 `index.html` is served `no-store` and `/assets/*` immutable, so a redeploy
 takes effect on the next load without stale-asset pinning.
 
