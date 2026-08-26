@@ -14,6 +14,24 @@ export interface Palette {
   skies: Record<Frame, [string, string, string]>;
 }
 
+/** WCAG relative luminance of a #RRGGBB colour. */
+export function relLuminance(hexColour: string): number {
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const n = parseInt(hexColour.slice(1), 16);
+  return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+}
+
+/** WCAG contrast ratio (1..21) between two #RRGGBB colours. */
+export function contrast(a: string, b: string): number {
+  const la = relLuminance(a);
+  const lb = relLuminance(b);
+  const [hi, lo] = la >= lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 export const PALETTES: Record<PaletteId, Palette> = {
   '1a': {
     name: 'Meadow Blue', ink: '#3A2E22', cream: '#F2E5C4', bubble: '#FFFDF4', wood: '#8A6B4A', accent: '#D97757',

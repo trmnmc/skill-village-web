@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PALETTES, mix, lite } from './palettes.js';
+import { PALETTES, mix, lite, relLuminance, contrast } from './palettes.js';
 import { isHex } from '../theme.js';
 
 describe('PALETTES', () => {
@@ -34,5 +34,18 @@ describe('mix', () => {
 describe('lite', () => {
   it('is a 32% mix toward white, matching the reference', () => {
     expect(lite('#e58c68')).toBe(mix('#e58c68', '#ffffff', 0.32));
+  });
+});
+
+describe('relLuminance and contrast', () => {
+  it('anchors to the WCAG endpoints', () => {
+    expect(relLuminance('#000000')).toBe(0);
+    expect(relLuminance('#FFFFFF')).toBeCloseTo(1, 10);
+    expect(contrast('#000000', '#FFFFFF')).toBeCloseTo(21, 2);
+  });
+
+  it('is symmetric, and 1 for a colour against itself', () => {
+    expect(contrast('#525C64', '#7F8E98')).toBeCloseTo(contrast('#7F8E98', '#525C64'), 10);
+    expect(contrast('#404040', '#404040')).toBe(1);
   });
 });

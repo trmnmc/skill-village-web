@@ -34,6 +34,7 @@ import { ZOOM, screenToWorld, clampCamX } from './camera.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
 import { sound } from '../sound/player.js';
 import { voiceParamsFor } from '../sound/voice.js';
+import { hudChipRect } from './hud-chip.js';
 import { viewSoundEvents, type CreatureSnapshot } from '../sound/arrivals.js';
 import { HAPPY_ABOVE, SLEEP_BELOW } from '../motion/behaviour.js';
 import { mountSky } from './sky.js';
@@ -348,6 +349,30 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     tokenTag('ink'),
   ]);
 
+  // The cream backing that keeps the HUD readable when a storm deck drifts
+  // behind it (first night storm playtest: "live / 75 villagers" drowned in
+  // the near clouds). Same chrome as the nameplates: cream, ink outline,
+  // hugging the text — resized whenever any of the three lines changes.
+  const hudChip = k.add([
+    k.rect(1, 1, { radius: 4 }),
+    k.pos(0, 0),
+    k.fixed(),
+    k.color(hex(k, sceneryColor(themeStore.current().tokens, themeStore.current().tint, 'cream'))),
+    k.outline(2, hex(k, sceneryColor(themeStore.current().tokens, themeStore.current().tint, 'ink'))),
+    k.z(99),
+    tokenTag('cream'),
+  ]);
+  const layoutHudChip = () => {
+    const bounds = hudChipRect([status.text, counter.text, meter.text]);
+    hudChip.hidden = bounds === null;
+    if (!bounds) return;
+    hudChip.pos.x = bounds.x;
+    hudChip.pos.y = bounds.y;
+    hudChip.width = bounds.w;
+    hudChip.height = bounds.h;
+  };
+  layoutHudChip();
+
   // Open on the middle of Homes — the crowd — not on the empty Hatchery at
   // world x=0, and frame the field as the lower two thirds rather than
   // centring the camera on the horizon line, which put half the opening
@@ -601,6 +626,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
       meter.text = llm
         ? `voice ${bar(llm.interactiveRemaining, llm.interactiveCap)} ${fmt(llm.interactiveRemaining)}/${fmt(llm.interactiveCap)}`
         : '';
+      layoutHudChip();
       const spots = placeCreatures(view.creatures.map((c) => c.id));
 
       // The resident stands at the robot-house porch, not its hashed spot
@@ -684,6 +710,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     },
     setStatus(s) {
       status.text = s;
+      layoutHudChip();
     },
     sayFor(creatureId, text, source) {
       // A villager that has despawned — or is still loading its sprites when

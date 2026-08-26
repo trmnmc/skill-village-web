@@ -28,7 +28,9 @@ import {
   boltSegments,
   flickerActive,
 } from './weather-layer.js';
-import { mix } from '../theme/palettes.js';
+import { mix, contrast, PALETTES } from '../theme/palettes.js';
+import { graySkies } from '../theme/weather/kinds.js';
+import { stormLayerTones } from './weather-layer.js';
 
 describe('frac', () => {
   it('returns the fractional part for positive numbers', () => {
@@ -1005,6 +1007,53 @@ describe('rainbowBlocks — light, not paint', () => {
     for (const sunX01 of [0, 0.35, 0.5, 1]) {
       for (const b of rainbowBlocks(1600, 500, sunX01)) {
         expect(b.y + b.size).toBeLessThanOrEqual(500 + 1e-9);
+      }
+    }
+  });
+});
+
+describe('stormLayerTones', () => {
+  const ids = Object.keys(PALETTES) as (keyof typeof PALETTES)[];
+  const nightStormSky1 = (id: keyof typeof PALETTES) => graySkies(PALETTES[id].skies.night, 'storm', 1, true)[1];
+  const dayStormSky1 = (id: keyof typeof PALETTES) => graySkies(PALETTES[id].skies.day, 'storm', 1, false)[1];
+
+  it('near and mid decks read against the night storm sky in every palette', () => {
+    // The first night-storm playtest verdict: cloud bodies vanished into the
+    // sky, leaving highlight caps floating and rain shafts standing detached.
+    for (const id of ids) {
+      const sky = nightStormSky1(id);
+      const tones = stormLayerTones(true, sky);
+      expect(contrast(tones[2]!.body, sky), `${id}: near body ${tones[2]!.body} vs sky ${sky}`).toBeGreaterThanOrEqual(1.3);
+      expect(contrast(tones[1]!.body, sky), `${id}: mid body ${tones[1]!.body} vs sky ${sky}`).toBeGreaterThanOrEqual(1.12);
+    }
+  });
+
+  it('day decks keep their dark-cloud read in every palette', () => {
+    for (const id of ids) {
+      const sky = dayStormSky1(id);
+      const tones = stormLayerTones(false, sky);
+      expect(contrast(tones[2]!.body, sky), `${id}: near body vs day sky`).toBeGreaterThanOrEqual(1.5);
+    }
+  });
+
+  it('depth ladder: contrast against the sky falls with distance, day and night', () => {
+    for (const id of ids) {
+      for (const night of [true, false]) {
+        const sky = night ? nightStormSky1(id) : dayStormSky1(id);
+        const tones = stormLayerTones(night, sky);
+        const ladder = tones.map((t) => contrast(t.body, sky));
+        expect(ladder[2]!).toBeGreaterThan(ladder[1]!);
+        expect(ladder[1]!).toBeGreaterThan(ladder[0]!);
+      }
+    }
+  });
+
+  it('each tone keeps its internal shading order: lit above body above belly', () => {
+    for (const night of [true, false]) {
+      const tones = stormLayerTones(night, nightStormSky1('1a'));
+      for (const t of tones) {
+        expect(contrast(t.lit, '#000000')).toBeGreaterThan(contrast(t.body, '#000000'));
+        expect(contrast(t.body, '#000000')).toBeGreaterThan(contrast(t.belly, '#000000'));
       }
     }
   });

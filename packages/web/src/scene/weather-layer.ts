@@ -880,6 +880,25 @@ const STORM_HAZE: readonly number[] = [0.45, 0.22, 0];
  * ambient one: a storm far deck at 0.55 washed out under its haze. */
 const STORM_ALPHA: readonly number[] = [0.75, 0.9, 1];
 
+export interface StormLayerTone { lit: string; body: string; belly: string }
+
+/**
+ * The storm deck's palette, one entry per depth layer (far → near), each
+ * hazed toward the already-storm-grayed sky. Tone steps stay gentle
+ * (0.14/0.16) — the playtest verdict on the old rim (#7E888F on #4A545C)
+ * was "gradients too extreme". The night body must hold a readable step
+ * against the night storm sky in every palette (see the contrast tests):
+ * the first night playtest found #242C34 vanished entirely, leaving lit
+ * caps floating in empty air and rain shafts standing detached.
+ */
+export function stormLayerTones(night: boolean, sky1: string): StormLayerTone[] {
+  const body = night ? '#3E4A5C' : '#525C64';
+  return STORM_HAZE.map((hz) => {
+    const b = mix(body, sky1, hz);
+    return { lit: mix(b, '#FFFFFF', 0.14), body: b, belly: mix(b, '#10141A', 0.16) };
+  });
+}
+
 function drawStormClouds(
   k: KAPLAYCtx,
   cur: ResolvedTheme,
@@ -891,13 +910,7 @@ function drawStormClouds(
   const { weather, flags } = cur;
   const ramp = weather.ramp;
   const night = flags.isNight;
-  const body = night ? '#242C34' : '#525C64';
-  // Tone steps stay gentle (0.14/0.16) — the playtest verdict on the old rim
-  // (#7E888F on #4A545C) was "gradients too extreme".
-  const layerTones = STORM_HAZE.map((hz) => {
-    const b = mix(body, cur.tokens.sky1, hz);
-    return { lit: mix(b, '#FFFFFF', 0.14), body: b, belly: mix(b, '#10141A', 0.16) };
-  });
+  const layerTones = stormLayerTones(night, cur.tokens.sky1);
   const s = fy(horizonY);
 
   // Far deck first, so the rain shafts hang from it and the nearer decks
