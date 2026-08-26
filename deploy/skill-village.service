@@ -1,0 +1,39 @@
+# The village server (port 8262), behind the nginx vhost in
+# village.nginx.conf. Confirm the droplet's process manager before using
+# this — docs/showroom-deploy.md says the swarm services set the pattern,
+# and if those are pm2 rather than systemd, follow them instead.
+#
+# Install:
+#   sudo cp deploy/skill-village.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now skill-village
+
+[Unit]
+Description=Skill Village server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=village
+Group=village
+WorkingDirectory=/srv/skill-village
+
+# 127.0.0.1 keeps the node process off the public interface — nginx is the
+# only way in. An EMPTY VILLAGE_HOST also stays on loopback (see 18b5f4b);
+# this states it rather than relying on that.
+Environment=NODE_ENV=production
+Environment=VILLAGE_HOST=127.0.0.1
+Environment=VILLAGE_PORT=8262
+
+ExecStart=/usr/bin/npx tsx packages/server/src/main.ts
+
+Restart=always
+RestartSec=3
+
+# State lives in ~village/.skill-village (resolvePaths, config/paths.ts):
+# state.json, its backup, events.jsonl, shadow/ and archive/. It must
+# survive restarts and redeploys, so it is deliberately outside the checkout.
+StateDirectory=skill-village
+
+[Install]
+WantedBy=multi-user.target
