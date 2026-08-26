@@ -20,4 +20,4 @@
 - [ ] Housekeeping: 8 fully-merged remote branches are deletion candidates; droplet wants a reboot (kernel update) — would briefly drop swarm + chunks + village; droplet memory is tight (5.6/7.8 Gi used, an OOM-killed 12.9 GB claude process in the tty log)
 - [ ] Non-repo: restart/reload the Chunks Minecraft server so the chunks.games.place rebrand shows
 
-_Updated: 2026-08-26 evening — main `7d2f3d4` · 963 passed + 1 skipped, typecheck green · village.fenley.ai live_
+_Updated: 2026-08-26 19:43 — main `d4efce0` · 973 passed + 1 skipped, typecheck green · village.fenley.ai live on `index-CC7JZXjz.js`_
