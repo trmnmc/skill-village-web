@@ -51,6 +51,13 @@ export interface VillageOptions {
    * Ignored when `llm` is also given.
    */
   llmFactory?: (hooks: LlmHooks) => LlmService;
+  /**
+   * The village is a served copy of someone else's state (the public deploy):
+   * the disk under it has none of the creatures' files, so it must never
+   * reconcile against that disk — not at boot, not ever. Care and chat still
+   * work; the population is fixed until the next seeded state lands.
+   */
+  snapshot?: boolean;
 }
 
 export type VillageListener = (state: VillageState) => void;
@@ -63,7 +70,9 @@ export interface ChatReply {
 
 export interface Village {
   getState(): VillageState;
-  /** Rescan the filesystem and fold the result in. */
+  /** True when this village must never reconcile against its own disk. */
+  readonly snapshot: boolean;
+  /** Rescan the filesystem and fold the result in. Rejects on a snapshot. */
   refresh(): Promise<void>;
   /** Advance the simulation to the current time. */
   tick(): Promise<void>;
@@ -162,7 +171,12 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
   /** Epoch millis of the last spoken (robot) turn this process served. */
   let robotLastTurnAt: number | null = null;
 
+  const snapshot = options.snapshot ?? false;
+
   const refresh = async () => {
+    if (snapshot) {
+      throw new Error('This village is a snapshot; it never reconciles against its own disk.');
+    }
     const at = now();
     const scan = await scanVillage(paths, at);
 
@@ -262,10 +276,11 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
     return flight;
   };
 
-  await refresh();
+  if (!snapshot) await refresh();
 
   return {
     startupNote: loaded.note,
+    snapshot,
 
     getPaths() {
       return paths;

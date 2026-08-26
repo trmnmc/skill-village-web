@@ -52,6 +52,27 @@ describe('createVillage', () => {
     expect(village.getState().creatures['skill:persistent']!.stats.bond).toBe(bondAfterCare);
   });
 
+  it('a snapshot village keeps creatures whose files are gone', async () => {
+    // The deployed village serves a copy of the owner's state on a disk with
+    // no skill or agent files; the boot-time reconcile must not run there or
+    // it releases every villager on arrival.
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('deployed', skillFixture('deployed'));
+    const first = await createVillage({ paths: sandbox.paths, now: clock().now });
+    expect(Object.keys(first.getState().creatures)).toEqual(['skill:deployed']);
+    await first.close();
+    await rm(sandbox.paths.userSkillsDir, { recursive: true });
+
+    village = await createVillage({ paths: sandbox.paths, now: clock(2_000).now, snapshot: true });
+    expect(Object.keys(village.getState().creatures)).toEqual(['skill:deployed']);
+  });
+
+  it('a snapshot village refuses to refresh', async () => {
+    sandbox = await makeSandbox();
+    village = await createVillage({ paths: sandbox.paths, now: clock().now, snapshot: true });
+    await expect(village.refresh()).rejects.toThrow(/snapshot/);
+  });
+
   it('records a startup note when the save had to be recovered', async () => {
     sandbox = await makeSandbox();
     const { writeFile } = await import('node:fs/promises');

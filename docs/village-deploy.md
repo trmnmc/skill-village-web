@@ -58,10 +58,13 @@ the running process will overwrite what you push:
         sudo systemctl start skill-village'
 
 The droplet has none of the owner's skill or agent *files*, only this state
-snapshot. So do **not** call `POST /api/refresh` there: it rescans skills and
-agents from disk and would reconcile the village down to whatever the droplet
-happens to have — which is nothing. Treat the deployed village as a snapshot,
-and re-seed it the same way whenever it should catch up.
+snapshot — and reconciling against that empty disk would release every
+villager. This is not just an `/api/refresh` hazard: **boot runs the same
+reconcile** (learned the hard way on the first deploy, 2026-08-26, which
+released all 75 on arrival). The unit therefore sets `VILLAGE_SNAPSHOT=1`:
+no reconcile at boot, no file watcher, and the public `POST /api/refresh`
+route answers 409 instead of wiping the village. Treat the deployed village
+as a snapshot, and re-seed it the same way whenever it should catch up.
 
 ## Redeploying the web bundle
 

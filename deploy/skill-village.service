@@ -30,6 +30,11 @@ Environment=VILLAGE_PORT=8262
 Environment=VILLAGE_LLM_RPM=6
 Environment=VILLAGE_LLM_BURST=3
 
+# The droplet has none of the owner's skill or agent files. Without snapshot
+# mode the boot-time reconcile releases every seeded villager on arrival, and
+# the public /api/refresh route would let anyone do the same.
+Environment=VILLAGE_SNAPSHOT=1
+
 ExecStart=/usr/bin/npx tsx packages/server/src/main.ts
 
 Restart=always

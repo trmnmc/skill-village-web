@@ -207,7 +207,15 @@ export async function createApp(village: Village, opts: AppOptions = {}): Promis
     return llmSnapshot();
   });
 
-  app.post('/api/refresh', async () => {
+  app.post('/api/refresh', async (request, reply) => {
+    // Publicly reachable through the proxy, so the snapshot deploy must
+    // refuse here — reconciling against a disk with no creature files would
+    // release every villager.
+    if (village.snapshot) {
+      return reply.code(409).send({
+        error: 'This village is a snapshot; a refresh would reconcile it against a disk that has none of its files.',
+      });
+    }
     await village.refresh();
     return village.getState();
   });

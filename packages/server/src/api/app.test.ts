@@ -177,6 +177,23 @@ describe('POST /api/refresh', () => {
     expect(res.statusCode).toBe(200);
     expect(Object.keys(res.json().creatures)).toEqual(['skill:newcomer']);
   });
+
+  it('409s on a snapshot village, whose disk must never decide who lives', async () => {
+    // The public route stays reachable through the proxy, so on the deployed
+    // snapshot it must refuse — a passer-by POSTing it would otherwise
+    // reconcile the village against a disk with no creature files at all.
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('deployed', skillFixture('deployed'));
+    const live = await createVillage({ paths: sandbox.paths, now: () => 1_000 });
+    await live.close();
+    await rm(join(sandbox.paths.userSkillsDir, 'deployed'), { recursive: true });
+
+    village = await createVillage({ paths: sandbox.paths, now: () => 2_000, snapshot: true });
+    const app = await createApp(village);
+    const res = await app.inject({ method: 'POST', url: '/api/refresh' });
+    expect(res.statusCode).toBe(409);
+    expect(Object.keys(village.getState().creatures)).toEqual(['skill:deployed']);
+  });
 });
 
 describe('GET /api/events', () => {

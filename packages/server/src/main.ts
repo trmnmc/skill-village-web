@@ -28,8 +28,13 @@ async function main(): Promise<void> {
   // and carry on rather than making the player hunt down a file to delete.
   if (running) await clearInstance(paths);
 
+  // The deployed village is a served copy of the owner's state on a disk
+  // with none of the creatures' files; snapshot mode keeps reconcile away.
+  const snapshot = process.env.VILLAGE_SNAPSHOT === '1';
+
   const village = await createVillage({
     paths,
+    snapshot,
     llmFactory: (hooks) =>
       createLlmService({
         now: hooks.now,
@@ -68,12 +73,16 @@ async function main(): Promise<void> {
     );
   }).catch((error) => console.error('LLM probe failed:', error));
 
-  const watcher = createWatcher({
-    paths,
-    onChange: () => {
-      void village.refresh().catch((error) => console.error('Refresh failed:', error));
-    },
-  });
+  // No watcher on a snapshot: there are no files to watch, and its refresh
+  // would only ever throw.
+  const watcher = snapshot
+    ? null
+    : createWatcher({
+        paths,
+        onChange: () => {
+          void village.refresh().catch((error) => console.error('Refresh failed:', error));
+        },
+      });
 
   let timer: NodeJS.Timeout = setInterval(tick, TICK_MS_HEADLESS);
   let headless = true;
@@ -95,7 +104,7 @@ async function main(): Promise<void> {
 
   const shutdown = async () => {
     clearInterval(timer);
-    await watcher.close();
+    await watcher?.close();
     await app.close();
     await village.close();
     await clearInstance(paths);
