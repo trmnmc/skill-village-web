@@ -21,6 +21,7 @@ import {
   PIN_HI,
   CONSTRUCTION_XS,
   CONSTRUCTION_BASE_Y,
+  type Pin,
 } from './zones.js';
 
 const ids = Array.from({ length: 70 }, (_, i) => `skill:s${i}`);
@@ -530,5 +531,88 @@ describe('pinSpot', () => {
   it('is idempotent — re-pinning a resolved spot does not move it', () => {
     const once = pinSpot(1234, 640, []);
     expect(pinSpot(once.x, once.y, [])).toEqual(once);
+  });
+});
+
+describe('placeCreatures with pins', () => {
+  const ids = Array.from({ length: 40 }, (_, i) => `skill:pinned-${i}`);
+
+  it('produces identical output to no pins when the map is empty', () => {
+    const before = placeCreatures(ids);
+    const after = placeCreatures(ids, new Map());
+    expect([...after.entries()]).toEqual([...before.entries()]);
+  });
+
+  it('holds a pinned villager at exactly its pinned spot', () => {
+    const pin = pinSpot(2000, 620, []);
+    const spots = placeCreatures(ids, new Map([[ids[0]!, pin]]));
+    expect(spots.get(ids[0]!)!.x).toBe(pin.x);
+    expect(spots.get(ids[0]!)!.y).toBe(pin.y);
+  });
+
+  it('seats the automatic crowd clear of a pin', () => {
+    const pin = pinSpot(2000, 620, []);
+    const spots = placeCreatures(ids, new Map([[ids[0]!, pin]]));
+    for (const [id, spot] of spots) {
+      if (id === ids[0]) continue;
+      if (spot.y !== pin.y) continue;
+      expect(Math.abs(spot.x - pin.x)).toBeGreaterThanOrEqual(MIN_SEPARATION);
+    }
+  });
+
+  it('gives a pinned villager a leash that cannot walk it into a neighbour', () => {
+    const pin = pinSpot(2000, 620, []);
+    const spots = placeCreatures(ids, new Map([[ids[0]!, pin]]));
+    const mine = spots.get(ids[0]!)!;
+    expect(mine.wander).toBeGreaterThanOrEqual(0);
+    for (const [id, spot] of spots) {
+      if (id === ids[0] || spot.y !== mine.y) continue;
+      const gap = Math.abs(spot.x - mine.x);
+      expect(gap - mine.wander - spot.wander).toBeGreaterThanOrEqual(MIN_SEPARATION - 1);
+    }
+  });
+
+  it('ignores a pin for a creature that is not present', () => {
+    const pin = pinSpot(2000, 620, []);
+    const spots = placeCreatures(ids, new Map([['skill:ghost', pin]]));
+    expect(spots.has('skill:ghost')).toBe(false);
+    expect(spots.size).toBe(ids.length);
+  });
+
+  it('places a pin far outside Homes without disturbing the Homes crowd', () => {
+    const far = pinSpot(4300, 666, []);
+    const withPin = placeCreatures(ids, new Map([[ids[0]!, far]]));
+    expect(withPin.get(ids[0]!)!.x).toBe(far.x);
+    // Everyone else stays inside the seatable stretch of Homes.
+    for (const [id, spot] of withPin) {
+      if (id === ids[0]) continue;
+      expect(spot.x).toBeGreaterThanOrEqual(HOMES_LO);
+      expect(spot.x).toBeLessThanOrEqual(HOMES_HI);
+    }
+  });
+
+  it('honours a pinned row that the villager’s hash would never have chosen', () => {
+    const rows = new Set<number>();
+    for (const y of [482, 528, 574, 620, 666, 712, 758]) {
+      const spots = placeCreatures(ids, new Map([[ids[0]!, { x: 2000, y }]]));
+      rows.add(spots.get(ids[0]!)!.y);
+    }
+    expect(rows.size).toBe(7);
+  });
+
+  it('keeps every villager on painted ground even when a row is full of pins', () => {
+    const pins = new Map<string, Pin>();
+    let placed: Pin[] = [];
+    for (let i = 0; i < 12; i++) {
+      const pin = pinSpot(HOMES_LO + i * 90, 620, placed);
+      placed = [...placed, pin];
+      pins.set(ids[i]!, pin);
+    }
+    const spots = placeCreatures(ids, pins);
+    expect(spots.size).toBe(ids.length);
+    for (const spot of spots.values()) {
+      const blocked = keepOutAt(spot.y);
+      expect(blocked.some((b) => spot.x > b.left && spot.x < b.right)).toBe(false);
+    }
   });
 });

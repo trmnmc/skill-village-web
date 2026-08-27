@@ -435,8 +435,11 @@ function seatRow(
   members: readonly RowMember[],
   ground: RowGround,
   gapFor: (a: RowMember, other: Occupant) => number,
+  pinned: readonly Occupant[] = [],
 ): Map<string, number> | null {
-  const taken: Occupant[] = [];
+  // Seeded, not empty: the player's arrangement is ground already spent, so
+  // every rung of the degradation ladder routes around it for free.
+  const taken: Occupant[] = [...pinned];
   const xs = new Map<string, number>();
   for (const member of members) {
     const x = findNearest(member.wanted, taken, HOMES_LO, HOMES_HI, ground.bands, (other) =>
@@ -468,14 +471,27 @@ function nearestGroundRight(from: number, blocked: readonly KeepOut[]): number |
  * ground: they may overlap, but nobody goes missing and nobody stands on a
  * prop, and everyone who did fit keeps the floor.
  */
-function seatRowPacked(members: readonly RowMember[], ground: RowGround): Map<string, number> {
+function seatRowPacked(
+  members: readonly RowMember[],
+  ground: RowGround,
+  pinned: readonly Occupant[] = [],
+): Map<string, number> {
   const ordered = [...members].sort(
     (a, b) => a.wanted - b.wanted || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   );
+  const blocks = [...pinned].sort((a, b) => a.x - b.x);
   const xs = new Map<string, number>();
   let cursor = HOMES_LO;
   for (const member of ordered) {
-    const x = nearestGroundRight(cursor, ground.bands);
+    let x = nearestGroundRight(cursor, ground.bands);
+    // Step over the player's pins as well as the scenery. Without this the
+    // last-resort rung packs straight through the arrangement.
+    for (;;) {
+      if (x === null) break;
+      const hit = blocks.find((p) => Math.abs(x! - p.x) < MIN_SEPARATION);
+      if (!hit) break;
+      x = nearestGroundRight(hit.x + MIN_SEPARATION, ground.bands);
+    }
     if (x === null) {
       xs.set(member.id, nearestGround(member.wanted, HOMES_LO, HOMES_HI, ground.bands));
       continue;
@@ -550,10 +566,29 @@ export function pinSpot(x: number, y: number, others: readonly Pin[]): Pin {
  * left-to-right pack at the floor, which trades wanted-proximity for the
  * row's full carrying capacity; and only a row past even that seats
  * spacing-blind on clear ground. Scenery stays clear throughout.
+ *
+ * `pins` are villagers the player has placed by hand. They are seated first
+ * and never moved; the automatic crowd is then seated around them and the
+ * leash pass covers everyone. A pin whose id is absent from `ids` is ignored,
+ * so a creature deleted from disk cannot hold ground.
  */
-export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
+export function placeCreatures(
+  ids: readonly string[],
+  pins: ReadonlyMap<string, Pin> = new Map(),
+): Map<string, Spot> {
   const byRow = new Map<number, RowMember[]>();
+  const pinnedByRow = new Map<number, { id: string; x: number }[]>();
+
   for (const id of [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const pin = pins.get(id);
+    if (pin) {
+      // The row comes from where the player put it, not from the hash.
+      const row = Math.round((GROUND_FRONT - snapRowY(pin.y)) / ROW_DEPTH);
+      const list = pinnedByRow.get(row) ?? [];
+      list.push({ id, x: pin.x });
+      pinnedByRow.set(row, list);
+      continue;
+    }
     const h = hash(id);
     // Independent draws from the hash: the row, the rank, the stratum drift,
     // and (inside personalSpace) the radius.
@@ -570,8 +605,12 @@ export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
   }
 
   const spots = new Map<string, Spot>();
-  for (const [row, members] of byRow) {
+  for (const row of new Set([...byRow.keys(), ...pinnedByRow.keys()])) {
     const ground = ROW_GROUND[row]!;
+    const members = byRow.get(row) ?? [];
+    const pinnedHere = pinnedByRow.get(row) ?? [];
+    const pinnedOccupants: Occupant[] = pinnedHere.map((p) => ({ x: p.x, r: personalSpace(p.id) }));
+
     // Stratified, not uniform: hashing positions independently leaves Poisson
     // voids — stretches of empty field beside bunched-up stretches. Each
     // villager instead gets its own slice of the row's free ground, ordered
@@ -585,23 +624,34 @@ export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
     });
 
     const xs =
-      seatRow(ordered, ground, (a, other) => other.r + a.r) ??
-      seatRow(ordered, ground, () => MIN_SEPARATION) ??
-      seatRowPacked(ordered, ground);
+      seatRow(ordered, ground, (a, other) => other.r + a.r, pinnedOccupants) ??
+      seatRow(ordered, ground, () => MIN_SEPARATION, pinnedOccupants) ??
+      seatRowPacked(ordered, ground, pinnedOccupants);
+    for (const p of pinnedHere) xs.set(p.id, p.x);
 
-    // The wander leash: half the spare gap to each neighbour (both may be at
-    // their limits at once), never past a band edge or the row's ends.
+    // The leash: half the spare gap to each neighbour (both may be at their
+    // limits at once), never past a band edge or the villager's own bounds.
+    const feetY = rowY(row);
+    const generalBands = keepOutAt(feetY);
     const seated = [...xs.entries()].map(([id, x]) => ({ id, x })).sort((a, b) => a.x - b.x);
     seated.forEach((e, i) => {
-      const left = i === 0 ? e.x - HOMES_LO : (e.x - seated[i - 1]!.x - MIN_SEPARATION) / 2;
+      const isPinned = pins.has(e.id);
+      const lo = isPinned ? PIN_LO : HOMES_LO;
+      const hi = isPinned ? PIN_HI : HOMES_HI;
+      const left = i === 0 ? e.x - lo : (e.x - seated[i - 1]!.x - MIN_SEPARATION) / 2;
       const right =
-        i === seated.length - 1 ? HOMES_HI - e.x : (seated[i + 1]!.x - e.x - MIN_SEPARATION) / 2;
-      let leash = Math.min(WANDER_CAP, left, right);
-      for (const band of ground.bands) {
+        i === seated.length - 1 ? hi - e.x : (seated[i + 1]!.x - e.x - MIN_SEPARATION) / 2;
+      // The own-bounds terms are what stop a villager at the edge of Homes
+      // inheriting a huge leash because its nearest row-mate is a pin parked
+      // out in the Adoption Center. With no pins they never bind: an interior
+      // villager's neighbour term is already smaller, and an end villager's
+      // term is that distance exactly.
+      let leash = Math.min(WANDER_CAP, left, right, e.x - lo, hi - e.x);
+      for (const band of isPinned ? generalBands : ground.bands) {
         if (band.right <= e.x) leash = Math.min(leash, e.x - band.right);
         else if (band.left >= e.x) leash = Math.min(leash, band.left - e.x);
       }
-      spots.set(e.id, { x: e.x, y: rowY(row), wander: Math.max(0, Math.floor(leash)) });
+      spots.set(e.id, { x: e.x, y: feetY, wander: Math.max(0, Math.floor(leash)) });
     });
   }
 
