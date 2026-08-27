@@ -2,7 +2,7 @@ import { STAT_FLOOR, type Creature } from '@village/core';
 import { defaultLlmState, type LlmState } from '../llm/ledger.js';
 
 /** Bump when the shape changes incompatibly. loadState refuses anything higher. */
-export const STATE_VERSION = 4;
+export const STATE_VERSION = 5;
 
 /** A file that could not be imported. Surfaced as a quiet note, never blocking. */
 export interface ImportProblem {
@@ -13,6 +13,21 @@ export interface ImportProblem {
 /** Who lives in the physical robot (R-track). Null: the house stands empty. */
 export interface RobotState {
   residentId: string | null;
+}
+
+/**
+ * Where the player has parked villagers by hand, keyed by creature id.
+ *
+ * Village-level rather than a field on `Creature` for the same two reasons
+ * `robot.residentId` lives here: creature records are rebuilt from disk on
+ * import, and "release everyone" has to be a one-line write.
+ *
+ * The coordinates are the client's, already snapped to a depth row. The
+ * server stores them and never re-derives them — the world geometry lives in
+ * the web package and the server has no business depending on it.
+ */
+export interface LayoutState {
+  pins: Record<string, { x: number; y: number }>;
 }
 
 export interface VillageState {
@@ -26,6 +41,8 @@ export interface VillageState {
   llm: LlmState;
   /** Who currently lives in the physical robot (R1/R2). */
   robot: RobotState;
+  /** Where the player has parked villagers by hand. */
+  layout: LayoutState;
 }
 
 export function emptyState(now: number): VillageState {
@@ -37,6 +54,7 @@ export function emptyState(now: number): VillageState {
     problems: [],
     llm: defaultLlmState(now),
     robot: { residentId: null },
+    layout: { pins: {} },
   };
 }
 
@@ -58,13 +76,14 @@ function rested(creature: Creature): Creature {
 /**
  * Upgrade an older on-disk state in memory. v1 -> v2 adds the llm block with
  * spec defaults; v2 -> v3 lifts stats stranded below the resting floor;
- * v3 -> v4 adds the robot house. Each step is pinned to its own version number,
+ * v3 -> v4 adds the robot house; v4 -> v5 adds the layout block, where
+ * hand-placed villagers are recorded. Each step is pinned to its own version number,
  * so a save arriving at any floor picks up every upgrade above it. Called only
  * after the caller has validated `parsed` as a known-version state shape —
  * never with an arbitrary unknown.
  */
 export function migrateState(
-  parsed: VillageState & { llm?: LlmState; robot?: RobotState },
+  parsed: VillageState & { llm?: LlmState; robot?: RobotState; layout?: LayoutState },
   now: number,
 ): VillageState {
   // v1: everything v1 validated still holds; it only lacks the llm block.
@@ -76,5 +95,6 @@ export function migrateState(
     state = { ...state, version: 3, creatures };
   }
   if (state.version === 3) state = { ...state, version: 4, robot: { residentId: null } };
+  if (state.version === 4) state = { ...state, version: 5, layout: { pins: {} } };
   return state;
 }

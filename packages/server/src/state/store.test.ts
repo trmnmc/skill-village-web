@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { readFile, writeFile, rm } from 'node:fs/promises';
 import { makeSandbox, type Sandbox } from '../testing/sandbox.js';
 import { loadState, saveState } from './store.js';
-import { emptyState, STATE_VERSION } from './schema.js';
+import { emptyState, migrateState, STATE_VERSION, type VillageState } from './schema.js';
+import { defaultLlmState } from '../llm/ledger.js';
 
 let sandbox: Sandbox | null = null;
 afterEach(async () => { await sandbox?.cleanup(); sandbox = null; });
@@ -224,6 +225,30 @@ describe('robot block (v4)', () => {
     expect(state.version).toBe(STATE_VERSION);
     expect(state.llm).toBeDefined();
     expect(state.robot).toEqual({ residentId: null });
+  });
+});
+
+describe('layout migration', () => {
+  it('v4 gains an empty layout block and nothing else changes', () => {
+    const v4 = {
+      version: 4,
+      createdAt: 1,
+      updatedAt: 2,
+      creatures: {},
+      problems: [],
+      llm: defaultLlmState(1),
+      robot: { residentId: 'skill:someone' },
+    } as unknown as VillageState;
+    const out = migrateState(v4, 99);
+    expect(out.version).toBe(5);
+    expect(out.layout).toEqual({ pins: {} });
+    expect(out.robot).toEqual({ residentId: 'skill:someone' });
+    expect(out.createdAt).toBe(1);
+  });
+
+  it('a fresh state starts with no pins', () => {
+    expect(emptyState(1).layout).toEqual({ pins: {} });
+    expect(emptyState(1).version).toBe(5);
   });
 });
 
