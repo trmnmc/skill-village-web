@@ -20,6 +20,8 @@ export function mountLayoutButton(
   button.id = 'layout-reset-button';
   button.textContent = '↺';
   button.title = 'Put every villager back where the village would seat them';
+  // Matches #weather-menu-button / #sound-mute's own aria-label convention.
+  button.setAttribute('aria-label', 'Put every villager back');
 
   // Never offer to undo nothing.
   const refresh = () => {

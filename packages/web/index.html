@@ -99,8 +99,10 @@
         background: var(--sv-panel-bg, #FFFDF4); border: 2px solid var(--sv-ink, #3A2E22);
         color: var(--sv-panel-fg, #3A2E22); font-size: 18px; line-height: 1;
       }
-      /* Beside the weather gear, same size and z-layer; see #weather-menu. */
-      #layout-reset { position: fixed; left: 58px; bottom: 14px; z-index: 9; }
+      /* left: 106px, not 58px — the control row is already weather (14-50)
+         then #sound-hud's #sound-mute (60-96, see #sound-hud above); this
+         is the next open slot, 10px clear of the mute button. */
+      #layout-reset { position: fixed; left: 106px; bottom: 14px; z-index: 9; }
       #layout-reset-button {
         width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
         background: var(--sv-panel-bg, #FFFDF4); border: 2px solid var(--sv-ink, #3A2E22);

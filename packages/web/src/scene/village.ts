@@ -68,6 +68,13 @@ export interface VillageOptions {
   onRobotDrop?(creatureId: string): void;
   /** The current resident was dragged off the robot-house and let go elsewhere. */
   onRobotEvict?(creatureId: string): void;
+  /**
+   * The local `pins` map just changed (a drop, or a reset) — fired
+   * synchronously, before the round trip to the server. Without this, the
+   * HUD's reset button only learns about a fresh pin on the next view
+   * broadcast, up to ~2s later.
+   */
+  onPinsChanged?(): void;
 }
 
 /** How far a press may travel and still count as a click, in client pixels. */
@@ -632,6 +639,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         const spot = resolveDrop(pins, gesture.targetId, dropX, dropY);
         pins.set(gesture.targetId, spot);
         reseat();
+        opts.onPinsChanged?.();
         void pinCreature(gesture.targetId, spot.x, spot.y);
       }
     }
@@ -807,6 +815,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
       if (pins.size === 0) return;
       pins = new Map();
       reseat();
+      opts.onPinsChanged?.();
       void resetLayoutCall();
     },
     hasPins() {

@@ -7,7 +7,7 @@ import { mountSoundHud } from './sound/hud.js';
 import { mountSoundcheck } from './sound/soundcheck.js';
 import { initTheme } from './theme/index.js';
 import { mountWeatherMenu } from './ui/weather-menu.js';
-import { mountLayoutButton } from './ui/layout-button.js';
+import { mountLayoutButton, type LayoutButton } from './ui/layout-button.js';
 
 // Boot the theme store first: it applies --sv-* CSS vars to the document root,
 // and everything painted after this (chat panel, scene chrome) should see them.
@@ -24,6 +24,11 @@ const panel = createChatPanel({
   onThinkingDone: (creatureId) => scene.clearThoughtFor(creatureId),
 });
 
+// Declared before startVillage and closed over below: onPinsChanged fires
+// from inside startVillage's own setup, before mountLayoutButton (which
+// needs the resolved `scene`) can exist to be called directly.
+let layoutButton: LayoutButton | null = null;
+
 const scene = await startVillage({
   onCreatureClick: (creature) => {
     panel.open({ id: creature.id, label: displayName(creature) });
@@ -34,9 +39,12 @@ const scene = await startVillage({
   // which is the only confirmation that means anything.
   onRobotDrop: (creatureId) => void setRobotResident(creatureId),
   onRobotEvict: () => void setRobotResident(null),
+  // A drop or reset updates the local pins map synchronously; the button
+  // should not wait ~2s for the next server broadcast to notice.
+  onPinsChanged: () => layoutButton?.refresh(),
 });
 
-const layoutButton = mountLayoutButton(document.body, scene);
+layoutButton = mountLayoutButton(document.body, scene);
 
 sound.init();
 mountSoundHud();
@@ -53,7 +61,7 @@ let wasOffline = false;
 connect({
   onView: (view) => {
     scene.setView(view);
-    layoutButton.refresh();
+    layoutButton?.refresh();
     if (view.llm) setSilentBanner(view.llm.mode);
   },
   onStatus: (status) => {
