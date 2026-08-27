@@ -16,8 +16,6 @@ import {
   TREE_BASE_Y,
   SIGN_BASE_Y,
   signLeft,
-  placeCreatures,
-  pinSpot,
   type Spot,
   type Pin,
 } from '../layout/zones.js';
@@ -33,11 +31,12 @@ import { mountSky } from './sky.js';
 import { mountWeather } from './weather-layer.js';
 import { createRobotHouse } from './robotHouse.js';
 import { buildGroundTexture, retintGroundTexture, groundPreset } from './ground.js';
-import { PORCH_SPOT, inRobotHouse } from '../layout/robot.js';
+import { inRobotHouse } from '../layout/robot.js';
 import { createDragTracker } from '../input/drag.js';
 import { createHeld, type HeldCreature } from './held.js';
 import { displayName } from '../render/label.js';
 import { pinCreature, resetLayout as resetLayoutCall } from '../net/client.js';
+import { resolveDrop, seatAll } from './placement.js';
 
 export interface VillageScene {
   k: KAPLAYCtx;
@@ -456,8 +455,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
    * player let go, rather than on the next frame from the server.
    */
   const reseat = () => {
-    const spots = placeCreatures([...placements.keys()], pins);
-    if (residentId && spots.has(residentId)) spots.set(residentId, { ...PORCH_SPOT });
+    const spots = seatAll([...placements.keys()], pins, residentId);
     placements = spots;
     for (const [id, actor] of actors) {
       const spot = spots.get(id);
@@ -621,10 +619,17 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         // Everywhere else means "this is where you live now". Resolved here,
         // not on the server, because the resolved spot is what gets stored:
         // what the player sees on release is what reloads later.
-        const others = [...pins.entries()]
-          .filter(([id]) => id !== gesture.targetId)
-          .map(([, at]) => at);
-        const spot = pinSpot(worldX, worldY, others);
+        //
+        // `worldX`/`worldY` above skip the /ZOOM divide that `screenToWorld`
+        // applies — `inRobotHouse`'s box is forgiving enough (130x130) to
+        // absorb that drift, but a pin has to land exactly under the cursor
+        // (the held villager is drawn via `screenToWorld` too), so this
+        // branch recomputes its own point through the same helper rather
+        // than reusing the shared, uncorrected one. Do not "simplify" this
+        // back to worldX/worldY — that reintroduces up to ~140px of drift.
+        const dropX = screenToWorld(event.clientX - rect.left, k.getCamPos().x, k.width());
+        const dropY = screenToWorld(event.clientY - rect.top, k.getCamPos().y, k.height());
+        const spot = resolveDrop(pins, gesture.targetId, dropX, dropY);
         pins.set(gesture.targetId, spot);
         reseat();
         void pinCreature(gesture.targetId, spot.x, spot.y);
@@ -693,12 +698,12 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         : '';
       layoutHudChip();
       pins = new Map(Object.entries(view.pins).map(([id, at]) => [id, { ...at }]));
-      const spots = placeCreatures(view.creatures.map((c) => c.id), pins);
-
-      // The resident stands at the robot-house porch, not its hashed spot
-      // (spec §4: a glance at the house says who the robot is).
+      // The resident stands at the robot-house porch, not its hashed spot or
+      // any pin it holds (spec §4: a glance at the house says who the robot
+      // is) — `residentId` has to be current before `seatAll` runs, since
+      // that override lives inside it now, shared with `reseat()`.
       residentId = view.robotResidentId;
-      if (residentId && spots.has(residentId)) spots.set(residentId, { ...PORCH_SPOT });
+      const spots = seatAll(view.creatures.map((c) => c.id), pins, residentId);
 
       const resident = residentId ? view.creatures.find((c) => c.id === residentId) : undefined;
       robotHouse.setResidentLabel(resident ? displayName(resident) : null);
