@@ -114,6 +114,15 @@ export interface CreatureActor {
   clearThought(): void;
   /** The creature's audible signature, played when the player opens chat with it. */
   greet(): void;
+  /**
+   * Lift this villager off the ground, or set it back down. While held, the
+   * actor draws nothing and makes no sound — `scene/held.ts` is drawing it on
+   * the cursor instead — and putting it back down lands it with the same puff
+   * and thud a hop does. Idempotent: only a real change does anything.
+   */
+  setHeld(held: boolean): void;
+  /** Whether this villager is currently in the player's hand. */
+  isHeld(): boolean;
   destroy(): void;
 }
 
@@ -647,6 +656,13 @@ export async function spawnCreature(
     }
   }
 
+  // Whether the player is holding this villager right now. It hides the whole
+  // root, but the actor keeps updating underneath: the motion clock is
+  // absolute, so nothing needs winding back when it lands, and letting
+  // `update` run means a creature is drawn correctly on the very first frame
+  // after it is set down rather than one frame stale.
+  let held = false;
+
   // Timestamp of the most recently *observed* landing, so a hopper's `update`
   // (called once per frame) fires a puff exactly once per landing rather than
   // on every frame the hop's own `landedAt` continues to report it. Null only
@@ -873,12 +889,19 @@ export async function spawnCreature(
       // firing on every frame the hop is "in a landed state" is what keeps
       // one hop to exactly one puff.
       if (hop && hop.landedAt !== null) {
-        if (lastLanding === null) {
+        if (lastLanding === null || held) {
           // The first landing this actor ever sees is one it did not watch
           // happen: the hop clock is staggered by -phi * 2.6, so most hoppers
           // are already mid-cycle on their first drawn frame and hopState
           // reports a landing that took place before the creature existed.
           // Adopt it silently — a puff is punctuation on a transition.
+          //
+          // Every landing during a hold is adopted the same silent way. The
+          // hop clock runs on regardless of whose hand the creature is in,
+          // and `puff` adds to the *scene* root rather than this one, so
+          // without this a held hopper would kick dust off the empty patch of
+          // ground it is not standing on. Adopting as we go also means being
+          // set down never fires the backlog.
           lastLanding = hop.landedAt;
         } else if (hop.landedAt !== lastLanding) {
           lastLanding = hop.landedAt;
@@ -956,6 +979,26 @@ export async function spawnCreature(
     },
     greet() {
       sound.event({ type: 'greeting', x: at.x, voice });
+    },
+    /**
+     * `root.hidden` is enough to take the whole villager off screen: KAPLAY's
+     * `draw()` returns on a hidden object *before* it walks its children, so
+     * the body, wings, eyes, sign, bubble and sleep glyphs all go with it.
+     */
+    setHeld(next) {
+      if (next === held) return;
+      held = next;
+      root.hidden = next;
+      // Being set down is a landing, and it gets a landing's punctuation —
+      // the same puff and thud a hop earns, at the feet the creature is
+      // standing on rather than at the cursor that let go of it.
+      if (!next) {
+        puff(k, root.pos.x, root.pos.y);
+        sound.event({ type: 'touch-down', x: at.x });
+      }
+    },
+    isHeld() {
+      return held;
     },
     destroy() {
       k.destroy(root);

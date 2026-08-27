@@ -1,14 +1,4 @@
-import kaplay, {
-  type KAPLAYCtx,
-  type GameObj,
-  type AnchorComp,
-  type ColorComp,
-  type PosComp,
-  type RectComp,
-  type ScaleComp,
-  type TextComp,
-  type ZComp,
-} from 'kaplay';
+import kaplay, { type KAPLAYCtx } from 'kaplay';
 import type { Creature } from '@village/core/visual';
 import { TEXT_SS } from '../theme.js';
 import { themeStore } from '../theme/index.js';
@@ -43,6 +33,7 @@ import { createRobotHouse } from './robotHouse.js';
 import { buildGroundTexture, retintGroundTexture, groundPreset } from './ground.js';
 import { PORCH_SPOT, inRobotHouse } from '../layout/robot.js';
 import { createDragTracker } from '../input/drag.js';
+import { createHeld, type HeldCreature } from './held.js';
 import { displayName } from '../render/label.js';
 
 export interface VillageScene {
@@ -415,14 +406,37 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   const tracker = createDragTracker(CLICK_SLOP);
   let residentId: string | null = null;
 
-  // The drag ghost's game objects, live only while a drag is in progress. See
-  // the onUpdate block below. Typed explicitly (rather than
-  // `ReturnType<typeof k.add>`, which loses the component union to the
-  // generic's unconstrained default) so `.pos`/`.text` stay visible once
-  // reassigned from `null` — the same shape `k.add`'s own inference would
-  // give a `const` binding of the identical component list.
-  let ghost: GameObj<RectComp | ColorComp | PosComp | AnchorComp | ZComp> | null = null;
-  let ghostLabel: GameObj<TextComp | ScaleComp | PosComp | AnchorComp | ColorComp | ZComp> | null = null;
+  // The villager in the player's hand: the id, and the dangling visual that
+  // draws it on the cursor. Both live only while a drag is past the slop.
+  //
+  // `heldId` is the authority and outlives `held`: a creature can be picked up
+  // before its sprites finish loading (createHeld returns null), and a respawn
+  // mid-drag destroys and rebuilds the actor under us. Keeping the id
+  // separately is what lets `setHeld(true)` be re-applied to whatever actor is
+  // current, and guarantees the villager is put back down even on the frames
+  // where there was never anything to draw.
+  let heldId: string | null = null;
+  let held: HeldCreature | null = null;
+  // Cursor world-x on the previous frame, for the swing's drive velocity.
+  // Null between drags so the first frame of a new grab reads as zero speed
+  // rather than as a leap from wherever the last one ended.
+  let lastHeldX: number | null = null;
+
+  /**
+   * Put the villager down: retire the dangling visual and hand the actor back
+   * its body. Safe to call when nothing is held, which is what lets every exit
+   * from a gesture — drop, click, cancel — funnel through one path rather than
+   * each remembering to clean up.
+   */
+  const release = () => {
+    held?.destroy();
+    held = null;
+    lastHeldX = null;
+    if (heldId !== null) {
+      actors.get(heldId)?.setHeld(false);
+      heldId = null;
+    }
+  };
 
   k.onMouseMove((pos) => {
     lookAt = screenToWorld(pos.x, k.getCamPos().x, k.width());
@@ -441,7 +455,13 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     // short creatures compete fairly. Its actor fades its nameplate in;
     // everyone else stays a clean, label-free silhouette.
     hoveredId = null;
-    if (lookAt !== null && cursorY !== null) {
+    // Nobody is hovered while the player is carrying somebody. Otherwise every
+    // villager the hand passes over fades its nameplate in and — because the
+    // hover bump is worth 100000 depth — leaps in front of the creature being
+    // carried. A live drag also cannot start a second one, so nothing else
+    // needs this value until the hand is empty again.
+    const carrying = tracker.current()?.dragging ?? false;
+    if (!carrying && lookAt !== null && cursorY !== null) {
       let best = 90 * 90;
       for (const [id, spot] of placements) {
         // Aim at where the villager is drawn, not its home spot — an ambling
@@ -467,6 +487,9 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
       for (const [id, spot] of placements) {
         const c = known.get(id);
         if (!c) continue;
+        // A villager in the player's hand does not chirp from the empty patch
+        // of ground it is not standing on.
+        if (id === heldId) continue;
         if (Math.abs(spot.x - camX) > halfW) continue;
         // Same "happy and awake" bar behaviourFor uses to decide who hops
         // (motion/behaviour.ts) — one pair of thresholds, not two that can
@@ -479,34 +502,34 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
 
     for (const [id, actor] of actors) actor.update(t, lookAt, id === hoveredId);
 
-    // The drag ghost: a small accent square with the dragged villager's name,
-    // riding the cursor while a drag is live. Created and destroyed here so
-    // there is nothing to leak when the gesture ends off-canvas.
+    // The villager in hand: its own body, hanging off the cursor and swinging
+    // with the drag, while the actor it came from stands hidden at its spot.
+    // Built and retired here so there is nothing to leak when a gesture ends
+    // off-canvas.
     const drag = tracker.current();
     if (drag?.dragging && lookAt !== null && cursorY !== null) {
-      // Both created (or neither) — checking both, not just `ghost`, is
-      // what lets TS narrow `ghostLabel` to non-null below too.
-      if (!ghost || !ghostLabel) {
-        ghost = k.add([k.rect(18, 18), k.color(hex(k, sceneryColor(themeStore.current().tokens, themeStore.current().tint, 'accent'))), k.pos(0, 0), k.anchor('center'), k.z(60), tokenTag('accent')]);
-        ghostLabel = k.add([
-          k.text('', { size: 12 * TEXT_SS, font: monoFont }),
-          k.scale(1 / TEXT_SS),
-          k.pos(0, 0),
-          k.anchor('center'),
-          k.color(hex(k, sceneryColor(themeStore.current().tokens, themeStore.current().tint, 'ink'))),
-          tokenTag('ink'),
-          k.z(61),
-        ]);
+      if (heldId !== drag.targetId) {
+        // A new grab — including the case where a previous one is somehow
+        // still standing, which `release` settles before this one starts.
+        release();
+        heldId = drag.targetId;
+        actors.get(heldId)?.setHeld(true);
+        const dragged = known.get(heldId);
+        // Null when the sprites for this creature have not finished baking.
+        // The gesture still works; there is just nothing in the hand to see
+        // until the player lets go, which is a sub-second window at startup.
+        held = dragged ? createHeld(k, dragged, { pixel: pixelFont, mono: monoFont }) : null;
       }
-      ghost.pos = k.vec2(lookAt, cursorY);
-      ghostLabel.pos = k.vec2(lookAt, cursorY - 20);
-      const dragged = known.get(drag.targetId);
-      ghostLabel.text = dragged ? displayName(dragged) : '';
-    } else if (ghost) {
-      ghost.destroy();
-      ghostLabel?.destroy();
-      ghost = null;
-      ghostLabel = null;
+      // Raw per-frame velocity. The dangle spring is itself a low-pass, so it
+      // does the smoothing that a sampling buffer would otherwise have to.
+      const vx = lastHeldX === null ? 0 : (lookAt - lastHeldX) / Math.max(k.dt(), 1e-4);
+      lastHeldX = lookAt;
+      held?.update(t, k.dt(), lookAt, cursorY, vx);
+    } else if (heldId !== null) {
+      // The gesture ended somewhere this handler never saw — a cancel, or a
+      // release that the mouseup path already dealt with. Either way, nobody
+      // is left hanging.
+      release();
     }
   });
 
@@ -550,6 +573,10 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   window.addEventListener('mouseup', (event) => {
     if (event.button !== 0) return;
     const gesture = tracker.release(event.clientX, event.clientY);
+    // Before any branch: whatever this gesture turns out to have been, the
+    // hand is now empty. Doing it here rather than waiting for the next
+    // onUpdate is what puts the landing puff on the frame the player let go.
+    release();
     if (gesture.type === 'click') {
       const creature = known.get(gesture.targetId);
       if (creature) opts.onCreatureClick?.(creature);
@@ -669,6 +696,11 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
               // snapshot the spawn started from.
               actor.setSpot(placements.get(creature.id) ?? spot);
               actor.setCreature(known.get(creature.id) ?? creature);
+              // A look that changes mid-drag respawns the actor under the
+              // player's hand. The fresh one starts visible and standing at
+              // its spot, so without this the villager would appear twice —
+              // once dangling from the cursor, once back on the ground.
+              if (heldId === creature.id) actor.setHeld(true);
               actors.set(creature.id, actor);
             })
             .catch(() => {
