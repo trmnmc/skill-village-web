@@ -615,4 +615,111 @@ describe('placeCreatures with pins', () => {
       expect(blocked.some((b) => spot.x > b.left && spot.x < b.right)).toBe(false);
     }
   });
+
+  // The tests above all pass against a mutant that seats the automatic crowd
+  // as though `pins` did not exist — nothing in them forces a pin to actually
+  // hold ground. These four are built to fail under a specific deletion:
+  // pins ignored by the two seat* helpers, the seatRowPacked step-over loop
+  // gone, the leash's own-bounds clamp gone, and pinned villagers checked
+  // against the Homes-only bands instead of the general ones.
+
+  it('displaces the automatic villager that would otherwise have taken a pinned seat', () => {
+    const before = placeCreatures(ids);
+
+    // Pick a villager (`victim`) and a *different* villager (`pinnedId`) whose
+    // own automatic row differs from the victim's row — so removing
+    // `pinnedId` from the automatic crowd cannot itself explain anything that
+    // happens in the victim's row. Only the pin occupying the victim's exact
+    // seat can move it.
+    let victim: string | undefined;
+    let pinnedId: string | undefined;
+    outer: for (const [vId, vSpot] of before) {
+      for (const [pId, pSpot] of before) {
+        if (pId === vId || pSpot.y === vSpot.y) continue;
+        victim = vId;
+        pinnedId = pId;
+        break outer;
+      }
+    }
+    if (!victim || !pinnedId) throw new Error('fixture too uniform: no cross-row pair found');
+    const seat = before.get(victim)!;
+
+    const after = placeCreatures(ids, new Map([[pinnedId, { x: seat.x, y: seat.y }]]));
+    expect(after.get(pinnedId)!.x).toBe(seat.x);
+    expect(after.get(pinnedId)!.y).toBe(seat.y);
+    // The victim's row membership and stratified "wanted" position are
+    // exactly as before (pinnedId was never a row-mate), so a mutant that
+    // seats the crowd as though pins do not exist puts the victim right back
+    // at `seat.x` — on top of the pin. The real code has to move it off.
+    expect(after.get(victim)!.x).not.toBe(seat.x);
+    expect(Math.abs(after.get(victim)!.x - seat.x)).toBeGreaterThanOrEqual(MIN_SEPARATION);
+  });
+
+  it('clamps a villager’s leash to its own Homes bound when its only same-row neighbour is a pin parked outside Homes', () => {
+    // Found by inspection: in this 22-villager pool, skill:sz22-2 seats as the
+    // rightmost automatic villager in its row, 48px shy of HOMES_HI, with
+    // 226px of room to its left — comfortably more than either gap. Pinning a
+    // distant same-row companion out past Homes turns it from the row's last
+    // member (whose right term was already `hi - x`, the unclamped edge
+    // formula) into the second-to-last, whose right term becomes a
+    // neighbour-gap to the far pin. Without the own-bounds clamp, that gap —
+    // not the real distance to HOMES_HI — sets the leash, and the villager
+    // could wander off the edge of the zone.
+    const pool = Array.from({ length: 22 }, (_, i) => `skill:sz22-${i}`);
+    const before = placeCreatures(pool);
+    const edgeId = 'skill:sz22-2';
+    const edgeBefore = before.get(edgeId)!;
+    const companion = pool.find((id) => id !== edgeId && before.get(id)!.y !== edgeBefore.y)!;
+
+    const farPin = { x: Math.min(PIN_HI, edgeBefore.x + 500), y: edgeBefore.y };
+    const after = placeCreatures(pool, new Map([[companion, farPin]]));
+    const edgeAfter = after.get(edgeId)!;
+
+    expect(edgeAfter.x).toBe(edgeBefore.x);
+    // With the clamp: bounded by the real distance to HOMES_HI (48px). Without
+    // it: bounded only by the much larger gap to the far pin, so capped at
+    // WANDER_CAP instead — a different, larger number.
+    expect(edgeAfter.wander).toBe(HOMES_HI - edgeAfter.x);
+  });
+
+  it('steps a packed row around its pins instead of through them', () => {
+    // Enough automatic villagers in the front row — which carries no scenery
+    // bands, so the packing arithmetic is exact — to exhaust both the
+    // personal-space and MIN_SEPARATION rungs and reach seatRowPacked, the
+    // rung that packs left to right at the floor. Two pins are seeded exactly
+    // where an unaware packer would place its 3rd and 8th villagers.
+    const auto = Array.from({ length: 500 }, (_, i) => `skill:packcrowd-${i}`);
+    const pinA = 'skill:packed-pin-a';
+    const pinB = 'skill:packed-pin-b';
+    const packedIds = [...auto, pinA, pinB];
+    const pinAx = HOMES_LO + 2 * MIN_SEPARATION;
+    const pinBx = HOMES_LO + 7 * MIN_SEPARATION;
+    const pins = new Map<string, Pin>([
+      [pinA, { x: pinAx, y: GROUND_FRONT }],
+      [pinB, { x: pinBx, y: GROUND_FRONT }],
+    ]);
+
+    const spots = placeCreatures(packedIds, pins);
+    expect(spots.size).toBe(packedIds.length);
+    expect(spots.get(pinA)!.x).toBe(pinAx);
+    expect(spots.get(pinB)!.x).toBe(pinBx);
+    for (const [id, spot] of spots) {
+      if (id === pinA || id === pinB || spot.y !== GROUND_FRONT) continue;
+      expect(Math.abs(spot.x - pinAx)).toBeGreaterThanOrEqual(MIN_SEPARATION);
+      expect(Math.abs(spot.x - pinBx)).toBeGreaterThanOrEqual(MIN_SEPARATION);
+    }
+  });
+
+  it('clamps a pinned villager’s leash against the general bands, not just the Homes ones', () => {
+    // A pin can legally stand anywhere from PIN_LO to PIN_HI, including next
+    // to a construction site outside Homes — ground.bands (Homes-only,
+    // precomputed per row) never covers those. Resolving via pinSpot lands
+    // this pin flush against the site's keep-out band, so a lone pinned
+    // villager's leash is zero if and only if the general bands are actually
+    // consulted for it.
+    const pin = pinSpot(CONSTRUCTION_XS[0]! + 30, CONSTRUCTION_BASE_Y, []);
+    const soleId = 'skill:construction-neighbour';
+    const spots = placeCreatures([soleId], new Map([[soleId, pin]]));
+    expect(spots.get(soleId)!.wander).toBe(0);
+  });
 });
