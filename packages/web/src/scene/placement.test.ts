@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { resolveDrop, seatAll } from './placement.js';
-import { PIN_LO, PIN_HI, type Pin } from '../layout/zones.js';
+import { resolveDrop, resolveHeldDrop, seatAll } from './placement.js';
+import { PIN_LO, PIN_HI, snapRowY, type Pin } from '../layout/zones.js';
 import { PORCH_SPOT } from '../layout/robot.js';
 
 // A raw drop point picked to land clear of every prop's keep-out band, so
@@ -36,6 +36,30 @@ describe('resolveDrop', () => {
     const spot = resolveDrop(new Map(), 'a', -99999, 620);
     expect(spot.x).toBeGreaterThanOrEqual(PIN_LO);
     expect(spot.x).toBeLessThanOrEqual(PIN_HI);
+  });
+});
+
+describe('resolveHeldDrop', () => {
+  // A cursor y whose row (620, per snapRowY) sits comfortably inside the
+  // seven-row band — nowhere near the clamp at either end — so adding the
+  // offset below is guaranteed to land on a genuinely different row rather
+  // than being swallowed by a clamp both values would hit anyway.
+  const cursorY = 600;
+  // Bigger than one ROW_DEPTH (46px), so the feet land on a different row
+  // than the cursor itself — the exact bug this seam exists to fix.
+  const footOffset = 60;
+
+  it('resolves against the cursor y plus the foot offset, not the cursor alone', () => {
+    const atFeet = resolveHeldDrop(new Map(), 'a', 2900, cursorY, footOffset);
+    expect(atFeet.y).toBe(snapRowY(cursorY + footOffset));
+    expect(atFeet.y).not.toBe(snapRowY(cursorY));
+  });
+
+  it('falls back to the raw cursor position when there is nothing in the hand to measure', () => {
+    // footOffset is 0 for a drag whose sprites never finished loading —
+    // held.ts drew nothing, so there is no visible foot to correct for.
+    const atCursor = resolveHeldDrop(new Map(), 'a', 2900, cursorY, 0);
+    expect(atCursor).toEqual(resolveDrop(new Map(), 'a', 2900, cursorY));
   });
 });
 

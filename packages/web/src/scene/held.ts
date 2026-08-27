@@ -63,6 +63,16 @@ export interface HeldCreature {
    * the hand's horizontal speed in px/s (what drives the swing).
    */
   update(t: number, dt: number, x: number, y: number, cursorVx: number): void;
+  /**
+   * How far below the cursor this creature's feet hang, in world pixels:
+   * `GRAB_INSET` plus the body's own baked height. The body is top-anchored
+   * at the cursor (see `GRAB_INSET` above), so the cursor sits at the scruff
+   * and the feet — what the player is actually watching touch down — are
+   * this far south of it. `village.ts`'s drop handler adds this to the
+   * cursor's world y before resolving where the villager lands, so the spot
+   * that gets stored is the one the player saw, not the hand that let go.
+   */
+  footOffset(): number;
   destroy(): void;
 }
 
@@ -189,6 +199,9 @@ export function createHeld(
         const py = GRAB_INSET + (anchor.r + 1) * U;
         pupils[i]!.pos = k.vec2(px, py);
       });
+    },
+    footOffset() {
+      return GRAB_INSET + bh;
     },
     destroy() {
       k.destroy(root);

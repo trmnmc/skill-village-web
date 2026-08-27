@@ -36,7 +36,7 @@ import { createDragTracker } from '../input/drag.js';
 import { createHeld, type HeldCreature } from './held.js';
 import { displayName } from '../render/label.js';
 import { pinCreature, resetLayout as resetLayoutCall } from '../net/client.js';
-import { resolveDrop, seatAll } from './placement.js';
+import { resolveHeldDrop, seatAll } from './placement.js';
 import { hex, block } from './prop.js';
 import { mountConstruction } from './construction.js';
 
@@ -568,43 +568,55 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   window.addEventListener('mouseup', (event) => {
     if (event.button !== 0) return;
     const gesture = tracker.release(event.clientX, event.clientY);
-    // Before any branch: whatever this gesture turns out to have been, the
-    // hand is now empty. Doing it here rather than waiting for the next
-    // onUpdate is what puts the landing puff on the frame the player let go.
-    release();
     if (gesture.type === 'click') {
+      // A click never crosses the drag slop, so nothing was ever lifted and
+      // `release()` here is a no-op — called anyway, the same as every other
+      // ending, so the hand reads as empty before anything downstream runs.
+      release();
       const creature = known.get(gesture.targetId);
       if (creature) opts.onCreatureClick?.(creature);
       return;
     }
-    if (gesture.type === 'drop') {
-      const rect = k.canvas.getBoundingClientRect();
-      const worldX = event.clientX - rect.left + k.getCamPos().x - k.width() / 2;
-      const worldY = event.clientY - rect.top + k.getCamPos().y - k.height() / 2;
-      if (inRobotHouse(worldX, worldY)) {
-        opts.onRobotDrop?.(gesture.targetId);
-      } else if (gesture.targetId === residentId) {
-        opts.onRobotEvict?.(gesture.targetId);
-      } else {
-        // Everywhere else means "this is where you live now". Resolved here,
-        // not on the server, because the resolved spot is what gets stored:
-        // what the player sees on release is what reloads later.
-        //
-        // `worldX`/`worldY` above skip the /ZOOM divide that `screenToWorld`
-        // applies — `inRobotHouse`'s box is forgiving enough (130x130) to
-        // absorb that drift, but a pin has to land exactly under the cursor
-        // (the held villager is drawn via `screenToWorld` too), so this
-        // branch recomputes its own point through the same helper rather
-        // than reusing the shared, uncorrected one. Do not "simplify" this
-        // back to worldX/worldY — that reintroduces up to ~140px of drift.
-        const dropX = screenToWorld(event.clientX - rect.left, k.getCamPos().x, k.width());
-        const dropY = screenToWorld(event.clientY - rect.top, k.getCamPos().y, k.height());
-        const spot = resolveDrop(pins, gesture.targetId, dropX, dropY);
-        pins.set(gesture.targetId, spot);
-        reseat();
-        opts.onPinsChanged?.();
-        void pinCreature(gesture.targetId, spot.x, spot.y);
-      }
+    if (gesture.type !== 'drop') {
+      release();
+      return;
+    }
+    // One point, computed once, for the whole gesture: `screenToWorld`
+    // applies the /ZOOM divide KAPLAY's camera uses (camera.ts) — skipping it
+    // used to leave `inRobotHouse`'s hit test up to ~140px off, wide of even
+    // its forgiving 130x130 box. Both the hit test and the pin below now read
+    // the same corrected point that the held villager is actually drawn at.
+    const rect = k.canvas.getBoundingClientRect();
+    const worldX = screenToWorld(event.clientX - rect.left, k.getCamPos().x, k.width());
+    const worldY = screenToWorld(event.clientY - rect.top, k.getCamPos().y, k.height());
+    if (inRobotHouse(worldX, worldY)) {
+      release();
+      opts.onRobotDrop?.(gesture.targetId);
+    } else if (gesture.targetId === residentId) {
+      release();
+      opts.onRobotEvict?.(gesture.targetId);
+    } else {
+      // Everywhere else means "this is where you live now". Resolved here,
+      // not on the server, because the resolved spot is what gets stored:
+      // what the player sees on release is what reloads later.
+      //
+      // Resolved against the villager's FEET, not the cursor: held.ts grabs
+      // the body at the scruff and lets it hang down from there, so the
+      // cursor's own y reads a row or two further back (toward the horizon)
+      // than where the body was actually touching down. `held` has to be
+      // read for this before `release()` clears it below.
+      const footOffset = held?.footOffset() ?? 0;
+      const spot = resolveHeldDrop(pins, gesture.targetId, worldX, worldY, footOffset);
+      pins.set(gesture.targetId, spot);
+      reseat();
+      // `release()` is what fires the landing puff and the touch-down sound
+      // (via actor.setHeld(false)), at the actor's position *right now* — so
+      // it has to run after `reseat()` has already moved the actor to
+      // `spot`, or both land on the villager's old ground instead of its new
+      // one.
+      release();
+      opts.onPinsChanged?.();
+      void pinCreature(gesture.targetId, spot.x, spot.y);
     }
   });
 

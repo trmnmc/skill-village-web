@@ -21,6 +21,26 @@ export function resolveDrop(pins: ReadonlyMap<string, Pin>, id: string, x: numbe
 }
 
 /**
+ * `resolveDrop`, corrected for how far below the cursor a held creature's
+ * feet actually hang. `held.ts` grabs a creature at the scruff and lets its
+ * body dangle down from there (`GRAB_INSET` plus the body's baked height —
+ * see `HeldCreature.footOffset`), so resolving straight off the cursor's own
+ * y reads a row or two further back, toward the horizon, than where the body
+ * was visibly touching down. `footOffset` is 0 for a drag whose sprites never
+ * finished loading (nothing was drawn in the hand), which falls back to the
+ * cursor's own position exactly as before this existed.
+ */
+export function resolveHeldDrop(
+  pins: ReadonlyMap<string, Pin>,
+  id: string,
+  x: number,
+  cursorY: number,
+  footOffset: number,
+): Pin {
+  return resolveDrop(pins, id, x, cursorY + footOffset);
+}
+
+/**
  * Seat every villager — pins and all — then stand the robot's resident on
  * the porch regardless of any pin it holds. Residency beats a pin the same
  * way it already beats the automatic hash-seat: the house always shows who
