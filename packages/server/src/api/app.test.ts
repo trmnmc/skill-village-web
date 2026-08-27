@@ -460,3 +460,65 @@ describe('the LLM rate limit', () => {
     }
   });
 });
+
+describe('PUT /api/creatures/:id/pin', () => {
+  it('pins a creature and answers with the layout', async () => {
+    const app = await boot(['pinned']);
+    const res = await app.inject({
+      method: 'PUT', url: '/api/creatures/skill:pinned/pin', payload: { x: 1500, y: 620 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().pins['skill:pinned']).toEqual({ x: 1500, y: 620 });
+  });
+
+  it('refuses coordinates that are not finite numbers', async () => {
+    const app = await boot(['pinned']);
+    for (const payload of [
+      { x: 'left', y: 620 },
+      { x: null, y: 620 },
+      { x: 1, y: 1e9 },
+      { x: 1 },
+    ]) {
+      const res = await app.inject({
+        method: 'PUT', url: '/api/creatures/skill:pinned/pin', payload,
+      });
+      expect(res.statusCode).toBe(400);
+    }
+  });
+
+  it('404s for a creature that does not exist', async () => {
+    const app = await boot(['pinned']);
+    const res = await app.inject({
+      method: 'PUT', url: '/api/creatures/skill:ghost/pin', payload: { x: 1, y: 1 },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('the layout endpoints', () => {
+  it('GET /api/layout reports the pins', async () => {
+    const app = await boot(['pinned']);
+    const res = await app.inject({ method: 'GET', url: '/api/layout' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ pins: {} });
+  });
+
+  it('POST /api/layout/reset clears them', async () => {
+    const app = await boot(['pinned']);
+    await app.inject({
+      method: 'PUT', url: '/api/creatures/skill:pinned/pin', payload: { x: 1500, y: 620 },
+    });
+    const res = await app.inject({ method: 'POST', url: '/api/layout/reset' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ pins: {} });
+  });
+
+  it('carries pins on the state payload the client reads', async () => {
+    const app = await boot(['pinned']);
+    await app.inject({
+      method: 'PUT', url: '/api/creatures/skill:pinned/pin', payload: { x: 1500, y: 620 },
+    });
+    const res = await app.inject({ method: 'GET', url: '/api/state' });
+    expect(res.json().layout.pins['skill:pinned']).toEqual({ x: 1500, y: 620 });
+  });
+});

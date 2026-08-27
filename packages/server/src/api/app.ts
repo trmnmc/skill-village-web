@@ -263,6 +263,40 @@ export async function createApp(village: Village, opts: AppOptions = {}): Promis
     return robotSnapshot();
   });
 
+  const layoutSnapshot = () => ({ pins: village.getState().layout.pins });
+
+  app.get('/api/layout', async () => layoutSnapshot());
+
+  /**
+   * The client owns the geometry: it snaps a drop to a depth row and clamps it
+   * inside the world before ever calling this (see layout/zones.ts). The
+   * server's validation is a sanity rail against garbage reaching the save,
+   * not a second copy of the layout rules — reproducing them here would mean
+   * the server depending on the web package, which it never does.
+   */
+  const SANE = 100_000;
+  app.put<{ Params: { id: string }; Body: { x?: unknown; y?: unknown } }>(
+    '/api/creatures/:id/pin',
+    async (request, reply) => {
+      const { x, y } = request.body ?? {};
+      const ok = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= SANE;
+      if (!ok(x) || !ok(y)) {
+        return reply.code(400).send({ error: 'x and y must be finite numbers within the world' });
+      }
+      try {
+        await village.pinCreature(request.params.id, x, y);
+      } catch (error) {
+        return reply.code(404).send({ error: (error as Error).message });
+      }
+      return layoutSnapshot();
+    },
+  );
+
+  app.post('/api/layout/reset', async () => {
+    await village.resetLayout();
+    return layoutSnapshot();
+  });
+
   // ---- The robot shim: an OpenAI-compatible brain for the voice gateway ----
   // The gateway is configured with this server as its one "LLM provider"; it
   // never knows claude exists. Which creature answers is looked up per turn,
