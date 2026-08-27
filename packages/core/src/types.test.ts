@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BODY_IDS, CROWN_IDS, REST_POSTURE_IDS } from './types.js';
+import { BODY_IDS, CROWN_IDS, REST_POSTURE_IDS, role } from './types.js';
 import type { Creature } from './types.js';
 
 describe('id lists', () => {
@@ -35,5 +35,13 @@ describe('cannedLines', () => {
     expect(bare.cannedLines).toBeUndefined();
     const pooled: Creature = { ...bare, cannedLines: ['hello there'] };
     expect(pooled.cannedLines).toEqual(['hello there']);
+  });
+});
+
+describe('role', () => {
+  it('derives helper for skills and agents, project for projects', () => {
+    expect(role('skill')).toBe('helper');
+    expect(role('agent')).toBe('helper');
+    expect(role('project')).toBe('project');
   });
 });
