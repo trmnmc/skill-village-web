@@ -144,7 +144,14 @@ export function reconcileProjects(
 
     if (existing.retired) continue;
 
-    if (existing.sourcePath !== found.sourcePath) {
+    // A scan that resolved no cwd knows nothing about identity: discovery
+    // falls back to the encoded entry name and an empty path, which is right
+    // for a newcomer and a downgrade for anyone else. If the transcript format
+    // ever drifts (spec §3 owns that fragility), taking it would rename every
+    // project to its ugly entry name and blank every sourcePath in one scan.
+    const knowsIdentity = found.sourcePath !== '';
+
+    if (knowsIdentity && existing.sourcePath !== found.sourcePath) {
       events.push({
         at: now,
         type: 'resynced',
@@ -152,12 +159,12 @@ export function reconcileProjects(
         detail: `Source moved to ${found.sourcePath}`,
       });
     }
-    // The identity rule again: stats, bond, nickname, persona and appearance
-    // survive; only the pointer and the work signal refresh.
+    // The identity rule again: stats, bond, nickname, persona, appearance —
+    // and the display name — survive; only the pointer and the work signal
+    // refresh.
     creatures[found.id] = {
       ...existing,
-      name: found.displayName,
-      sourcePath: found.sourcePath,
+      ...(knowsIdentity ? { name: found.displayName, sourcePath: found.sourcePath } : {}),
       lastWorkedAt: found.lastWorkedAt,
       helperIds: links.helperIds,
       unresolvedMentions: links.unresolved,

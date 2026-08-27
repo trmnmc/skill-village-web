@@ -225,6 +225,20 @@ describe('reconcileProjects', () => {
     expect(c.lastWorkedAt).toBe(9000);
   });
 
+  it('a scan that resolved no cwd keeps the identity the project already had', () => {
+    const existing = creatureFromProject(project({ lastWorkedAt: 500 }), 100);
+    // What discoverProjects returns when no transcript line yields a cwd: the
+    // encoded entry name and no path. True of a newcomer, a downgrade for a
+    // project that already knows its own name.
+    const blind = project({ displayName: 'C--dev-proj-a', sourcePath: '', lastWorkedAt: 9000 });
+    const result = reconcileProjects(stateWithCreature(existing), [blind], 2000);
+    const c = result.state.creatures[existing.id]!;
+    expect(c.name).toBe('proj-a');
+    expect(c.sourcePath).toBe('/home/dev/proj-a');
+    expect(c.lastWorkedAt).toBe(9000); // the work signal still refreshes
+    expect(result.events).toEqual([]); // and no "Source moved to " with nowhere to move
+  });
+
   it('a retired project is never resurrected — discovery skips it whole', () => {
     const retired = { ...creatureFromProject(project({ lastWorkedAt: 500 }), 100), retired: true };
     const result = reconcileProjects(stateWithCreature(retired), [project({ lastWorkedAt: 9000 })], 2000);
