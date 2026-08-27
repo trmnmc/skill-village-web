@@ -18,7 +18,9 @@ export type VillageEventType =
   | 'persona-failed'
   | 'chatted'
   | 'robot-moved-in'
-  | 'robot-moved-out';
+  | 'robot-moved-out'
+  | 'layout-pinned'
+  | 'layout-reset';
 
 export interface VillageEvent {
   at: number;

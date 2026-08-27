@@ -617,3 +617,55 @@ describe('the robot house', () => {
     expect(village.robotActivityAt()).toBe(NOW);
   });
 });
+
+describe('the layout', () => {
+  /** A one-skill village, built the way every other test in this file does. */
+  async function boot() {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('pinned', skillFixture('pinned'));
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000 });
+    return village;
+  }
+
+  it('records a pin', async () => {
+    const v = await boot();
+    await v.pinCreature('skill:pinned', 1500, 620);
+    expect(v.getState().layout.pins['skill:pinned']).toEqual({ x: 1500, y: 620 });
+  });
+
+  it('writes one event for a pin', async () => {
+    const v = await boot();
+    await v.pinCreature('skill:pinned', 1500, 620);
+    const events = await readEvents(sandbox!.paths);
+    expect(events.filter((e) => e.type === 'layout-pinned')).toHaveLength(1);
+  });
+
+  it('refuses a pin for a creature that does not exist', async () => {
+    const v = await boot();
+    await expect(v.pinCreature('skill:nobody', 10, 10)).rejects.toThrow(/not found/i);
+  });
+
+  it('reset clears every pin', async () => {
+    const v = await boot();
+    await v.pinCreature('skill:pinned', 1500, 620);
+    await v.resetLayout();
+    expect(v.getState().layout.pins).toEqual({});
+  });
+
+  it('reset on an already-empty layout writes no event', async () => {
+    const v = await boot();
+    await v.resetLayout();
+    const events = await readEvents(sandbox!.paths);
+    expect(events.filter((e) => e.type === 'layout-reset')).toHaveLength(0);
+  });
+
+  it('prunes a pin whose creature has left the village', async () => {
+    const v = await boot();
+    await v.pinCreature('skill:pinned', 1500, 620);
+    // A pin for an id nobody owns must not survive the next commit.
+    v.getState().layout.pins['skill:vanished'] = { x: 1, y: 1 };
+    await v.pinCreature('skill:pinned', 1600, 620);
+    expect(v.getState().layout.pins['skill:vanished']).toBeUndefined();
+    expect(v.getState().layout.pins['skill:pinned']).toEqual({ x: 1600, y: 620 });
+  });
+});

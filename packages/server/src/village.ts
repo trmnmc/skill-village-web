@@ -86,6 +86,10 @@ export interface Village {
   chat(creatureId: string, message: string, style?: 'bubble' | 'spoken'): Promise<ChatReply>;
   /** Move a creature into (or out of, with null) the physical robot. */
   setRobotResident(creatureId: string | null): Promise<void>;
+  /** Park a villager at a spot the player chose. Throws for an unknown id. */
+  pinCreature(creatureId: string, x: number, y: number): Promise<void>;
+  /** Release every hand-placed villager back to automatic placement. */
+  resetLayout(): Promise<void>;
   /** When the robot last spoke through this process, or null. In-memory only. */
   robotActivityAt(): number | null;
   /**
@@ -152,6 +156,20 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
     writing = written.catch(() => {});
     await written;
     notify();
+  };
+
+  /**
+   * Drop pins whose creature is no longer in the village. A skill deleted
+   * from disk must not go on reserving ground forever, and the renderer
+   * ignores unknown ids anyway — this is what stops the save growing a tail
+   * of them.
+   */
+  const prunedPins = (pins: Record<string, { x: number; y: number }>) => {
+    const kept: Record<string, { x: number; y: number }> = {};
+    for (const [id, at] of Object.entries(pins)) {
+      if (state.creatures[id]) kept[id] = at;
+    }
+    return kept;
   };
 
   // The service reads and writes the ledger through the live `state`, and its
@@ -389,6 +407,28 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
         events.push({ at, type: 'robot-moved-in', creatureId, detail: creature.nickname || creature.name });
       }
       await commit({ ...state, updatedAt: at, robot: { residentId: creatureId } }, events);
+    },
+
+    async pinCreature(creatureId, x, y) {
+      const creature = state.creatures[creatureId];
+      if (!creature) throw new Error(`Creature not found: ${creatureId}`);
+      const at = now();
+      await commit(
+        {
+          ...state,
+          updatedAt: at,
+          layout: { pins: prunedPins({ ...state.layout.pins, [creatureId]: { x, y } }) },
+        },
+        [{ at, type: 'layout-pinned', creatureId, detail: creature.nickname || creature.name }],
+      );
+    },
+
+    async resetLayout() {
+      if (Object.keys(state.layout.pins).length === 0) return;
+      const at = now();
+      await commit({ ...state, updatedAt: at, layout: { pins: {} } }, [
+        { at, type: 'layout-reset' },
+      ]);
     },
 
     robotActivityAt() {
