@@ -668,4 +668,19 @@ describe('the layout', () => {
     expect(v.getState().layout.pins['skill:vanished']).toBeUndefined();
     expect(v.getState().layout.pins['skill:pinned']).toEqual({ x: 1600, y: 620 });
   });
+
+  it('prunes a pin on the refresh that removes its creature, not only on the next pin', async () => {
+    sandbox = await makeSandbox();
+    const file = await sandbox.writeSkill('vanishing', skillFixture('vanishing'));
+    village = await createVillage({ paths: sandbox.paths, now: () => 1_000 });
+    await village.pinCreature('skill:vanishing', 1500, 620);
+    expect(village.getState().layout.pins['skill:vanishing']).toEqual({ x: 1500, y: 620 });
+
+    // Nothing pins anybody else afterwards — the deletion's own refresh has
+    // to be what drops the ground the vanished creature was holding.
+    await rm(file, { recursive: true });
+    await village.refresh();
+
+    expect(village.getState().layout.pins['skill:vanishing']).toBeUndefined();
+  });
 });

@@ -162,12 +162,18 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
    * Drop pins whose creature is no longer in the village. A skill deleted
    * from disk must not go on reserving ground forever, and the renderer
    * ignores unknown ids anyway — this is what stops the save growing a tail
-   * of them.
+   * of them. `creatures` is explicit rather than always read off the outer
+   * `state` closure: `refresh()` below has to prune against the set
+   * `reconcile()` just produced, which is not `state.creatures` until this
+   * same commit lands it.
    */
-  const prunedPins = (pins: Record<string, { x: number; y: number }>) => {
+  const prunedPins = (
+    pins: Record<string, { x: number; y: number }>,
+    creatures: VillageState['creatures'] = state.creatures,
+  ) => {
     const kept: Record<string, { x: number; y: number }> = {};
     for (const [id, at] of Object.entries(pins)) {
-      if (state.creatures[id]) kept[id] = at;
+      if (creatures[id]) kept[id] = at;
     }
     return kept;
   };
@@ -213,7 +219,12 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
     // `state` read before all that would revert every one of them, and then save
     // the result as the newest truth.
     const result = reconcile(state, scan, at);
-    await commit(result.state, result.events);
+    // A creature reconcile just released must not go on holding its pin
+    // either — without this, prunedPins only ever runs inside pinCreature,
+    // so a vanished creature's ground stays reserved until the player
+    // happens to pin somebody else afterwards.
+    const pins = prunedPins(result.state.layout.pins, result.state.creatures);
+    await commit({ ...result.state, layout: { pins } }, result.events);
 
     // Departed creatures' mirrors are promoted to the archive afterwards: the
     // mirror is still on disk, and this keeps the read-modify-write above
