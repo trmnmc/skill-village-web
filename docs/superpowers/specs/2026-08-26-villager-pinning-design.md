@@ -301,7 +301,7 @@ graphics being turned down.
   pinned x and y, seats the auto crowd clear of pins, ignores a pin for an
   unknown id, gives pins a sane leash, and — the regression that matters —
   returns identical output to today when the pins map is empty.
-- `state/schema.test.ts` — the v4 → v5 migration seeds empty pins and leaves
+- `state/store.test.ts` — the v4 → v5 migration seeds empty pins and leaves
   everything else alone.
 - `server/village.test.ts` — pinning writes its event, reset clears, and a pin
   for a vanished creature is pruned on commit.
