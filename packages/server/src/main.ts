@@ -99,11 +99,19 @@ async function main(): Promise<void> {
     timer = setInterval(tick, TICK_MS_WITH_CLIENT);
   });
 
+  // The work signal: boot + every 5 minutes (remap spec §3). Its own timer,
+  // not a tick multiple — the tick interval changes when a client attaches.
+  const PROJECT_SCAN_MS = 300_000;
+  const scanTimer = setInterval(() => {
+    void village.scanProjects().catch((error) => console.error('Project scan failed:', error));
+  }, PROJECT_SCAN_MS);
+
   const count = Object.keys(village.getState().creatures).length;
   console.log(`Skill Village is awake at http://localhost:${port} with ${count} villagers.`);
 
   const shutdown = async () => {
     clearInterval(timer);
+    clearInterval(scanTimer);
     await watcher?.close();
     await app.close();
     await village.close();

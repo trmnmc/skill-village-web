@@ -2,7 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { applyCare, chatSystemPrompt, spokenSystemPrompt, type CareVerb, type Creature } from '@village/core';
 import type { VillagePaths } from './config/paths.js';
 import { archiveFromShadow, updateShadow } from './bridge/archive.js';
-import { reconcile } from './bridge/reconcile.js';
+import { discoverProjects } from './bridge/projects.js';
+import { reconcile, reconcileProjects } from './bridge/reconcile.js';
+import { loadScanCache, saveScanCache } from './bridge/scan-cache.js';
 import { scanVillage } from './bridge/scan.js';
 import type { LlmConfig, LlmState } from './llm/ledger.js';
 import { generatePersona } from './llm/persona.js';
@@ -74,6 +76,13 @@ export interface Village {
   readonly snapshot: boolean;
   /** Rescan the filesystem and fold the result in. Rejects on a snapshot. */
   refresh(): Promise<void>;
+  /**
+   * Rescan Claude Code's session logs (read-only) and fold project life in:
+   * work recency, helper links, new arrivals. Quiet no-op on a snapshot —
+   * unlike refresh(), nothing user-facing awaits an error from the 5-minute
+   * background loop.
+   */
+  scanProjects(): Promise<void>;
   /** Advance the simulation to the current time. */
   tick(): Promise<void>;
   care(creatureId: string, verb: CareVerb): Promise<void>;
@@ -236,6 +245,29 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
     }
   };
 
+  const scanProjects = async () => {
+    // Quiet, unlike refresh(): a background timer throwing is just noise, and
+    // the deployed public village (VILLAGE_SNAPSHOT=1) has none of the
+    // owner's ~/.claude/projects on its disk to begin with.
+    if (snapshot) return;
+
+    const previous = await loadScanCache(paths);
+    const scan = await discoverProjects(paths, previous);
+
+    // Same read-then-commit shape as refresh(): the scan (disk listing,
+    // transcript parsing) takes real time and is entirely finished before the
+    // live `state` is read here — with nothing awaited between the read and
+    // the commit. A chat reply, a persona card or a ledger spend that landed
+    // while the scan ran must not be reverted by reconciling a stale copy.
+    const at = now();
+    const result = reconcileProjects(state, scan.projects, at);
+    await commit(result.state, result.events);
+
+    // The cache is insurance, not part of village state — saved after the
+    // commit so a crash mid-write never costs more than a slower next scan.
+    await saveScanCache(paths, scan.cache);
+  };
+
   /**
    * Give a creature its personality the first time anyone speaks to it, and
    * never again — the card is written once so the voice stays the same for
@@ -305,7 +337,13 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
     return flight;
   };
 
-  if (!snapshot) await refresh();
+  if (!snapshot) {
+    // Boot order is load-bearing: reconcileProjects resolves helper mentions
+    // against the creatures already in state, so the helper roster (from
+    // refresh's skill/agent scan) must exist before the project scan runs.
+    await refresh();
+    await scanProjects();
+  }
 
   return {
     startupNote: loaded.note,
@@ -320,6 +358,7 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
     },
 
     refresh,
+    scanProjects,
 
     async tick() {
       const result = applyTick(state, now());

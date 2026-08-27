@@ -66,6 +66,22 @@ no reconcile at boot, no file watcher, and the public `POST /api/refresh`
 route answers 409 instead of wiping the village. Treat the deployed village
 as a snapshot, and re-seed it the same way whenever it should catch up.
 
+Project villagers (M5) never reach the droplet by scanning. Snapshot mode
+skips the transcript scan whole — `scanProjects()` returns without touching
+the disk — so the droplet never reads `~/.claude/projects`, which it does not
+have. Projects arrive only inside a re-seeded `state.json`, and a project's
+`sourcePath` is a real folder path from the owner's machine: seeding publishes
+those path strings, the same posture helper `sourcePath`s already carry (names
+world-readable, contents never). Re-seeding also overwrites whatever live
+visitors have done — bonds, care, the robot resident — so it is a deliberate
+act, not routine maintenance.
+
+**Rolling back the server releases every project.** A state file from M5
+loads fine on an older build (`STATE_VERSION` is still 4 and every new field
+is optional), but that build's `reconcile` has no project guard: the helper
+scan says nothing about projects, so its first pass auto-releases all of
+them. Pair any rollback below M5 with a re-seed of a matching state file.
+
 ## Redeploying the web bundle
 
     npm run build:web

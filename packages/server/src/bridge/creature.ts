@@ -2,6 +2,7 @@ import {
   generateAppearance,
   type AgentFile, type Creature, type CreatureKind, type SkillFile, type Stats,
 } from '@village/core';
+import type { DiscoveredProject } from './projects.js';
 
 /** A creature moving in starts content, not ecstatic — there is room to grow. */
 export const STARTING_STATS: Stats = { mood: 70, energy: 70, bond: 10, xp: 0 };
@@ -27,6 +28,32 @@ export function creatureFromSkill(skill: SkillFile, sourcePath: string, now: num
     sourcePath,
     friendships: {},
     lastSeenAt: now,
+  };
+}
+
+/**
+ * A discovered project moves in as an adult, like every creature whose real
+ * thing already exists. Links start empty — reconcileProjects resolves them
+ * against the roster it has in hand.
+ */
+export function creatureFromProject(found: DiscoveredProject, now: number): Creature {
+  return {
+    id: found.id,
+    kind: 'project',
+    name: found.displayName,
+    nickname: '',
+    // Seeded from the immutable entry name, not the display name: a project
+    // folder renamed on disk keeps its body.
+    appearance: generateAppearance({ kind: 'project', name: found.entryName }),
+    stats: { ...STARTING_STATS },
+    stage: 'adult',
+    personality: null,
+    sourcePath: found.sourcePath,
+    friendships: {},
+    lastSeenAt: now,
+    lastWorkedAt: found.lastWorkedAt,
+    helperIds: [],
+    unresolvedMentions: [],
   };
 }
 

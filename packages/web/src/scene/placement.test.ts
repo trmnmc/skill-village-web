@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { resolveDrop, resolveHeldDrop, seatAll } from './placement.js';
-import { PIN_LO, PIN_HI, snapRowY, type Pin } from '../layout/zones.js';
+import { PIN_LO, PIN_HI, pinSpot, snapRowY, type Pin } from '../layout/zones.js';
+import { TETHER, type RenderEntry } from '../layout/instances.js';
+import type { Creature, CreatureKind } from '@village/core/visual';
 import { PORCH_SPOT } from '../layout/robot.js';
 
 // A raw drop point picked to land clear of every prop's keep-out band, so
@@ -63,23 +65,68 @@ describe('resolveHeldDrop', () => {
   });
 });
 
+/**
+ * Only the fields the render list actually reads. A whole Creature carries an
+ * appearance, stats and a persona that no seating decision consults, and
+ * spelling one out per test would bury the thing each test is about.
+ */
+const creature = (id: string, kind: CreatureKind = 'skill', helperIds: string[] = []): Creature =>
+  ({ id, kind, name: id, nickname: '', helperIds }) as unknown as Creature;
+
 describe('seatAll', () => {
+  const spotOf = (entries: readonly RenderEntry[], key: string) =>
+    entries.find((e) => e.key === key)?.spot;
+
   it('stands the resident on the porch even when the resident also holds a pin', () => {
     const pins = new Map<string, Pin>([['bot', clearSpot()]]);
-    const spots = seatAll(['bot', 'other'], pins, 'bot');
-    expect(spots.get('bot')).toEqual(PORCH_SPOT);
+    const entries = seatAll([creature('bot'), creature('other')], pins, 'bot');
+    expect(spotOf(entries, 'bot')).toEqual(PORCH_SPOT);
   });
 
   it('leaves a non-resident pin exactly where it was placed', () => {
     const home = clearSpot();
     const pins = new Map<string, Pin>([['villager', home]]);
-    const spots = seatAll(['villager'], pins, null);
-    expect(spots.get('villager')?.x).toBe(home.x);
-    expect(spots.get('villager')?.y).toBe(home.y);
+    const entries = seatAll([creature('villager')], pins, null);
+    expect(spotOf(entries, 'villager')?.x).toBe(home.x);
+    expect(spotOf(entries, 'villager')?.y).toBe(home.y);
   });
 
   it('seats an unpinned resident on the porch, same as any other resident', () => {
-    const spots = seatAll(['bot'], new Map(), 'bot');
-    expect(spots.get('bot')).toEqual(PORCH_SPOT);
+    const entries = seatAll([creature('bot')], new Map(), 'bot');
+    expect(spotOf(entries, 'bot')).toEqual(PORCH_SPOT);
+  });
+
+  // The seam between pinning and M5's instances: an aura has no seat of its
+  // own, so the only way it can follow the player's arrangement is by being
+  // fanned around the anchor a pin just moved.
+  it('carries a project\'s aura along when the project is pinned', () => {
+    const project = creature('project:p', 'project', ['skill:h']);
+    const home = clearSpot();
+    const entries = seatAll(
+      [project, creature('skill:h')],
+      new Map<string, Pin>([['project:p', home]]),
+      null,
+    );
+    expect(spotOf(entries, 'project:p')?.x).toBe(home.x);
+
+    const aura = spotOf(entries, 'project:p>skill:h');
+    expect(aura).toBeDefined();
+    expect(aura!.y).toBe(home.y);
+    expect(Math.abs(aura!.x - home.x)).toBeLessThanOrEqual(TETHER);
+  });
+
+  it('keeps an aura beside its genie even when the project is pinned outside Homes', () => {
+    // Outside Homes the tether bounds used to invert (lo > hi), which stranded
+    // the whole fan at the far edge of Homes instead of beside its project.
+    const project = creature('project:p', 'project', ['skill:h']);
+    const far = pinSpot(PIN_HI - 40, 620, []);
+    const entries = seatAll(
+      [project, creature('skill:h')],
+      new Map<string, Pin>([['project:p', far]]),
+      null,
+    );
+    const aura = spotOf(entries, 'project:p>skill:h');
+    expect(aura).toBeDefined();
+    expect(Math.abs(aura!.x - far.x)).toBeLessThanOrEqual(TETHER);
   });
 });

@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { parseSkill, decayStats, ELDER_LEVEL, xpForLevel } from '@village/core';
+import {
+  parseSkill, decayStats, ELDER_LEVEL, xpForLevel,
+  generateAppearance, STAT_FLOOR, workStats, type Creature, type Stats,
+} from '@village/core';
 import { emptyState } from '../state/schema.js';
 import { creatureFromSkill } from '../bridge/creature.js';
 import { applyTick, MS_PER_HOUR } from './tick.js';
@@ -96,5 +99,60 @@ describe('applyTick', () => {
     const result = applyTick(state, 9_999);
     expect(result.state.updatedAt).toBe(9_999);
     expect(JSON.stringify(state)).toBe(before);
+  });
+});
+
+describe('projects: only real work heals', () => {
+  const DAY = 86_400_000;
+
+  const projectCreature = (id: string, stats: Stats, over: Partial<Creature> = {}): Creature => ({
+    id,
+    kind: 'project',
+    name: id.slice('project:'.length),
+    nickname: '',
+    appearance: generateAppearance({ kind: 'project', name: id }),
+    stats,
+    stage: 'adult',
+    personality: null,
+    sourcePath: '',
+    friendships: {},
+    lastSeenAt: 0,
+    ...over,
+  });
+
+  const stateWith = (c: Creature) => ({ ...emptyState(0), creatures: { [c.id]: c } });
+
+  it('mood/energy come from lastWorkedAt, not from lastSeenAt decay', () => {
+    const now = 100 * DAY;
+    const project = projectCreature('project:p', { mood: 99, energy: 99, bond: 40, xp: 7 }, {
+      lastWorkedAt: now - 12 * DAY,
+      lastSeenAt: now, // freshly petted — must not matter
+    });
+    const { state: next } = applyTick(stateWith(project), now);
+    const ticked = next.creatures['project:p']!;
+    expect(ticked.stats.mood).toBeCloseTo(workStats(12 * DAY).mood, 5);
+    expect(ticked.stats.energy).toBeCloseTo(workStats(12 * DAY).energy, 5);
+    // care builds bond only (spec §5): bond and xp ride through untouched
+    expect(ticked.stats.bond).toBe(40);
+    expect(ticked.stats.xp).toBe(7);
+  });
+
+  it('a freshly worked project is thriving whatever its stored stats say', () => {
+    const now = 100 * DAY;
+    const project = projectCreature('project:q', { mood: 5, energy: 5, bond: 0, xp: 0 }, {
+      lastWorkedAt: now - 3_600_000,
+    });
+    const { state: next } = applyTick(stateWith(project), now);
+    expect(next.creatures['project:q']!.stats.mood).toBe(85);
+  });
+
+  it('a project with no lastWorkedAt falls back to ordinary decay', () => {
+    const now = 100 * DAY;
+    const project = projectCreature('project:r', { mood: 90, energy: 90, bond: 0, xp: 0 }, {
+      lastSeenAt: now - 24 * 3_600_000,
+    });
+    const { state: next } = applyTick(stateWith(project), now);
+    expect(next.creatures['project:r']!.stats.mood).toBeLessThan(90);
+    expect(next.creatures['project:r']!.stats.mood).toBeGreaterThanOrEqual(STAT_FLOOR);
   });
 });

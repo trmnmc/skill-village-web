@@ -1,6 +1,8 @@
-import type { Creature } from '@village/core';
+import { role, type Creature } from '@village/core';
 import type { VillageEvent } from '../state/events.js';
 import type { ImportProblem, VillageState } from '../state/schema.js';
+import { creatureFromProject } from './creature.js';
+import type { DiscoveredProject } from './projects.js';
 import type { ScanResult } from './scan.js';
 
 export interface ReconcileResult {
@@ -50,6 +52,14 @@ export function reconcile(state: VillageState, scan: ScanResult, now: number): R
 
   for (const [id, creature] of Object.entries(state.creatures)) {
     if (creatures[id]) continue;
+    // The helper scan says nothing about projects — they are discovered from
+    // ~/.claude/projects, not from skill/agent files, and reconcileProjects
+    // owns their fate. Without this, the first refresh after a project moved
+    // in would auto-release every project in the village.
+    if (role(creature.kind) === 'project') {
+      creatures[id] = creature;
+      continue;
+    }
     released.push(creature);
     events.push({
       at: now,
@@ -74,4 +84,92 @@ export function reconcile(state: VillageState, scan: ScanResult, now: number): R
     events,
     released,
   };
+}
+
+/**
+ * A mention becomes a helper *link* only if it matches a helper creature
+ * already loaded (remap spec §3) — by name for skills, by name for agents.
+ * Everything else still counts as project activity but links nothing; the
+ * unresolved names are kept so the number is never silently lost.
+ */
+export function linkHelpers(
+  mentions: readonly string[],
+  creatures: Record<string, Creature>,
+): { helperIds: string[]; unresolved: string[] } {
+  const helperIds = new Set<string>();
+  const unresolved = new Set<string>();
+  for (const mention of mentions) {
+    let hit = false;
+    for (const id of [`skill:${mention}`, `agent:${mention}`]) {
+      if (creatures[id]) {
+        helperIds.add(id);
+        hit = true;
+      }
+    }
+    if (!hit) unresolved.add(mention);
+  }
+  return { helperIds: [...helperIds].sort(), unresolved: [...unresolved].sort() };
+}
+
+/**
+ * Fold a project discovery into the stored village. Pure, like reconcile.
+ *
+ * Deliberately gentler than the helper reconcile: it NEVER releases. Claude
+ * Code expires old transcripts, so a project vanishing from the scan means
+ * its diary faded, not that the project died — the creature stays, frozen,
+ * and droops on the work curve. Retired projects (M6) are skipped whole:
+ * discovery must not resurrect them (remap spec §2).
+ */
+export function reconcileProjects(
+  state: VillageState,
+  projects: readonly DiscoveredProject[],
+  now: number,
+): { state: VillageState; events: VillageEvent[] } {
+  const events: VillageEvent[] = [];
+  const creatures = { ...state.creatures };
+
+  for (const found of projects) {
+    const links = linkHelpers(found.helperMentions, state.creatures);
+    const existing = creatures[found.id];
+
+    if (!existing) {
+      creatures[found.id] = {
+        ...creatureFromProject(found, now),
+        helperIds: links.helperIds,
+        unresolvedMentions: links.unresolved,
+      };
+      events.push({ at: now, type: 'moved-in', creatureId: found.id });
+      continue;
+    }
+
+    if (existing.retired) continue;
+
+    // A scan that resolved no cwd knows nothing about identity: discovery
+    // falls back to the encoded entry name and an empty path, which is right
+    // for a newcomer and a downgrade for anyone else. If the transcript format
+    // ever drifts (spec §3 owns that fragility), taking it would rename every
+    // project to its ugly entry name and blank every sourcePath in one scan.
+    const knowsIdentity = found.sourcePath !== '';
+
+    if (knowsIdentity && existing.sourcePath !== found.sourcePath) {
+      events.push({
+        at: now,
+        type: 'resynced',
+        creatureId: found.id,
+        detail: `Source moved to ${found.sourcePath}`,
+      });
+    }
+    // The identity rule again: stats, bond, nickname, persona, appearance —
+    // and the display name — survive; only the pointer and the work signal
+    // refresh.
+    creatures[found.id] = {
+      ...existing,
+      ...(knowsIdentity ? { name: found.displayName, sourcePath: found.sourcePath } : {}),
+      lastWorkedAt: found.lastWorkedAt,
+      helperIds: links.helperIds,
+      unresolvedMentions: links.unresolved,
+    };
+  }
+
+  return { state: { ...state, creatures, updatedAt: now }, events };
 }

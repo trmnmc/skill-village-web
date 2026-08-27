@@ -6,7 +6,9 @@
  * `startVillage()` that boots a canvas, and nothing inside it is callable in
  * isolation.
  */
-import { placeCreatures, pinSpot, type Pin, type Spot } from '../layout/zones.js';
+import { pinSpot, type Pin } from '../layout/zones.js';
+import { buildRenderList, seatResident, type RenderEntry } from '../layout/instances.js';
+import type { Creature } from '@village/core/visual';
 import { PORCH_SPOT } from '../layout/robot.js';
 
 /**
@@ -41,19 +43,20 @@ export function resolveHeldDrop(
 }
 
 /**
- * Seat every villager — pins and all — then stand the robot's resident on
- * the porch regardless of any pin it holds. Residency beats a pin the same
- * way it already beats the automatic hash-seat: the house always shows who
- * lives there. `village.ts`'s `reseat()` and `setView` both call this one
- * function rather than each re-applying the override, so the two can never
- * drift apart.
+ * Everything to draw, in one call: the render list (projects and unlinked
+ * helpers on their seats — hashed, or wherever the player pinned them — plus
+ * each linked helper fanned around the project that uses it), with the
+ * robot's resident then lifted onto the porch.
+ *
+ * Residency beats a pin the same way it already beats the automatic
+ * hash-seat: the house always shows who lives there. `village.ts`'s
+ * `reseat()` and `setView` both call this one function rather than each
+ * rebuilding the pipeline, so the two can never drift apart.
  */
 export function seatAll(
-  ids: readonly string[],
+  creatures: readonly Creature[],
   pins: ReadonlyMap<string, Pin>,
   residentId: string | null,
-): Map<string, Spot> {
-  const spots = placeCreatures(ids, pins);
-  if (residentId && spots.has(residentId)) spots.set(residentId, { ...PORCH_SPOT });
-  return spots;
+): RenderEntry[] {
+  return seatResident(buildRenderList(creatures, pins), residentId, PORCH_SPOT);
 }

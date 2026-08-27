@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { rm } from 'node:fs/promises';
 import { readArchived } from './bridge/archive.js';
 import { readEvents } from './state/events.js';
-import { makeSandbox, skillFixture, agentFixture, type Sandbox } from './testing/sandbox.js';
+import { makeSandbox, skillFixture, agentFixture, transcriptLine, type Sandbox } from './testing/sandbox.js';
 import { createVillage, type Village } from './village.js';
 import { MS_PER_HOUR } from './sim/tick.js';
 import { defaultLlmState } from './llm/ledger.js';
@@ -682,5 +682,51 @@ describe('the layout', () => {
     await village.refresh();
 
     expect(village.getState().layout.pins['skill:vanishing']).toBeUndefined();
+  });
+});
+
+describe('scanProjects', () => {
+  it('boot discovers projects alongside helpers', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeSkill('brainstorming', skillFixture('brainstorming'));
+    await sandbox.writeTranscript('C--dev-proj-a', 's1', [
+      transcriptLine({ cwd: '/dev/proj-a', skill: 'brainstorming' }),
+    ]);
+    village = await createVillage({ paths: sandbox.paths, now: () => 5000 });
+    const creatures = village.getState().creatures;
+    expect(creatures['project:C--dev-proj-a']).toMatchObject({
+      kind: 'project',
+      name: 'proj-a',
+      helperIds: ['skill:brainstorming'],
+    });
+  });
+
+  it('a later scan refreshes the signal without touching identity', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeTranscript('C--dev-proj-b', 's1', [transcriptLine({ cwd: '/dev/proj-b' })]);
+    village = await createVillage({ paths: sandbox.paths, now: () => 5000 });
+    const before = village.getState().creatures['project:C--dev-proj-b']!;
+    await sandbox.writeTranscript('C--dev-proj-b', 's2', [transcriptLine({ cwd: '/dev/proj-b' })]);
+    await village.scanProjects();
+    const after = village.getState().creatures['project:C--dev-proj-b']!;
+    expect(after.lastWorkedAt).toBeGreaterThanOrEqual(before.lastWorkedAt!);
+    expect(after.appearance).toEqual(before.appearance);
+  });
+
+  it('writes and reuses the scan cache file', async () => {
+    sandbox = await makeSandbox();
+    await sandbox.writeTranscript('C--dev-proj-c', 's1', [transcriptLine({})]);
+    village = await createVillage({ paths: sandbox.paths, now: () => 5000 });
+    const { readFile } = await import('node:fs/promises');
+    const cache = JSON.parse(await readFile(sandbox.paths.scanCachePath, 'utf8'));
+    expect(Object.keys(cache.files)).toHaveLength(1);
+  });
+
+  it('a snapshot village never scans — quiet no-op, state untouched', async () => {
+    sandbox = await makeSandbox();
+    village = await createVillage({ paths: sandbox.paths, now: () => 5000, snapshot: true });
+    const before = village.getState();
+    await expect(village.scanProjects()).resolves.toBeUndefined();
+    expect(village.getState()).toBe(before);
   });
 });

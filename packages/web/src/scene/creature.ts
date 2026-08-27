@@ -256,7 +256,14 @@ export async function spawnCreature(
   creature: Creature,
   spot: Spot,
   fonts: CreatureFonts,
+  /**
+   * Body-scale multiplier — a project's aura grows mildly with its helper
+   * count (remap spec §4). Text chrome (nameplate, bubble) deliberately does
+   * NOT scale: names stay readable at every presence.
+   */
+  presence = 1,
 ): Promise<CreatureActor> {
+  const P = presence;
   const map = roleMap(creature.appearance.palette);
   // Not const: `setCreature` re-derives this whenever the server sends new
   // stats, so mood and energy keep selecting behaviours for as long as the
@@ -276,11 +283,19 @@ export async function spawnCreature(
   // Bake the resting body once. A roaming lanky agent gets a second bake with
   // trailing legs; everyone else needs only the one.
   const restGrid = composeGrid(creature.appearance);
-  const restKey = `body:${creature.id}`;
-  await loadSprite(k, restKey, toCanvas(bakePixels(restGrid, map)));
+  // Content-addressed: one helper can be drawn several times over (once per
+  // project that links it), and every instance would otherwise re-bake and
+  // re-upload the identical canvas. Hashing the appearance into the key means
+  // the guard can never serve a stale look either — a creature that changes
+  // its appearance gets a new key, so the old texture is never reused for it.
+  const lookKey = simpleHash(JSON.stringify(creature.appearance)).toString(36);
+  const restKey = `body:${creature.id}:${lookKey}`;
+  if (!k.getSprite(restKey)) {
+    await loadSprite(k, restKey, toCanvas(bakePixels(restGrid, map)));
+  }
 
   const dangles = creature.appearance.winged && creature.appearance.body === 'lanky';
-  const roamKey = `body:${creature.id}:roam`;
+  const roamKey = `${restKey}:roam`;
   // Kept, not thrown away after baking: the two grids are *different heights*.
   // composeGrid keeps the torso and appends the posture's rows, and the
   // postures differ in length (stubs 1, splayed 2, floating 3, trailing 4), so
@@ -289,7 +304,7 @@ export async function spawnCreature(
   // texture lifts the head — and every overlay measured off the top of the
   // body has to follow it.
   const roamGrid = dangles ? composeGrid(creature.appearance, 'trailing') : null;
-  if (roamGrid) {
+  if (roamGrid && !k.getSprite(roamKey)) {
     await loadSprite(k, roamKey, toCanvas(bakePixels(roamGrid, map)));
   }
 
@@ -300,8 +315,13 @@ export async function spawnCreature(
   }
 
   const bw = restGrid.w * U;
-  /** Body height at rest. Only ever the starting value — see `shown()`. */
-  const restH = restGrid.h * U;
+  /**
+   * Body height at rest, already carrying the presence multiplier. Only ever
+   * the starting value — see `shown()`. Everything hung off `-restH` (the
+   * nameplate, the file tag, the sign plate) therefore rides up with a larger
+   * body without being scaled itself.
+   */
+  const restH = restGrid.h * U * P;
 
   /**
    * The grid actually on screen this frame. Same body and the same eye
@@ -321,7 +341,7 @@ export async function spawnCreature(
   const root = k.add([k.pos(at.x, at.y), k.z(at.y)]);
 
   const shadow = root.add([
-    k.rect(bw * 0.78, 10, { radius: 5 }),
+    k.rect(bw * 0.78 * P, 10, { radius: 5 }),
     k.pos(0, 0),
     k.anchor('center'),
     k.color(k.Color.fromHex(SHADOW)),
@@ -341,7 +361,7 @@ export async function spawnCreature(
     k.sprite(restKey),
     k.pos(0, 0),
     k.anchor('bot'),
-    k.scale(U),
+    k.scale(U * P),
     k.color(creatureTint),
     'themed:creature',
   ]);
@@ -350,7 +370,7 @@ export async function spawnCreature(
     ? [-1, 1].map((side) =>
         root.add([
           k.sprite(wingKey),
-          k.pos(side * (bw / 2), -restH * 0.55),
+          k.pos(side * (bw / 2) * P, -restH * 0.55),
           // Both wings anchor 'left', including the mirrored one. KAPLAY turns
           // the anchor into a translate pushed *inside* the object transform
           // (drawUVQuad: pushScale then pushTranslate(offset), where offset =
@@ -363,7 +383,7 @@ export async function spawnCreature(
           // [+21, +45]. The negative scale is what mirrors the shape; the
           // anchor only names the hinge, which stays on the shoulder either way.
           k.anchor('left'),
-          k.scale(U * side, U),
+          k.scale(U * side * P, U * P),
           k.rotate(0),
           k.z(-2),
           k.color(creatureTint),
@@ -768,9 +788,11 @@ export async function spawnCreature(
       // wings all stay put while the taller roam texture lifts its head out
       // from under them.
       const grid = shown(fly);
-      const bh = grid.h * U;
+      // Carries the presence multiplier, exactly as `restH` does, so every
+      // overlay measured off the top of the body follows a bigger body up.
+      const bh = grid.h * U * P;
       body.pos.y = dy + hover;
-      body.scale = k.vec2(U * sx, U * sy);
+      body.scale = k.vec2(U * sx * P, U * sy * P);
 
       if (dangles) {
         const wanted = fly === 'roam' ? roamKey : restKey;
@@ -778,7 +800,7 @@ export async function spawnCreature(
       }
 
       const squash = shadowSquash(dy);
-      shadow.width = bw * 0.78 * squash;
+      shadow.width = bw * 0.78 * P * squash;
       shadow.pos.y = 0;
 
       // A sleeping agent folds its wings; only a flying one flaps. Decided per
@@ -799,8 +821,8 @@ export async function spawnCreature(
         // its base. This recovers the eye-white block's centre in the same
         // *unscaled* local space the body sprite occupies at sx=sy=1 — off the
         // live grid's height, so it tracks the roam texture's taller head.
-        const baseX = (anchor.c - grid.w / 2 + 1) * U;
-        const baseY = (anchor.r - grid.h + 1) * U;
+        const baseX = (anchor.c - grid.w / 2 + 1) * U * P;
+        const baseY = (anchor.r - grid.h + 1) * U * P;
         // Scaling by sx/sy here mirrors body.scale exactly: a cell offset of
         // baseX/baseY unscaled cell-units becomes baseX*sx / baseY*sy screen
         // pixels under the same (U*sx, U*sy)-per-cell transform the body
@@ -814,9 +836,12 @@ export async function spawnCreature(
         pupil.hidden = shut;
         lid.hidden = !shut;
         lash.hidden = !shut;
-        pupil.scale = k.vec2(sx, sy);
-        lid.scale = k.vec2(sx, sy);
-        lash.scale = k.vec2(sx, sy);
+        // The overlays carry the presence multiplier the same way `body.scale`
+        // does — a lid that stayed at scale 1 over a 1.3x body would no longer
+        // cover the baked eye white it exists to hide.
+        pupil.scale = k.vec2(sx * P, sy * P);
+        lid.scale = k.vec2(sx * P, sy * P);
+        lash.scale = k.vec2(sx * P, sy * P);
 
         if (shut) {
           lid.pos = k.vec2(x, y);
@@ -829,7 +854,7 @@ export async function spawnCreature(
           // e.r*U + U*1.125 — the eye-white block's own centre (baseY) plus
           // U*0.125, not U*0.55 (that arithmetic slipped converting the
           // trailer's top-left anchoring to this file's centre anchoring).
-          pupil.pos = k.vec2(x + look * 3.5 * sx, y + U * 0.125 * sy);
+          pupil.pos = k.vec2(x + look * 3.5 * sx, y + U * 0.125 * sy * P);
         }
       });
 

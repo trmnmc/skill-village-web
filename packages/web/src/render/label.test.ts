@@ -37,4 +37,8 @@ describe('fileLabel', () => {
   it('does not double up an extension that is already there', () => {
     expect(fileLabel(creature('agent', 'debugger.md'))).toBe('debugger.md');
   });
+
+  it('a project labels as its folder', () => {
+    expect(fileLabel(creature('project', 'proj-a'))).toBe('proj-a/');
+  });
 });

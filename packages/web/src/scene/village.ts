@@ -19,6 +19,7 @@ import {
   type Spot,
   type Pin,
 } from '../layout/zones.js';
+import { buildRenderList, keyCreatureId, seatResident, type RenderEntry } from '../layout/instances.js';
 import type { VillageView } from '../net/protocol.js';
 import { ZOOM, screenToWorld, clampCamX } from './camera.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
@@ -346,24 +347,39 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // frame in the sky and read as the village floating.
   k.setCamPos(clampCamX(homes.x + homes.w / 2, k.width()), GROUND_Y - 130);
 
+  // Every map below is keyed by *render key*, not creature id: one creature
+  // can be drawn several times over (a helper stands beside each project that
+  // links it — see layout/instances.ts), and each of those bodies needs its
+  // own actor, spot and generation. `keyCreatureId` recovers the creature.
   const actors = new Map<string, CreatureActor>();
-  // Bumped every time setView decides to (re)spawn a given id. A spawn's own
-  // `.then` compares the generation it captured at decision time against the
-  // current value; a mismatch means a later setView call already decided to
-  // respawn that same id again, so this resolution lost the race and must
-  // not touch `actors` — otherwise two overlapping spawns for one id (e.g.
-  // two view updates racing 70 in-flight sprite loads at startup) both
+  // Bumped every time setView decides to (re)spawn a given render key. A
+  // spawn's own `.then` compares the generation it captured at decision time
+  // against the current value; a mismatch means a later setView call already
+  // decided to respawn that same key again, so this resolution lost the race
+  // and must not touch `actors` — otherwise two overlapping spawns for one key
+  // (e.g. two view updates racing 70 in-flight sprite loads at startup) both
   // resolve, both call actors.set, and the loser's root is orphaned:
   // untracked, never destroyed, never updated, a permanent frozen creature.
   const generations = new Map<string, number>();
   let known = new Map<string, Creature>();
+  // The presence each body was *spawned* at. Presence is baked into the actor's
+  // geometry at spawn time, so a project that gains or loses a helper has to be
+  // respawned to grow — this is what the sync loop diffs against to notice.
+  const presences = new Map<string, number>();
   // Declared beside `known`: null until the first view lands, so a reload
-  // is not seventy arrival chimes (see arrivals.ts).
+  // is not seventy arrival chimes (see arrivals.ts). Keyed by creature id, not
+  // render key — arrivals and stage-ups are events in a creature's life, and a
+  // creature that gains a second body has not been born twice.
   let prevStages: Map<string, string> | null = null;
   // The placement from the most recent view. Held so a spawn that is still
   // loading sprites can adopt the newest spot when it resolves, the same way
   // it adopts the newest stats from `known`.
   let placements = new Map<string, Spot>();
+  // The creature list from the most recent view, kept whole. `reseat()` has to
+  // rebuild the render list after a local pin, and that needs creatures — the
+  // render keys in `placements` cannot be turned back into one (a linked
+  // helper's key names a project it is tethered to, not a seat of its own).
+  let lastCreatures: readonly Creature[] = [];
   // The arrangement the player has made. Seeded from every view frame, but
   // written locally the instant a drop lands so the villager stays under the
   // hand instead of waiting out a round trip. A refused or lost write simply
@@ -379,12 +395,16 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // replacement.
   let cursorY: number | null = null;
 
-  // The villager under the cursor this frame, or null. Written by the update
-  // loop and read by the click handler below — "the one I clicked" is exactly
-  // "the one whose name I can see", so both answers come from one test.
+  // The body under the cursor this frame, or null — a render key, since it is
+  // one *body* that gets hovered, not a creature. Written by the update loop
+  // and read by the click handler below — "the one I clicked" is exactly "the
+  // one whose name I can see", so both answers come from one test. The click
+  // path then looks the key up in `known`, which for an instance hands back
+  // the helper itself: every body of a helper opens the same panel.
   let hoveredId: string | null = null;
 
   const tracker = createDragTracker(CLICK_SLOP);
+  /** Creature id, straight from the view — never a render key. */
   let residentId: string | null = null;
 
   // The villager in the player's hand: the id, and the dangling visual that
@@ -425,10 +445,10 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
    * player let go, rather than on the next frame from the server.
    */
   const reseat = () => {
-    const spots = seatAll([...placements.keys()], pins, residentId);
-    placements = spots;
-    for (const [id, actor] of actors) {
-      const spot = spots.get(id);
+    const entries = seatAll(lastCreatures, pins, residentId);
+    placements = new Map(entries.map((e) => [e.key, e.spot]));
+    for (const [key, actor] of actors) {
+      const spot = placements.get(key);
       if (spot) actor.setSpot(spot);
     }
   };
@@ -458,17 +478,17 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     const carrying = tracker.current()?.dragging ?? false;
     if (!carrying && lookAt !== null && cursorY !== null) {
       let best = 90 * 90;
-      for (const [id, spot] of placements) {
+      for (const [key, spot] of placements) {
         // Aim at where the villager is drawn, not its home spot — an ambling
         // creature can be a full body-width from home. The spot is only the
         // fallback for an actor whose sprites are still loading.
-        const x = actors.get(id)?.worldX() ?? spot.x;
+        const x = actors.get(key)?.worldX() ?? spot.x;
         const dx = lookAt - x;
         const dyMid = cursorY - (spot.y - 34);
         const d = dx * dx + dyMid * dyMid;
         if (d < best) {
           best = d;
-          hoveredId = id;
+          hoveredId = key;
         }
       }
     }
@@ -479,23 +499,27 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
       const camX = k.getCamPos().x;
       const halfW = k.width() / 2 + 200;
       const candidates: { id: string; x: number; voice: ReturnType<typeof voiceParamsFor> }[] = [];
-      for (const [id, spot] of placements) {
-        const c = known.get(id);
+      // Offered per body, keyed by render key: the director spaces each id's
+      // chirps on its own Poisson timer, and a chirp is a sound coming from a
+      // place on screen, so each body earns its own — panned where it stands.
+      // The village-wide gap in director.ts still caps the whole crowd.
+      for (const [key, spot] of placements) {
+        const c = known.get(key);
         if (!c) continue;
         // A villager in the player's hand does not chirp from the empty patch
         // of ground it is not standing on.
-        if (id === heldId) continue;
+        if (key === heldId) continue;
         if (Math.abs(spot.x - camX) > halfW) continue;
         // Same "happy and awake" bar behaviourFor uses to decide who hops
         // (motion/behaviour.ts) — one pair of thresholds, not two that can
         // drift apart.
         if (!(c.stats.mood > HAPPY_ABOVE && c.stats.energy >= SLEEP_BELOW)) continue;
-        candidates.push({ id, x: spot.x, voice: voiceParamsFor(c) });
+        candidates.push({ id: key, x: spot.x, voice: voiceParamsFor(c) });
       }
       if (candidates.length > 0) sound.event({ type: 'idle-tick', candidates });
     }
 
-    for (const [id, actor] of actors) actor.update(t, lookAt, id === hoveredId);
+    for (const [key, actor] of actors) actor.update(t, lookAt, key === hoveredId);
 
     // The villager in hand: its own body, hanging off the cursor and swinging
     // with the drag, while the actor it came from stands hidden at its spot.
@@ -589,12 +613,23 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     const rect = k.canvas.getBoundingClientRect();
     const worldX = screenToWorld(event.clientX - rect.left, k.getCamPos().x, k.width());
     const worldY = screenToWorld(event.clientY - rect.top, k.getCamPos().y, k.height());
+    // The gesture carries a render key; the robot house and the pin below
+    // both speak creature ids — the house takes in a creature, not one of its
+    // bodies, so drag any instance of a helper and the helper moves in.
+    const draggedId = keyCreatureId(gesture.targetId);
     if (inRobotHouse(worldX, worldY)) {
       release();
-      opts.onRobotDrop?.(gesture.targetId);
-    } else if (gesture.targetId === residentId) {
+      opts.onRobotDrop?.(draggedId);
+    } else if (draggedId === residentId) {
       release();
-      opts.onRobotEvict?.(gesture.targetId);
+      opts.onRobotEvict?.(draggedId);
+    } else if (draggedId !== gesture.targetId) {
+      // An aura has no ground of its own: `instanceSpots` fans it around the
+      // project it is tethered to, so pinning the helper underneath would
+      // move a body that is not on screen and leave this one exactly where it
+      // was. An aura's ground belongs to its project — pin the project and
+      // the fan follows it. So this drop is a no-op beyond setting it down.
+      release();
     } else {
       // Everywhere else means "this is where you live now". Resolved here,
       // not on the server, because the resolved spot is what gets stored:
@@ -606,8 +641,8 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
       // than where the body was actually touching down. `held` has to be
       // read for this before `release()` clears it below.
       const footOffset = held?.footOffset() ?? 0;
-      const spot = resolveHeldDrop(pins, gesture.targetId, worldX, worldY, footOffset);
-      pins.set(gesture.targetId, spot);
+      const spot = resolveHeldDrop(pins, draggedId, worldX, worldY, footOffset);
+      pins.set(draggedId, spot);
       reseat();
       // `release()` is what fires the landing puff and the touch-down sound
       // (via actor.setHeld(false)), at the actor's position *right now* — so
@@ -616,7 +651,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
       // one.
       release();
       opts.onPinsChanged?.();
-      void pinCreature(gesture.targetId, spot.x, spot.y);
+      void pinCreature(draggedId, spot.x, spot.y);
     }
   });
 
@@ -680,55 +715,70 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         ? `voice ${bar(llm.interactiveRemaining, llm.interactiveCap)} ${fmt(llm.interactiveRemaining)}/${fmt(llm.interactiveCap)}`
         : '';
       layoutHudChip();
+      // The server's arrangement replaces the local one wholesale — an
+      // optimistic pin written on the last drop only had to survive until
+      // this frame confirmed it.
+      lastCreatures = view.creatures;
       pins = new Map(Object.entries(view.pins).map(([id, at]) => [id, { ...at }]));
-      // The resident stands at the robot-house porch, not its hashed spot or
-      // any pin it holds (spec §4: a glance at the house says who the robot
-      // is) — `residentId` has to be current before `seatAll` runs, since
-      // that override lives inside it now, shared with `reseat()`.
+      // Everything to draw: projects and unlinked helpers on their hashed
+      // spots (or the ones the player pinned them to), plus one instance of
+      // each linked helper fanned around the project that uses it — and then
+      // the robot's resident lifted out of the crowd onto the porch, aura and
+      // all. `residentId` has to be current before this runs, since the porch
+      // override reads it.
       residentId = view.robotResidentId;
-      const spots = seatAll(view.creatures.map((c) => c.id), pins, residentId);
+      const entries: RenderEntry[] = seatAll(view.creatures, pins, residentId);
 
       const resident = residentId ? view.creatures.find((c) => c.id === residentId) : undefined;
       robotHouse.setResidentLabel(resident ? displayName(resident) : null);
       const active = view.robotLastTurnAt !== null && Date.now() - view.robotLastTurnAt < 15_000;
       robotHouse.setPresence(resident ? (active ? 'talking' : 'lit') : 'dark');
 
-      placements = spots;
+      placements = new Map(entries.map((e) => [e.key, e.spot]));
       const seen = new Set<string>();
 
-      for (const creature of view.creatures) {
-        seen.add(creature.id);
-        const spot = spots.get(creature.id)!;
-        const before = known.get(creature.id);
+      for (const e of entries) {
+        seen.add(e.key);
+        const before = known.get(e.key);
         // Respawn only when the look changes; stats alone (which change on
-        // every server tick) must not restart a creature's motion.
-        const changed = before && JSON.stringify(before.appearance) !== JSON.stringify(creature.appearance);
-        if (!actors.has(creature.id) || changed) {
-          actors.get(creature.id)?.destroy();
+        // every server tick) must not restart a creature's motion. Presence
+        // joins the look here: it is baked into the actor's geometry at spawn
+        // time, so a project that gained a helper can only grow by respawning.
+        const changed =
+          before &&
+          (JSON.stringify(before.appearance) !== JSON.stringify(e.creature.appearance) ||
+            presences.get(e.key) !== e.presence);
+        if (!actors.has(e.key) || changed) {
+          actors.get(e.key)?.destroy();
           // Delete immediately, not just on the eventual respawn: otherwise
           // the dead actor stays in `actors` and keeps getting `update()`d
           // every frame until the new one resolves — including, for a
           // dangling lanky, `body.use(...)` called on an already-destroyed
           // game object.
-          actors.delete(creature.id);
-          const gen = (generations.get(creature.id) ?? 0) + 1;
-          generations.set(creature.id, gen);
-          void spawnCreature(k, creature, spot, { pixel: pixelFont, mono: monoFont })
+          actors.delete(e.key);
+          const gen = (generations.get(e.key) ?? 0) + 1;
+          generations.set(e.key, gen);
+          // Named out of the entry so the callback below — which resolves long
+          // after this iteration — reads as being about one body: `key` is the
+          // render key it is spawning, `creature` the creature wearing it.
+          const { key, creature, presence } = e;
+          void spawnCreature(k, creature, e.spot, { pixel: pixelFont, mono: monoFont }, presence)
             .then((actor) => {
-              if (generations.get(creature.id) !== gen) { actor.destroy(); return; }
+              if (generations.get(key) !== gen) { actor.destroy(); return; }
               // Stats can tick several times while 70 sprites load, and a
               // villager arriving in that window can move this one along its
               // row. `known` and `placements` hold the newest view by the time
               // this resolves, so hand the actor those rather than the
               // snapshot the spawn started from.
-              actor.setSpot(placements.get(creature.id) ?? spot);
-              actor.setCreature(known.get(creature.id) ?? creature);
+              actor.setCreature(known.get(key) ?? creature);
               // A look that changes mid-drag respawns the actor under the
               // player's hand. The fresh one starts visible and standing at
               // its spot, so without this the villager would appear twice —
               // once dangling from the cursor, once back on the ground.
-              if (heldId === creature.id) actor.setHeld(true);
-              actors.set(creature.id, actor);
+              // Keyed on the render key, since that is what `heldId` holds:
+              // the player grabbed one body, not every body of a creature.
+              if (heldId === key) actor.setHeld(true);
+              actors.set(key, actor);
             })
             .catch(() => {
               // A failed sprite load leaves nothing to add. Without this,
@@ -736,55 +786,72 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
               // onError(reject) would be an unhandled promise rejection.
             });
         } else {
-          const actor = actors.get(creature.id)!;
+          const actor = actors.get(e.key)!;
           // A villager can be pushed along its row when a newcomer's hash
           // lands on its spot (see zones.ts). The actor owns its root
           // position, so without this it carries on drawing where it used to
           // stand while somebody else occupies that ground — the static
           // overlap traded for a moving one. Repositioning is not a respawn:
           // the motion clock, the phase and every baked sprite survive it.
-          actor.setSpot(spot);
+          actor.setSpot(e.spot);
           // Same look, newer stats: the actor re-derives its behaviour flags
           // in place. Without this, mood and energy select a creature's
           // behaviour exactly once — on the frame it was first drawn — and
           // never again.
-          actor.setCreature(creature);
+          actor.setCreature(e.creature);
         }
       }
 
-      for (const [id, actor] of actors) {
-        if (!seen.has(id)) { actor.destroy(); actors.delete(id); }
+      for (const [key, actor] of actors) {
+        if (!seen.has(key)) { actor.destroy(); actors.delete(key); }
       }
 
+      presences.clear();
+      for (const e of entries) presences.set(e.key, e.presence);
+
+      // Sound is per creature, not per body: a helper drawn beside four
+      // projects arrives once and chimes from one place. Its first body's spot
+      // is that place — a linked helper has no commons spot of its own any more.
+      const xByCreature = new Map<string, number>();
+      for (const e of entries) {
+        if (!xByCreature.has(e.creature.id)) xByCreature.set(e.creature.id, e.spot.x);
+      }
       const snapshots: CreatureSnapshot[] = view.creatures.map((c) => ({
         id: c.id,
         stage: stageOf(c),
-        x: spots.get(c.id)!.x,
+        x: xByCreature.get(c.id) ?? 0,
         voice: voiceParamsFor(c),
       }));
       for (const ev of viewSoundEvents(prevStages, snapshots)) sound.event(ev);
       prevStages = new Map(view.creatures.map((c) => [c.id, stageOf(c)]));
 
-      known = new Map(view.creatures.map((c) => [c.id, c]));
+      known = new Map(entries.map((e) => [e.key, e.creature]));
     },
     setStatus(s) {
       status.text = s;
       layoutHudChip();
     },
+    // All four are addressed by *creature* id, and `actors` is keyed by render
+    // key — so each one fans out to every body of that creature. A helper
+    // standing beside four projects answers in four places at once, which is
+    // the reading spec §4 wants: one persona, many bodies.
+    //
+    // A villager that has despawned — or is still loading its sprites when its
+    // reply lands — has no actor to speak through. The panel holds the line
+    // either way, so there is nothing to recover here.
     sayFor(creatureId, text, source) {
-      // A villager that has despawned — or is still loading its sprites when
-      // its reply lands — has no actor to speak through. The panel holds the
-      // line either way, so there is nothing to recover here.
-      actors.get(creatureId)?.say(text, source);
+      for (const [key, actor] of actors) {
+        if (keyCreatureId(key) === creatureId) actor.say(text, source);
+      }
     },
     greetFor(creatureId) {
-      actors.get(creatureId)?.greet();
+      for (const [key, actor] of actors) if (keyCreatureId(key) === creatureId) actor.greet();
     },
     thinkFor(creatureId) {
-      actors.get(creatureId)?.think();
+      for (const [key, actor] of actors) if (keyCreatureId(key) === creatureId) actor.think();
     },
     clearThoughtFor(creatureId) {
-      actors.get(creatureId)?.clearThought();
+      for (const [key, actor] of actors) if (keyCreatureId(key) === creatureId) actor.clearThought();
     },
     resetLayout() {
       if (pins.size === 0) return;
