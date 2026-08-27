@@ -17,7 +17,9 @@ import {
   SIGN_BASE_Y,
   signLeft,
   placeCreatures,
+  pinSpot,
   type Spot,
+  type Pin,
 } from '../layout/zones.js';
 import type { VillageView } from '../net/protocol.js';
 import { ZOOM, screenToWorld, clampCamX } from './camera.js';
@@ -35,6 +37,7 @@ import { PORCH_SPOT, inRobotHouse } from '../layout/robot.js';
 import { createDragTracker } from '../input/drag.js';
 import { createHeld, type HeldCreature } from './held.js';
 import { displayName } from '../render/label.js';
+import { pinCreature, resetLayout as resetLayoutCall } from '../net/client.js';
 
 export interface VillageScene {
   k: KAPLAYCtx;
@@ -50,6 +53,10 @@ export interface VillageScene {
   /** Show / retire the "composing a reply" thought bubble over one creature. */
   thinkFor(creatureId: string): void;
   clearThoughtFor(creatureId: string): void;
+  /** Release every hand-placed villager. The HUD's reset button calls this. */
+  resetLayout(): void;
+  /** Whether any villager is currently hand-placed — the button's enabled state. */
+  hasPins(): boolean;
 }
 
 export interface VillageOptions {
@@ -388,6 +395,11 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   // loading sprites can adopt the newest spot when it resolves, the same way
   // it adopts the newest stats from `known`.
   let placements = new Map<string, Spot>();
+  // The arrangement the player has made. Seeded from every view frame, but
+  // written locally the instant a drop lands so the villager stays under the
+  // hand instead of waiting out a round trip. A refused or lost write simply
+  // loses to the next frame.
+  let pins = new Map<string, Pin>();
   let lookAt: number | null = null;
 
   // A second onMouseMove consumer, alongside the drag-pan handler above —
@@ -435,6 +447,21 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     if (heldId !== null) {
       actors.get(heldId)?.setHeld(false);
       heldId = null;
+    }
+  };
+
+  /**
+   * Re-run placement against the current pins and move every actor to match.
+   * Called after a local pin so the arrangement updates on the frame the
+   * player let go, rather than on the next frame from the server.
+   */
+  const reseat = () => {
+    const spots = placeCreatures([...placements.keys()], pins);
+    if (residentId && spots.has(residentId)) spots.set(residentId, { ...PORCH_SPOT });
+    placements = spots;
+    for (const [id, actor] of actors) {
+      const spot = spots.get(id);
+      if (spot) actor.setSpot(spot);
     }
   };
 
@@ -590,6 +617,17 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         opts.onRobotDrop?.(gesture.targetId);
       } else if (gesture.targetId === residentId) {
         opts.onRobotEvict?.(gesture.targetId);
+      } else {
+        // Everywhere else means "this is where you live now". Resolved here,
+        // not on the server, because the resolved spot is what gets stored:
+        // what the player sees on release is what reloads later.
+        const others = [...pins.entries()]
+          .filter(([id]) => id !== gesture.targetId)
+          .map(([, at]) => at);
+        const spot = pinSpot(worldX, worldY, others);
+        pins.set(gesture.targetId, spot);
+        reseat();
+        void pinCreature(gesture.targetId, spot.x, spot.y);
       }
     }
   });
@@ -654,7 +692,8 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         ? `voice ${bar(llm.interactiveRemaining, llm.interactiveCap)} ${fmt(llm.interactiveRemaining)}/${fmt(llm.interactiveCap)}`
         : '';
       layoutHudChip();
-      const spots = placeCreatures(view.creatures.map((c) => c.id));
+      pins = new Map(Object.entries(view.pins).map(([id, at]) => [id, { ...at }]));
+      const spots = placeCreatures(view.creatures.map((c) => c.id), pins);
 
       // The resident stands at the robot-house porch, not its hashed spot
       // (spec §4: a glance at the house says who the robot is).
@@ -758,6 +797,15 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     },
     clearThoughtFor(creatureId) {
       actors.get(creatureId)?.clearThought();
+    },
+    resetLayout() {
+      if (pins.size === 0) return;
+      pins = new Map();
+      reseat();
+      void resetLayoutCall();
+    },
+    hasPins() {
+      return pins.size > 0;
     },
   };
 }

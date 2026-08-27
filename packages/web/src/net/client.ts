@@ -72,3 +72,31 @@ export async function setRobotResident(creatureId: string | null): Promise<boole
     return false;
   }
 }
+
+/**
+ * Park a villager where the player dropped it. True on success; false is "the
+ * server said no or is away", which the caller treats as "nothing happened" —
+ * the spot already moved locally and the next state frame is the truth.
+ */
+export async function pinCreature(creatureId: string, x: number, y: number): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/creatures/${encodeURIComponent(creatureId)}/pin`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ x, y }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Release every hand-placed villager back to automatic placement. */
+export async function resetLayout(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/layout/reset', { method: 'POST' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
