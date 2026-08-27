@@ -226,6 +226,31 @@ describe('robot block (v4)', () => {
     expect(state.llm).toBeDefined();
     expect(state.robot).toEqual({ residentId: null });
   });
+
+  it('migrates a v4 save through the full load path, gains layout, preserves all v4 content', async () => {
+    sandbox = await makeSandbox();
+    const v4 = {
+      version: 4,
+      createdAt: 5,
+      updatedAt: 9,
+      creatures: {},
+      problems: [],
+      llm: {
+        ledger: { day: '2026-08-22', interactiveIn: 0, interactiveOut: 0, autonomousIn: 0, autonomousOut: 0 },
+        config: { interactiveCap: 500_000, autonomousCap: 100_000, autonomousEnabled: false },
+      },
+      robot: { residentId: 'skill:test-creature' },
+    };
+    await writeFile(sandbox.paths.statePath, JSON.stringify(v4), 'utf8');
+
+    const { state, recovered } = await loadState(sandbox.paths, 1_000);
+    expect(recovered).toBe(false);
+    expect(state.version).toBe(STATE_VERSION);
+    expect(state.layout).toEqual({ pins: {} });
+    expect(state.robot).toEqual({ residentId: 'skill:test-creature' });
+    expect(state.llm.config.interactiveCap).toBe(500_000);
+    expect(state.createdAt).toBe(5);
+  });
 });
 
 describe('layout migration', () => {
