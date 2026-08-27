@@ -28,7 +28,7 @@ import {
   signLeft,
   type Spot,
 } from '../layout/zones.js';
-import { buildRenderList, keyCreatureId, type RenderEntry } from '../layout/instances.js';
+import { buildRenderList, keyCreatureId, seatResident, type RenderEntry } from '../layout/instances.js';
 import type { VillageView } from '../net/protocol.js';
 import { ZOOM, screenToWorld, clampCamX } from './camera.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
@@ -651,27 +651,14 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
       layoutHudChip();
       // Everything to draw: projects and unlinked helpers on their hashed
       // spots, plus one instance of each linked helper fanned around the
-      // project that uses it.
-      let entries: RenderEntry[] = buildRenderList(view.creatures);
-
-      // The resident stands at the robot-house porch, not its hashed spot
-      // (spec §4: a glance at the house says who the robot is). One body at
-      // the porch, however many instances the helper usually casts — its key
-      // collapses to the bare creature id while it holds the post.
+      // project that uses it — and then the robot's resident lifted out of the
+      // crowd onto the porch, aura and all.
       residentId = view.robotResidentId;
-      if (residentId !== null) {
-        const mine = entries.filter((e) => e.creature.id === residentId);
-        if (mine.length > 0) {
-          // A *project* resident takes its aura with it. Its own entry moves to
-          // the porch, and the instance entries keyed `<residentId>>…` are
-          // dropped rather than left fanned around the Homes anchor it just
-          // vacated — an aura with no genie under it is just a crowd standing
-          // on empty ground.
-          const auraPrefix = `${residentId}>`;
-          entries = entries.filter((e) => e.creature.id !== residentId && !e.key.startsWith(auraPrefix));
-          entries.push({ key: residentId, creature: mine[0]!.creature, spot: { ...PORCH_SPOT }, presence: mine[0]!.presence });
-        }
-      }
+      const entries: RenderEntry[] = seatResident(
+        buildRenderList(view.creatures),
+        residentId,
+        PORCH_SPOT,
+      );
 
       const resident = residentId ? view.creatures.find((c) => c.id === residentId) : undefined;
       robotHouse.setResidentLabel(resident ? displayName(resident) : null);

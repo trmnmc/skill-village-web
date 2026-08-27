@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Creature } from '@village/core/visual';
 import { HOMES_LO, HOMES_HI } from './zones.js';
 import {
-  buildRenderList, instanceKey, instanceSpots, keyCreatureId, presenceScale, TETHER,
+  buildRenderList, instanceKey, instanceSpots, keyCreatureId, presenceScale, seatResident, TETHER,
 } from './instances.js';
 
 const creature = (id: string, kind: Creature['kind'], over: Partial<Creature> = {}): Creature => ({
@@ -103,5 +103,59 @@ describe('buildRenderList', () => {
     const entries = buildRenderList([linked, loner]);
     expect(entries.map((e) => e.key).sort()).toEqual(['skill:linked', 'skill:loner']);
     expect(entries.every((e) => e.presence === 1)).toBe(true);
+  });
+});
+
+describe('seatResident', () => {
+  const porch = Object.freeze({ x: 5000, y: 800, wander: 0 });
+  const project = creature('project:p', 'project', { helperIds: ['skill:linked'] });
+  const linked = creature('skill:linked', 'skill');
+  const loner = creature('skill:loner', 'skill');
+
+  it('no resident leaves the village exactly as it was', () => {
+    const entries = buildRenderList([project, linked, loner]);
+    expect(seatResident(entries, null, porch)).toEqual(entries);
+  });
+
+  it('a resident who is not in the view changes nothing', () => {
+    const entries = buildRenderList([project, linked, loner]);
+    expect(seatResident(entries, 'skill:ghost', porch)).toEqual(entries);
+  });
+
+  it('a project resident takes its aura with it: own entry to the porch, instances dropped', () => {
+    const entries = seatResident(buildRenderList([project, linked, loner]), 'project:p', porch);
+    // The instance would otherwise stay fanned around the Homes anchor the
+    // project just vacated — an aura with no genie under it.
+    expect(entries.map((e) => e.key)).toEqual(['project:p', 'skill:loner']);
+    const seated = entries.find((e) => e.key === 'project:p')!;
+    expect(seated.spot).toEqual(porch);
+    expect(seated.spot).not.toBe(porch); // a copy: PORCH_SPOT is frozen and shared
+    expect(seated.presence).toBeCloseTo(1.06, 10); // its genie size survives the move
+  });
+
+  it('a helper resident collapses to one body, however many auras it stood in', () => {
+    const q = creature('project:q', 'project', { helperIds: ['skill:linked'] });
+    const entries = seatResident(buildRenderList([project, q, linked]), 'skill:linked', porch);
+    expect(entries.map((e) => e.key)).toEqual(['project:p', 'project:q', 'skill:linked']);
+    const seated = entries.find((e) => e.key === 'skill:linked')!;
+    expect(seated.spot).toEqual(porch);
+    expect(seated.creature).toBe(linked);
+    expect(seated.presence).toBe(1);
+  });
+
+  it('prefix matching stops at the separator: project:foo does not evict project:foobar\'s aura', () => {
+    const foo = creature('project:foo', 'project', { helperIds: ['skill:a'] });
+    const foobar = creature('project:foobar', 'project', { helperIds: ['skill:b'] });
+    const a = creature('skill:a', 'skill');
+    const b = creature('skill:b', 'skill');
+    const entries = seatResident(buildRenderList([foo, foobar, a, b]), 'project:foo', porch);
+    const keys = entries.map((e) => e.key);
+    expect(keys).toContain(instanceKey('project:foobar', 'skill:b'));
+    expect(keys).not.toContain(instanceKey('project:foo', 'skill:a'));
+  });
+
+  it('leaves the list sorted by key, as buildRenderList found it', () => {
+    const entries = seatResident(buildRenderList([project, linked, loner]), 'project:p', porch);
+    expect(entries.map((e) => e.key)).toEqual([...entries.map((e) => e.key)].sort((x, y) => x.localeCompare(y)));
   });
 });

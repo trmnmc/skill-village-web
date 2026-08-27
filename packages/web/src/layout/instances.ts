@@ -99,3 +99,38 @@ export function buildRenderList(creatures: readonly Creature[]): RenderEntry[] {
 
   return entries.sort((a, b) => a.key.localeCompare(b.key));
 }
+
+/**
+ * Move the robot's resident to the porch. It stands beside the house rather
+ * than on its hashed spot (spec §4: a glance at the house says who the robot
+ * is), and it stands there *once* — however many bodies it usually casts, its
+ * key collapses to the bare creature id while it holds the post.
+ *
+ * A project resident takes its aura with it. Its instance entries are dropped
+ * rather than left fanned around the Homes anchor it has just vacated: an aura
+ * with no genie under it is only a crowd standing on empty ground. (For a
+ * helper resident the same filter already removes every instance, and the one
+ * porch entry replaces them.)
+ *
+ * Pure, and the input array is never touched. The result keeps buildRenderList's
+ * sort so callers can rely on one key order everywhere.
+ */
+export function seatResident(
+  entries: readonly RenderEntry[],
+  residentId: string | null,
+  porch: Spot,
+): RenderEntry[] {
+  if (residentId === null) return [...entries];
+  const mine = entries.filter((e) => e.creature.id === residentId);
+  if (mine.length === 0) return [...entries];
+  // `>` cannot appear in a Windows file name, so no creature id contains one
+  // (see instanceKey) — which is the whole reason this prefix test is sound.
+  // It can only match keys this resident anchors: `project:foo>` cannot be a
+  // prefix of `project:foobar`'s keys, because a `b` stands where the `>` must.
+  const auraPrefix = `${residentId}>`;
+  const rest = entries.filter((e) => e.creature.id !== residentId && !e.key.startsWith(auraPrefix));
+  // A copy of the porch: it is a frozen module constant, and an actor holds
+  // whatever spot it is handed for the life of the body.
+  rest.push({ key: residentId, creature: mine[0]!.creature, spot: { ...porch }, presence: mine[0]!.presence });
+  return rest.sort((a, b) => a.key.localeCompare(b.key));
+}
