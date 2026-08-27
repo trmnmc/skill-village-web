@@ -26,7 +26,7 @@ import { roleMap } from '../render/roles.js';
 import { displayName } from '../render/label.js';
 import { phaseFor, wingAngle } from '../motion/motion.js';
 import { createDangle } from '../motion/dangle.js';
-import type { CreatureFonts } from './creature.js';
+import { bodySpriteKeys, type CreatureFonts } from './creature.js';
 
 /**
  * Above the whole village, with room to spare. Depth here is not a small
@@ -80,14 +80,19 @@ export function createHeld(
   k: KAPLAYCtx,
   creature: Creature,
   fonts: CreatureFonts,
+  presence = 1,
 ): HeldCreature | null {
   // A dangling creature wears its dangling legs where it has them. This is the
   // same pair of conditions `spawnCreature` bakes `body:<id>:roam` under, so
   // asking the sprite registry is also the authoritative test for whether that
   // second bake happened at all.
   const dangles = creature.appearance.winged && creature.appearance.body === 'lanky';
-  const roamKey = `body:${creature.id}:roam`;
-  const bodyKey = dangles && k.getSprite(roamKey) ? roamKey : `body:${creature.id}`;
+  // Asked for, never rebuilt: `spawnCreature` owns this naming (it is
+  // content-addressed on the appearance), and the one time this file spelled
+  // the key out for itself, a change there left every held villager invisible —
+  // the actor hidden, and nothing drawn in the hand to replace it.
+  const { rest: restKey, roam: roamKey } = bodySpriteKeys(creature);
+  const bodyKey = dangles && k.getSprite(roamKey) ? roamKey : restKey;
   if (!k.getSprite(bodyKey)) return null;
 
   // The grid must be the one that was baked into the texture being drawn, or
@@ -111,7 +116,13 @@ export function createHeld(
   // one piece around the grab point. KAPLAY pushes pos, then scale, then angle
   // before drawing an object's children, so a child's own `pos` is already in
   // the swung frame — which is why none of the offsets below carry the angle.
-  const root = k.add([k.pos(0, 0), k.rotate(0), k.z(HELD_Z)]);
+  //
+  // `presence` rides the root too, for the same reason: a project is drawn
+  // larger than life on the ground (the genie framing), and a body that
+  // shrank the moment it was picked up would read as the wrong creature. One
+  // scale here covers the body, the wings and the eyes at once — the name
+  // sign is deliberately outside it, since a label is chrome, not anatomy.
+  const root = k.add([k.pos(0, 0), k.rotate(0), k.scale(presence), k.z(HELD_Z)]);
 
   const body = root.add([
     k.sprite(bodyKey),
@@ -201,7 +212,11 @@ export function createHeld(
       });
     },
     footOffset() {
-      return GRAB_INSET + bh;
+      // Scaled by `presence` like everything else under the root: a genie's
+      // feet hang further below the hand than a plain villager's, and a drop
+      // resolved off the unscaled height would land it short of where the
+      // player watched it touch down.
+      return (GRAB_INSET + bh) * presence;
     },
     destroy() {
       k.destroy(root);

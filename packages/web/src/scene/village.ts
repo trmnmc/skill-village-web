@@ -1,5 +1,5 @@
 import kaplay, { type KAPLAYCtx } from 'kaplay';
-import type { Creature } from '@village/core/visual';
+import { role, type Creature } from '@village/core/visual';
 import { TEXT_SS } from '../theme.js';
 import { themeStore } from '../theme/index.js';
 import type { Tokens, ResolvedTheme } from '../theme/store.js';
@@ -19,7 +19,7 @@ import {
   type Spot,
   type Pin,
 } from '../layout/zones.js';
-import { buildRenderList, keyCreatureId, seatResident, type RenderEntry } from '../layout/instances.js';
+import { buildRenderList, keyCreatureId, presenceScale, seatResident, type RenderEntry } from '../layout/instances.js';
 import type { VillageView } from '../net/protocol.js';
 import { ZOOM, screenToWorld, clampCamX } from './camera.js';
 import { spawnCreature, type CreatureActor } from './creature.js';
@@ -537,7 +537,18 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         // Null when the sprites for this creature have not finished baking.
         // The gesture still works; there is just nothing in the hand to see
         // until the player lets go, which is a sub-second window at startup.
-        held = dragged ? createHeld(k, dragged, { pixel: pixelFont, mono: monoFont }) : null;
+        //
+        // The presence multiplier comes from the same helper the render list
+        // uses, not a second copy of the rule: a genie picked up has to stay
+        // the size it was standing. An instance is always 1 — only the project
+        // itself is drawn larger than life.
+        const heldPresence =
+          dragged && keyCreatureId(heldId) === heldId && role(dragged.kind) === 'project'
+            ? presenceScale(dragged.helperIds?.length ?? 0)
+            : 1;
+        held = dragged
+          ? createHeld(k, dragged, { pixel: pixelFont, mono: monoFont }, heldPresence)
+          : null;
       }
       // Raw per-frame velocity. The dangle spring is itself a low-pass, so it
       // does the smoothing that a sampling buffer would otherwise have to.

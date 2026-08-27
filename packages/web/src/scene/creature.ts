@@ -66,6 +66,22 @@ function simpleHash(id: string): number {
   return sum;
 }
 
+/**
+ * The sprite keys a creature's body is baked under. Content-addressed on the
+ * appearance, so one helper drawn beside several projects bakes once, and a
+ * creature that changes its look can never be served the old texture.
+ *
+ * Exported because `held.ts` draws the same body hanging off the cursor, from
+ * these same textures. A second copy of this naming is exactly how the held
+ * villager came to vanish the day the key grew its look hash — one definition,
+ * or the hand goes empty again.
+ */
+export function bodySpriteKeys(creature: Creature): { rest: string; roam: string } {
+  const lookKey = simpleHash(JSON.stringify(creature.appearance)).toString(36);
+  const rest = `body:${creature.id}:${lookKey}`;
+  return { rest, roam: `${rest}:roam` };
+}
+
 /** The reference umbrella (drawUmbrella) was authored at U=4; the game draws at U=6. */
 const UMBRELLA_SCALE = U / 4;
 
@@ -283,19 +299,15 @@ export async function spawnCreature(
   // Bake the resting body once. A roaming lanky agent gets a second bake with
   // trailing legs; everyone else needs only the one.
   const restGrid = composeGrid(creature.appearance);
-  // Content-addressed: one helper can be drawn several times over (once per
-  // project that links it), and every instance would otherwise re-bake and
-  // re-upload the identical canvas. Hashing the appearance into the key means
-  // the guard can never serve a stale look either — a creature that changes
-  // its appearance gets a new key, so the old texture is never reused for it.
-  const lookKey = simpleHash(JSON.stringify(creature.appearance)).toString(36);
-  const restKey = `body:${creature.id}:${lookKey}`;
+  // One helper can be drawn several times over (once per project that links
+  // it), and every instance would otherwise re-bake and re-upload the
+  // identical canvas — so the key is content-addressed. See `bodySpriteKeys`.
+  const { rest: restKey, roam: roamKey } = bodySpriteKeys(creature);
   if (!k.getSprite(restKey)) {
     await loadSprite(k, restKey, toCanvas(bakePixels(restGrid, map)));
   }
 
   const dangles = creature.appearance.winged && creature.appearance.body === 'lanky';
-  const roamKey = `${restKey}:roam`;
   // Kept, not thrown away after baking: the two grids are *different heights*.
   // composeGrid keeps the torso and appends the posture's rows, and the
   // postures differ in length (stubs 1, splayed 2, floating 3, trailing 4), so
