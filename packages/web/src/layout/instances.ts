@@ -139,11 +139,14 @@ export function buildRenderList(creatures: readonly Creature[]): RenderEntry[] {
  * is), and it stands there *once* — however many bodies it usually casts, its
  * key collapses to the bare creature id while it holds the post.
  *
- * A project resident takes its aura with it. Its instance entries are dropped
- * rather than left fanned around the Homes anchor it has just vacated: an aura
- * with no genie under it is only a crowd standing on empty ground. (For a
- * helper resident the same filter already removes every instance, and the one
- * porch entry replaces them.)
+ * A project resident stands at the porch ALONE — its aura is dropped, not
+ * relocated, and that is the design, not a compromise (owner's call,
+ * 2026-08-26): residency is the spotlight, and the project shines by itself.
+ * Do not "fix" this by fanning the aura around the porch. Dropping also beats
+ * leaving the instances fanned around the Homes anchor it just vacated: an
+ * aura with no genie under it is only a crowd standing on empty ground. (For
+ * a helper resident the same filter already removes every instance, and the
+ * one porch entry replaces them.)
  *
  * Pure, and the input array is never touched. The result keeps buildRenderList's
  * sort so callers can rely on one key order everywhere.
