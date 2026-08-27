@@ -100,6 +100,10 @@ export async function discoverProjects(
   const groups = new Map<string, string[]>();
   for (const entry of await listDir(paths.claudeProjectsDir)) {
     if (!entry.isDirectory()) continue;
+    // Tested against the whole entry name, not the folded parent: only the
+    // parent reaches an id, so this drops the odd `>`-named worktree of a
+    // sound parent too. Deliberate — such a folder is pathological either
+    // way, and the cost is one checkout's work signal, not a villager.
     if (!entryKeySafe(entry.name)) continue;
     const parent = WORKTREE_RE.exec(entry.name)?.[1] ?? entry.name;
     groups.set(parent, [...(groups.get(parent) ?? []), entry.name]);

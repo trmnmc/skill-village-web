@@ -332,7 +332,12 @@ function clears(
  * Shared with instances.ts, which seats an aura by the same rule: the scenery
  * rule lives here once, so a moved tree moves every keep-out that follows it.
  */
-export function nearestGround(wanted: number, lo: number, hi: number, blocked: readonly KeepOut[]): number {
+export function nearestGround(
+  wanted: number,
+  lo: number,
+  hi: number,
+  blocked: readonly KeepOut[],
+): number {
   const x = Math.min(hi, Math.max(lo, wanted));
   const inside = blocked.find((band) => x > band.left && x < band.right);
   if (!inside) return x;

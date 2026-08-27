@@ -32,7 +32,12 @@ const FAN_STEP = 34;
 /** The short leash an instance ambles on, before scenery cuts it back. */
 export const INSTANCE_LEASH = 18;
 
-/** `>` cannot appear in a Windows file name, so no creature id contains it. */
+/**
+ * No creature id contains `>`, so the split below is unambiguous. A helper's
+ * name is validated by NAME_PATTERN; a project's comes from a directory name,
+ * where `>` is illegal on Windows but ordinary on Linux — `discoverProjects`
+ * skips such an entry rather than mint an id that cannot round-trip.
+ */
 export function instanceKey(projectId: string, helperId: string): string {
   return `${projectId}>${helperId}`;
 }
@@ -151,8 +156,8 @@ export function seatResident(
   if (residentId === null) return [...entries];
   const mine = entries.filter((e) => e.creature.id === residentId);
   if (mine.length === 0) return [...entries];
-  // `>` cannot appear in a Windows file name, so no creature id contains one
-  // (see instanceKey) — which is the whole reason this prefix test is sound.
+  // No creature id contains `>` (see instanceKey, and the entry-name guard in
+  // discoverProjects) — which is the whole reason this prefix test is sound.
   // It can only match keys this resident anchors: `project:foo>` cannot be a
   // prefix of `project:foobar`'s keys, because a `b` stands where the `>` must.
   const auraPrefix = `${residentId}>`;

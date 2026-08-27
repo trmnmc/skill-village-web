@@ -76,6 +76,12 @@ world-readable, contents never). Re-seeding also overwrites whatever live
 visitors have done — bonds, care, the robot resident — so it is a deliberate
 act, not routine maintenance.
 
+**Rolling back the server releases every project.** A state file from M5
+loads fine on an older build (`STATE_VERSION` is still 4 and every new field
+is optional), but that build's `reconcile` has no project guard: the helper
+scan says nothing about projects, so its first pass auto-releases all of
+them. Pair any rollback below M5 with a re-seed of a matching state file.
+
 ## Redeploying the web bundle
 
     npm run build:web
