@@ -2,7 +2,7 @@ import { utimes } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeSandbox, transcriptLine, type Sandbox } from '../testing/sandbox.js';
 import { emptyScanCache } from './scan-cache.js';
-import { discoverProjects, WORKTREE_RE } from './projects.js';
+import { discoverProjects, entryKeySafe, WORKTREE_RE } from './projects.js';
 
 describe('discoverProjects', () => {
   let sandbox: Sandbox;
@@ -41,11 +41,62 @@ describe('discoverProjects', () => {
     expect(projects[0]!.lastWorkedAt).toBe(new Date('2030-01-01').getTime());
   });
 
+  it('a newer worktree session never steals the parent project\'s name or path', async () => {
+    await sandbox.writeTranscript('proj-w', 'parent', [
+      transcriptLine({ cwd: '/home/dev/proj-w', skill: 'tdd' }),
+    ]);
+    const wt = await sandbox.writeTranscript('proj-w--claude-worktrees-hotfix-1a', 'wt', [
+      transcriptLine({ cwd: '/home/dev/proj-w/.claude/worktrees/hotfix-1a', skill: 'debugging' }),
+    ]);
+    await utimes(wt, new Date('2030-01-01'), new Date('2030-01-01'));
+    const { projects } = await discover();
+    expect(projects).toHaveLength(1);
+    // The checkout is deleted when the worktree is cleaned up; the project is not.
+    expect(projects[0]!.displayName).toBe('proj-w');
+    expect(projects[0]!.sourcePath).toBe('/home/dev/proj-w');
+    // ...and work done in a worktree is still work on the project.
+    expect(projects[0]!.lastWorkedAt).toBe(new Date('2030-01-01').getTime());
+    expect(projects[0]!.helperMentions).toEqual(['debugging', 'tdd']);
+  });
+
   it('an orphan worktree folds into the synthesized parent name', async () => {
     await sandbox.writeTranscript('proj-c--claude-worktrees-solo-9f', 's1', [transcriptLine({})]);
     const { projects } = await discover();
     expect(projects.map((p) => p.id)).toEqual(['project:proj-c']);
   });
+
+  it('an orphan worktree names the project, not the checkout — either path style', async () => {
+    await sandbox.writeTranscript('win--claude-worktrees-solo-9f', 's1', [
+      transcriptLine({ cwd: 'C:\\Users\\dev\\proj-o\\.claude\\worktrees\\solo-9f' }),
+    ]);
+    await sandbox.writeTranscript('nix--claude-worktrees-solo-9f', 's1', [
+      transcriptLine({ cwd: '/home/dev/proj-p/.claude/worktrees/solo-9f' }),
+    ]);
+    const { projects } = await discover();
+    const win = projects.find((p) => p.id === 'project:win')!;
+    expect(win.sourcePath).toBe('C:\\Users\\dev\\proj-o');
+    expect(win.displayName).toBe('proj-o');
+    const nix = projects.find((p) => p.id === 'project:nix')!;
+    expect(nix.sourcePath).toBe('/home/dev/proj-p');
+    expect(nix.displayName).toBe('proj-p');
+  });
+
+  it('the render-key separator is rejected in an entry name', () => {
+    expect(entryKeySafe('C--Users-dev-proj-a')).toBe(true);
+    expect(entryKeySafe('-home-u-a>b')).toBe(false);
+  });
+
+  // `>` is illegal in a Windows file name, so the directory cannot even be made
+  // here — the hazard is a Linux or macOS project folder, and so is the test.
+  it.skipIf(process.platform === 'win32')(
+    'an entry name carrying the render-key separator is skipped, not mis-keyed',
+    async () => {
+      await sandbox.writeTranscript('-home-u-a>b', 's1', [transcriptLine({ cwd: '/home/u/a>b' })]);
+      await sandbox.writeTranscript('-home-u-ok', 's1', [transcriptLine({ cwd: '/home/u/ok' })]);
+      const { projects } = await discover();
+      expect(projects.map((p) => p.id)).toEqual(['project:-home-u-ok']);
+    },
+  );
 
   it('an entry with zero .jsonl files is furniture, skipped', async () => {
     await sandbox.writeTranscript('proj-d', 's1', [transcriptLine({})]);

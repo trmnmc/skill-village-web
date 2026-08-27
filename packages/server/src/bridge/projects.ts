@@ -49,6 +49,44 @@ function lastSegment(p: string): string {
 }
 
 /**
+ * A worktree's cwd names a checkout, not a project: `<project>/.claude/
+ * worktrees/<name>` is a directory git removes when the worktree is cleaned
+ * up. Trim back to the project it hangs off. Both separators again — the cwd
+ * carries the writing machine's path style, not the reading machine's.
+ * Unrecognised shapes are returned whole; a wrong guess is worse than a long
+ * path.
+ */
+function trimWorktreeCheckout(p: string): string {
+  const sep = p.includes('\\') ? '\\' : '/';
+  const parts = p.split(/[\\/]/);
+  for (let i = parts.length - 2; i > 0; i--) {
+    if (parts[i] === '.claude' && parts[i + 1] === 'worktrees') {
+      const project = parts.slice(0, i).join(sep);
+      if (project !== '') return project;
+    }
+  }
+  return p;
+}
+
+/**
+ * Entry names the village can carry. `instances.ts` keys a helper's render
+ * instance `<projectId>><helperId>` and `keyCreatureId` splits on the first
+ * `>`; a project id embeds its entry name verbatim. `>` is illegal in a
+ * Windows file name but legal on Linux and macOS, so an entry holding one
+ * would key an aura that answers to the wrong creature — the wrong drag
+ * target, the wrong speech bubble. Skipped rather than mis-keyed.
+ */
+export function entryKeySafe(name: string): boolean {
+  return !name.includes('>');
+}
+
+/** One transcript file, and whether it belongs to the parent entry or a worktree's. */
+interface GroupFile {
+  path: string;
+  fromParent: boolean;
+}
+
+/**
  * Read-only discovery over `~/.claude/projects` (remap spec §2): entry names
  * are the source of truth, worktrees fold into their parents, and an entry
  * with no sessions is skipped — a villager that can never change state is
@@ -62,25 +100,30 @@ export async function discoverProjects(
   const groups = new Map<string, string[]>();
   for (const entry of await listDir(paths.claudeProjectsDir)) {
     if (!entry.isDirectory()) continue;
+    if (!entryKeySafe(entry.name)) continue;
     const parent = WORKTREE_RE.exec(entry.name)?.[1] ?? entry.name;
     groups.set(parent, [...(groups.get(parent) ?? []), entry.name]);
   }
 
   // Session transcripts live at the entry's top level; session sub-folders
   // (tool-results and friends) are not transcripts and are not descended into.
-  const filesByGroup = new Map<string, string[]>();
+  // Each file keeps its provenance: the fold is right for the work signal and
+  // wrong for identity, and only provenance can tell the two apart.
+  const filesByGroup = new Map<string, GroupFile[]>();
   const allFiles: string[] = [];
   for (const [parent, entries] of groups) {
-    const files: string[] = [];
+    const files: GroupFile[] = [];
     for (const name of entries) {
       const dir = join(paths.claudeProjectsDir, name);
       for (const f of await listDir(dir)) {
-        if (f.isFile() && f.name.endsWith('.jsonl')) files.push(join(dir, f.name));
+        if (f.isFile() && f.name.endsWith('.jsonl')) {
+          files.push({ path: join(dir, f.name), fromParent: name === parent });
+        }
       }
     }
     if (files.length === 0) continue; // zero sessions: skipped (spec §2)
     filesByGroup.set(parent, files);
-    allFiles.push(...files);
+    allFiles.push(...files.map((f) => f.path));
   }
 
   const { byFile, cache } = await collectFacts(allFiles, previous);
@@ -88,20 +131,37 @@ export async function discoverProjects(
   const projects: DiscoveredProject[] = [];
   for (const [parent, files] of filesByGroup) {
     let lastWorkedAt = 0;
-    let cwd: string | null = null;
-    let cwdAt = -1;
     const mentions = new Set<string>();
-    for (const file of files) {
+    // Two elections, not one. Work folds (a worktree session IS work on the
+    // project); identity does not (a worktree's cwd is a checkout that git
+    // deletes). Newest-mtime-wins across the whole fold gave the project the
+    // busiest worktree's name and a path inside .claude/worktrees.
+    let parentCwd: string | null = null;
+    let parentCwdAt = -1;
+    let checkoutCwd: string | null = null;
+    let checkoutCwdAt = -1;
+    for (const { path: file, fromParent } of files) {
       const facts = byFile.get(file);
       if (!facts) continue; // vanished mid-scan
       lastWorkedAt = Math.max(lastWorkedAt, facts.lastActivityMs);
-      if (facts.cwd !== null && facts.lastActivityMs > cwdAt) {
-        cwd = facts.cwd;
-        cwdAt = facts.lastActivityMs;
-      }
       for (const m of facts.helperMentions) mentions.add(m);
+      if (facts.cwd === null) continue;
+      if (fromParent) {
+        if (facts.lastActivityMs > parentCwdAt) {
+          parentCwd = facts.cwd;
+          parentCwdAt = facts.lastActivityMs;
+        }
+      } else if (facts.lastActivityMs > checkoutCwdAt) {
+        checkoutCwd = facts.cwd;
+        checkoutCwdAt = facts.lastActivityMs;
+      }
     }
     if (lastWorkedAt === 0) continue; // every session vanished mid-scan
+
+    // A worktree's cwd is the fallback only, for the orphan case (spec §2):
+    // the parent is real even if Claude never sat in it, so its path is read
+    // off the checkout hanging from it.
+    const cwd = parentCwd ?? (checkoutCwd === null ? null : trimWorktreeCheckout(checkoutCwd));
 
     projects.push({
       id: `project:${parent}`,
