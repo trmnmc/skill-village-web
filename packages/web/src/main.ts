@@ -7,6 +7,7 @@ import { mountSoundHud } from './sound/hud.js';
 import { mountSoundcheck } from './sound/soundcheck.js';
 import { initTheme } from './theme/index.js';
 import { mountWeatherMenu } from './ui/weather-menu.js';
+import { mountLayoutButton } from './ui/layout-button.js';
 
 // Boot the theme store first: it applies --sv-* CSS vars to the document root,
 // and everything painted after this (chat panel, scene chrome) should see them.
@@ -35,6 +36,8 @@ const scene = await startVillage({
   onRobotEvict: () => void setRobotResident(null),
 });
 
+const layoutButton = mountLayoutButton(document.body, scene);
+
 sound.init();
 mountSoundHud();
 mountSoundcheck();
@@ -50,6 +53,7 @@ let wasOffline = false;
 connect({
   onView: (view) => {
     scene.setView(view);
+    layoutButton.refresh();
     if (view.llm) setSilentBanner(view.llm.mode);
   },
   onStatus: (status) => {

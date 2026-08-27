@@ -99,6 +99,14 @@
         background: var(--sv-panel-bg, #FFFDF4); border: 2px solid var(--sv-ink, #3A2E22);
         color: var(--sv-panel-fg, #3A2E22); font-size: 18px; line-height: 1;
       }
+      /* Beside the weather gear, same size and z-layer; see #weather-menu. */
+      #layout-reset { position: fixed; left: 58px; bottom: 14px; z-index: 9; }
+      #layout-reset-button {
+        width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
+        background: var(--sv-panel-bg, #FFFDF4); border: 2px solid var(--sv-ink, #3A2E22);
+        color: var(--sv-panel-fg, #3A2E22); font-size: 18px; line-height: 1;
+      }
+      #layout-reset-button:disabled { opacity: 0.4; cursor: default; }
       #weather-menu-popover {
         position: absolute; left: 0; bottom: 44px; min-width: 160px;
         background: var(--sv-panel-bg, #FFFDF4); border: 2px solid var(--sv-ink, #3A2E22);
