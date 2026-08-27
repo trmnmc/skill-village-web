@@ -16,6 +16,8 @@ export interface VillageView {
   robotResidentId: string | null;
   /** When the robot last spoke (server process memory), for the presence glow. */
   robotLastTurnAt: number | null;
+  /** Villagers the player has placed by hand, keyed by id. Empty when none. */
+  pins: Record<string, { x: number; y: number }>;
 }
 
 const BODY_ID_SET: ReadonlySet<string> = new Set(BODY_IDS);
@@ -85,7 +87,7 @@ export function filterRenderable(values: unknown[]): Creature[] {
  */
 export function toView(payload: unknown): VillageView | null {
   if (typeof payload !== 'object' || payload === null) return null;
-  const p = payload as { creatures?: unknown; problems?: unknown; startupNote?: unknown; llm?: unknown; robot?: unknown; robotLastTurnAt?: unknown };
+  const p = payload as { creatures?: unknown; problems?: unknown; startupNote?: unknown; llm?: unknown; robot?: unknown; robotLastTurnAt?: unknown; layout?: unknown };
   if (typeof p.creatures !== 'object' || p.creatures === null) return null;
 
   const creatures = filterRenderable(Object.values(p.creatures as Record<string, unknown>));
@@ -120,12 +122,31 @@ export function toView(payload: unknown): VillageView | null {
   const rawTurn = (p as { robotLastTurnAt?: unknown }).robotLastTurnAt;
   const robotLastTurnAt = typeof rawTurn === 'number' ? rawTurn : null;
 
+  // A pin is only worth carrying if it is a real pair of numbers: a half-read
+  // entry would place a villager at NaN, which draws nothing and is very hard
+  // to see the cause of.
+  const pins: Record<string, { x: number; y: number }> = {};
+  const rawLayout = (p as { layout?: unknown }).layout;
+  if (typeof rawLayout === 'object' && rawLayout !== null) {
+    const rawPins = (rawLayout as { pins?: unknown }).pins;
+    if (typeof rawPins === 'object' && rawPins !== null) {
+      for (const [id, at] of Object.entries(rawPins as Record<string, unknown>)) {
+        if (typeof at !== 'object' || at === null) continue;
+        const { x, y } = at as { x?: unknown; y?: unknown };
+        if (typeof x === 'number' && Number.isFinite(x) && typeof y === 'number' && Number.isFinite(y)) {
+          pins[id] = { x, y };
+        }
+      }
+    }
+  }
+
   return {
     creatures,
     problems: Array.isArray(p.problems) ? p.problems : [],
     startupNote: typeof p.startupNote === 'string' ? p.startupNote : null,
     robotResidentId,
     robotLastTurnAt,
+    pins,
     llm,
   };
 }

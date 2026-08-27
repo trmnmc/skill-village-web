@@ -167,6 +167,33 @@ describe('toView — llm block', () => {
   });
 });
 
+describe('pins in the view', () => {
+  it('reads the layout block', () => {
+    const view = toView({ ...state, layout: { pins: { 'skill:a': { x: 10, y: 620 } } } })!;
+    expect(view.pins).toEqual({ 'skill:a': { x: 10, y: 620 } });
+  });
+
+  it('is empty when the server sends no layout at all', () => {
+    expect(toView(state)!.pins).toEqual({});
+  });
+
+  it('drops entries that are not a pair of finite numbers', () => {
+    const view = toView({
+      ...state,
+      layout: {
+        pins: {
+          good: { x: 1, y: 2 },
+          text: { x: 'left', y: 2 },
+          nan: { x: Number.NaN, y: 2 },
+          missing: { x: 1 },
+          nothing: null,
+        },
+      },
+    })!;
+    expect(view.pins).toEqual({ good: { x: 1, y: 2 } });
+  });
+});
+
 describe('robot fields', () => {
   it('reads the resident and activity stamp when present', () => {
     const view = toView({ ...state, robot: { residentId: 'skill:x' }, robotLastTurnAt: 123 });
