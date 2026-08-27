@@ -6,11 +6,11 @@ export function displayName(creature: Creature): string {
 }
 
 /**
- * The filename beneath, in mono. Skills end in `/` because they are folders and
- * agents end in `.md` because they are files — which is how a glance tells the
- * two species apart (spec §4).
+ * The filename beneath, in mono. Skills and projects are folders and end in
+ * `/`; agents are files and end in `.md` — a glance still tells the species
+ * apart (spec §4).
  */
 export function fileLabel(creature: Creature): string {
-  if (creature.kind === 'skill') return `${creature.name}/`;
+  if (creature.kind === 'skill' || creature.kind === 'project') return `${creature.name}/`;
   return creature.name.endsWith('.md') ? creature.name : `${creature.name}.md`;
 }
