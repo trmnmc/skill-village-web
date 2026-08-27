@@ -49,12 +49,15 @@ function lastSegment(p: string): string {
 }
 
 /**
- * A worktree's cwd names a checkout, not a project: `<project>/.claude/
- * worktrees/<name>` is a directory git removes when the worktree is cleaned
- * up. Trim back to the project it hangs off. Both separators again — the cwd
- * carries the writing machine's path style, not the reading machine's.
- * Unrecognised shapes are returned whole; a wrong guess is worse than a long
- * path.
+ * A cwd inside `<project>/.claude/worktrees/<name>` names a checkout, not a
+ * project — a directory git removes when the worktree is cleaned up. Trim
+ * back to the project it hangs off, wherever the cwd came from: which entry's
+ * transcript carried it says nothing about which directory it points at.
+ *
+ * Both separators again — the cwd carries the writing machine's path style,
+ * not the reading machine's. Scanned from the end, so a cwd deeper inside the
+ * checkout trims too. Unrecognised shapes are returned whole; a wrong guess
+ * is worse than a long path.
  */
 function trimWorktreeCheckout(p: string): string {
   const sep = p.includes('\\') ? '\\' : '/';
@@ -162,10 +165,21 @@ export async function discoverProjects(
     }
     if (lastWorkedAt === 0) continue; // every session vanished mid-scan
 
-    // A worktree's cwd is the fallback only, for the orphan case (spec §2):
-    // the parent is real even if Claude never sat in it, so its path is read
-    // off the checkout hanging from it.
-    const cwd = parentCwd ?? (checkoutCwd === null ? null : trimWorktreeCheckout(checkoutCwd));
+    // Provenance decides which files are eligible; a worktree entry's cwd is
+    // the fallback only, for the orphan case (spec §2) — the parent is real
+    // even if Claude never sat in it.
+    //
+    // Whichever wins is then normalized, because provenance is necessary and
+    // not sufficient: a parent-entry transcript can carry a worktree cwd of
+    // its own. A session that starts in the parent repo is filed under the
+    // parent entry and stays there, but EnterWorktree moves the session's
+    // working directory mid-session, and every line after that records the
+    // checkout. Measured on the real disk: 3 of this repo's 37 parent-entry
+    // transcripts point into `.claude/worktrees`, and one of them was the
+    // newest. A cwd under `<project>/.claude/worktrees/<name>` names
+    // `<project>` no matter whose transcript carried it.
+    const elected = parentCwd ?? checkoutCwd;
+    const cwd = elected === null ? null : trimWorktreeCheckout(elected);
 
     projects.push({
       id: `project:${parent}`,

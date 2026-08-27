@@ -65,6 +65,50 @@ describe('discoverProjects', () => {
     expect(projects.map((p) => p.id)).toEqual(['project:proj-c']);
   });
 
+  // A session that starts in the parent repo is filed under the parent entry
+  // and stays there — but its cwd moves when the session moves. EnterWorktree
+  // switches the working directory mid-session, and every line after that
+  // records the checkout. So provenance alone is not enough: a parent-entry
+  // file can carry a worktree cwd, and on the real disk one does.
+  it('a parent-entry session that moved into a worktree still names the project', async () => {
+    const settled = await sandbox.writeTranscript('proj-x', 'settled', [
+      transcriptLine({ cwd: '/home/dev/proj-x' }),
+    ]);
+    await utimes(settled, new Date('2020-01-01'), new Date('2020-01-01'));
+    await sandbox.writeTranscript('proj-x', 'moved', [
+      transcriptLine({ cwd: '/home/dev/proj-x/.claude/worktrees/feature-77' }),
+    ]);
+
+    const winSettled = await sandbox.writeTranscript('proj-y', 'settled', [
+      transcriptLine({ cwd: 'C:\\Users\\dev\\proj-y' }),
+    ]);
+    await utimes(winSettled, new Date('2020-01-01'), new Date('2020-01-01'));
+    await sandbox.writeTranscript('proj-y', 'moved', [
+      transcriptLine({ cwd: 'C:\\Users\\dev\\proj-y\\.claude\\worktrees\\feature-77' }),
+    ]);
+
+    const { projects } = await discover();
+    const x = projects.find((p) => p.id === 'project:proj-x')!;
+    expect(x.sourcePath).toBe('/home/dev/proj-x');
+    expect(x.displayName).toBe('proj-x');
+    const y = projects.find((p) => p.id === 'project:proj-y')!;
+    expect(y.sourcePath).toBe('C:\\Users\\dev\\proj-y');
+    expect(y.displayName).toBe('proj-y');
+  });
+
+  it('a project whose every session moved into a worktree still names itself', async () => {
+    await sandbox.writeTranscript('proj-z', 's1', [
+      transcriptLine({ cwd: 'C:\\Users\\dev\\proj-z\\.claude\\worktrees\\only-1a' }),
+    ]);
+    await sandbox.writeTranscript('proj-z', 's2', [
+      transcriptLine({ cwd: 'C:\\Users\\dev\\proj-z\\.claude\\worktrees\\only-2b' }),
+    ]);
+    const { projects } = await discover();
+    const z = projects.find((p) => p.id === 'project:proj-z')!;
+    expect(z.sourcePath).toBe('C:\\Users\\dev\\proj-z');
+    expect(z.displayName).toBe('proj-z');
+  });
+
   it('an orphan worktree names the project, not the checkout — either path style', async () => {
     await sandbox.writeTranscript('win--claude-worktrees-solo-9f', 's1', [
       transcriptLine({ cwd: 'C:\\Users\\dev\\proj-o\\.claude\\worktrees\\solo-9f' }),
