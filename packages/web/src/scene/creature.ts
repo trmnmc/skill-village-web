@@ -121,8 +121,6 @@ export interface CreatureActor {
    * and thud a hop does. Idempotent: only a real change does anything.
    */
   setHeld(held: boolean): void;
-  /** Whether this villager is currently in the player's hand. */
-  isHeld(): boolean;
   destroy(): void;
 }
 
@@ -996,9 +994,6 @@ export async function spawnCreature(
         puff(k, root.pos.x, root.pos.y);
         sound.event({ type: 'touch-down', x: at.x });
       }
-    },
-    isHeld() {
-      return held;
     },
     destroy() {
       k.destroy(root);

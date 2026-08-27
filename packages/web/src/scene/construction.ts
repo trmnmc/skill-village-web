@@ -31,7 +31,8 @@ export function mountConstruction(k: KAPLAYCtx, monoFont: string): void {
     block(k, x + CONSTRUCTION_W - 8, top, 8, POST_H, 'wood', 1);
     for (const dy of BAR_YS) block(k, x, top + dy, CONSTRUCTION_W, 6, 'wood', 1);
 
-    // A striped barrier across the front, alternating wood and cream.
+    // A striped barrier across the front, alternating wood and cream. Tiles
+    // cleanly only when CONSTRUCTION_W is a whole multiple of STRIPE_W.
     for (let i = 0; i * STRIPE_W < CONSTRUCTION_W; i++) {
       block(k, x + i * STRIPE_W, base - BARRIER_H, STRIPE_W, BARRIER_H,
         i % 2 === 0 ? 'wood' : 'cream', 2);
