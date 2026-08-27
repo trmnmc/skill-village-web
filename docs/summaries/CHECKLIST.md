@@ -19,5 +19,6 @@
 - [ ] Optional: Pages landing refresh · M4 playtest leftovers (bubble occlusion, meter granularity, trackpad taps) · project breeding (parked)
 - [ ] Housekeeping: 8 fully-merged remote branches are deletion candidates; droplet wants a reboot (kernel update) — would briefly drop swarm + chunks + village; droplet memory is tight (5.6/7.8 Gi used, an OOM-killed 12.9 GB claude process in the tty log)
 - [ ] Non-repo: restart/reload the Chunks Minecraft server so the chunks.games.place rebrand shows
+- [ ] **Pocket God minigame — brainstorm mid-flight** (see `pause-2026-08-26-pocket-god-brainstorm.md`): decided light-consequence · toss→lightning→dunk order · god-mode toggle · local spectacle + server energy cost. Awaiting user's yes/no on approach A (dedicated `god/` module + hand-rolled flight sim); then design sections → spec → writing-plans. No code yet.
 
-_Updated: 2026-08-26 19:43 — main `d4efce0` · 973 passed + 1 skipped, typecheck green · village.fenley.ai live on `index-CC7JZXjz.js`_
+_Updated: 2026-08-26 — main `f3d3946` · Pocket God brainstorm handoff added; prior items preserved verbatim_
