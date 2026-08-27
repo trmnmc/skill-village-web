@@ -67,7 +67,7 @@ function isRenderable(value: unknown): value is Creature {
     typeof c.id === 'string' &&
     typeof c.name === 'string' &&
     typeof c.nickname === 'string' &&
-    (c.kind === 'skill' || c.kind === 'agent') &&
+    (c.kind === 'skill' || c.kind === 'agent' || c.kind === 'project') &&
     isRenderableAppearance(c.appearance) &&
     isRenderableStats(c.stats)
   );

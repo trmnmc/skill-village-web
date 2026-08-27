@@ -126,6 +126,14 @@ describe('toView', () => {
     const view = toView({ creatures: { ok: creature }, problems: [] })!;
     expect(view.creatures.map((c) => c.id)).toEqual(['skill:code-review']);
   });
+
+  it('projects are renderable villagers', () => {
+    const project = { ...creature, id: 'project:proj-a', kind: 'project', helperIds: ['skill:x'] };
+    const view = toView({ creatures: { [project.id]: project }, problems: [] });
+    expect(view!.creatures).toHaveLength(1);
+    expect(view!.creatures[0]!.kind).toBe('project');
+    expect(view!.creatures[0]!.helperIds).toEqual(['skill:x']); // fields ride through
+  });
 });
 
 describe('parseServerMessage', () => {

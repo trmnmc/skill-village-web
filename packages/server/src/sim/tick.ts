@@ -1,4 +1,4 @@
-import { decayStats, levelForXp, nextStage, type Creature } from '@village/core';
+import { decayStats, levelForXp, nextStage, role, workStats, type Creature } from '@village/core';
 import type { VillageEvent } from '../state/events.js';
 import type { VillageState } from '../state/schema.js';
 
@@ -27,7 +27,16 @@ export function applyTick(state: VillageState, now: number): TickResult {
     // hand a creature free mood, so treat it as no time passing at all.
     const hoursAway = elapsedMs > 0 ? elapsedMs / MS_PER_HOUR : 0;
 
-    const stats = hoursAway > 0 ? decayStats(creature.stats, hoursAway) : creature.stats;
+    // Projects: only real work heals (remap spec §5). Mood and energy are a
+    // pure function of the work signal, recomputed every tick — the stored
+    // values are a cache of the curve, so retuning it needs no migration.
+    // Bond and xp still only ever rise, same as everyone else's.
+    const stats =
+      role(creature.kind) === 'project' && creature.lastWorkedAt !== undefined
+        ? { ...creature.stats, ...workStats(now - creature.lastWorkedAt) }
+        : hoursAway > 0
+          ? decayStats(creature.stats, hoursAway)
+          : creature.stats;
     const stage = nextStage(creature.stage, levelForXp(stats.xp), true);
 
     if (stage !== creature.stage) {

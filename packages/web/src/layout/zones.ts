@@ -286,6 +286,24 @@ export interface Spot {
 /** The longest leash any villager gets, however open its ground. */
 const WANDER_CAP = 60;
 
+/**
+ * A leash cut back so no excursion reaches a keep-out band, floored at zero.
+ * A villager seated on a band edge therefore stands still — the edge is
+ * standable ground, but the first step off it would not be.
+ *
+ * Expects `x` clear of every band, which is what both callers guarantee by
+ * seating through nearestGround; a leash is not a rescue from a bad seat.
+ * Shared with instances.ts so an ambling aura obeys the rule that seats it.
+ */
+export function clipLeashAtBands(x: number, leash: number, bands: readonly KeepOut[]): number {
+  let clipped = leash;
+  for (const band of bands) {
+    if (band.right <= x) clipped = Math.min(clipped, x - band.right);
+    else if (band.left >= x) clipped = Math.min(clipped, band.left - x);
+  }
+  return Math.max(0, clipped);
+}
+
 /** A villager already seated in a row: its centre and the radius it claims. */
 interface Occupant {
   x: number;
@@ -310,8 +328,16 @@ function clears(
  * other villagers. The last resort when a row is too crowded to space out:
  * spacing gives way before the scenery rule does, because two overlapped
  * villagers read as a crowd while one standing on a roof reads as a bug.
+ *
+ * Shared with instances.ts, which seats an aura by the same rule: the scenery
+ * rule lives here once, so a moved tree moves every keep-out that follows it.
  */
-function nearestGround(wanted: number, lo: number, hi: number, blocked: readonly KeepOut[]): number {
+export function nearestGround(
+  wanted: number,
+  lo: number,
+  hi: number,
+  blocked: readonly KeepOut[],
+): number {
   const x = Math.min(hi, Math.max(lo, wanted));
   const inside = blocked.find((band) => x > band.left && x < band.right);
   if (!inside) return x;
@@ -493,12 +519,8 @@ export function placeCreatures(ids: readonly string[]): Map<string, Spot> {
       const left = i === 0 ? e.x - HOMES_LO : (e.x - seated[i - 1]!.x - MIN_SEPARATION) / 2;
       const right =
         i === seated.length - 1 ? HOMES_HI - e.x : (seated[i + 1]!.x - e.x - MIN_SEPARATION) / 2;
-      let leash = Math.min(WANDER_CAP, left, right);
-      for (const band of ground.bands) {
-        if (band.right <= e.x) leash = Math.min(leash, e.x - band.right);
-        else if (band.left >= e.x) leash = Math.min(leash, band.left - e.x);
-      }
-      spots.set(e.id, { x: e.x, y: rowY(row), wander: Math.max(0, Math.floor(leash)) });
+      const leash = clipLeashAtBands(e.x, Math.min(WANDER_CAP, left, right), ground.bands);
+      spots.set(e.id, { x: e.x, y: rowY(row), wander: Math.floor(leash) });
     });
   }
 
@@ -537,3 +559,6 @@ export function placeInRange(ids: readonly string[], lo: number, hi: number): Ma
 
   return spots;
 }
+
+/** The layout's FNV hash, shared so instances.ts fans out on the same draws. */
+export { hash as layoutHash };

@@ -50,4 +50,10 @@ describe('resolvePaths', () => {
   it('defaults the port to 8262', () => {
     expect(DEFAULT_PORT).toBe(8262);
   });
+
+  it('knows Claude Code session logs (read-only) and the scan cache', () => {
+    const paths = resolvePaths({ home: '/h' });
+    expect(paths.claudeProjectsDir).toBe(join('/h', '.claude', 'projects'));
+    expect(paths.scanCachePath).toBe(join('/h', '.skill-village', 'scan-cache.json'));
+  });
 });

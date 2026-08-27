@@ -1,5 +1,15 @@
-/** A creature is either a skill (grounded) or an agent (winged). */
-export type CreatureKind = 'skill' | 'agent';
+/**
+ * A creature is a skill (grounded) or an agent (winged) — together the helper
+ * role — or a project, the villager role. The role layer is derived, never
+ * stored (remap spec §1).
+ */
+export type CreatureKind = 'skill' | 'agent' | 'project';
+
+export type Role = 'project' | 'helper';
+
+export function role(kind: CreatureKind): Role {
+  return kind === 'project' ? 'project' : 'helper';
+}
 
 export const BODY_IDS = ['pip', 'round', 'lanky', 'bean', 'mound', 'boxy'] as const;
 export type BodyId = (typeof BODY_IDS)[number];
@@ -72,10 +82,33 @@ export interface Creature {
    * Absent until the persona has been generated (M4).
    */
   cannedLines?: string[];
-  /** Absolute path to the SKILL.md or agent .md this creature represents. */
+  /**
+   * Absolute path to the SKILL.md or agent .md this creature represents; for
+   * a project, its real folder (from transcript `cwd`), `''` if unknown. The
+   * game never writes to a project's folder in M5/M6.
+   */
   sourcePath: string;
   /** Other creature ids to affinity, 0-100. */
   friendships: Record<string, number>;
   /** Epoch millis, supplied by the caller. Core never reads the clock. */
   lastSeenAt: number;
+  /**
+   * Projects only: the newest transcript mtime across the project's sessions,
+   * worktrees folded in. The raw work signal — health derives from it at tick
+   * time and is never persisted as truth (remap spec §1).
+   */
+  lastWorkedAt?: number;
+  /** Projects only: resolved helper creature ids. Sorted, deduped. */
+  helperIds?: string[];
+  /**
+   * Projects only: helper mentions that matched no creature on disk —
+   * plugin-prefixed skills, built-in agent types. The "powers beyond the
+   * village" tally (remap spec §3). Sorted, deduped.
+   */
+  unresolvedMentions?: string[];
+  /**
+   * Projects only (M6): released by the player. Discovery must never
+   * resurrect a retired project; re-adopt clears the flag (remap spec §2).
+   */
+  retired?: boolean;
 }

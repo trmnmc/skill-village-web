@@ -17,6 +17,14 @@ export interface VillagePaths {
   /** Where released creatures' files go. Content preserved verbatim. */
   archiveDir: string;
   pidPath: string;
+  /**
+   * Claude Code's own session logs (`~/.claude/projects`). READ-ONLY — the
+   * standing safety rule extends to the scanner: no file under `~/.claude`
+   * is ever written, moved, or locked (remap spec §2).
+   */
+  claudeProjectsDir: string;
+  /** Per-transcript facts cache (remap spec §3). Keyed by file path. */
+  scanCachePath: string;
   userSkillsDir: string;
   userAgentsDir: string;
   /** Null when the game was not launched inside a project. */
@@ -48,6 +56,8 @@ export function resolvePaths(options: ResolveOptions = {}): VillagePaths {
     shadowDir: join(dataDir, 'shadow'),
     archiveDir: join(dataDir, 'archive'),
     pidPath: join(dataDir, 'server.pid'),
+    claudeProjectsDir: join(claudeDir, 'projects'),
+    scanCachePath: join(dataDir, 'scan-cache.json'),
     userSkillsDir: join(claudeDir, 'skills'),
     userAgentsDir: join(claudeDir, 'agents'),
     projectSkillsDir: projectDir ? join(projectDir, '.claude', 'skills') : null,
