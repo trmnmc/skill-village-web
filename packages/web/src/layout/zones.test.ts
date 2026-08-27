@@ -21,7 +21,6 @@ import {
   PIN_HI,
   CONSTRUCTION_XS,
   CONSTRUCTION_BASE_Y,
-  TREE_BASE_Y,
 } from './zones.js';
 
 const ids = Array.from({ length: 70 }, (_, i) => `skill:s${i}`);
@@ -457,6 +456,24 @@ describe('placeCreatures', () => {
   });
 });
 
+describe('snapRowY', () => {
+  it('resolves each of the seven depth rows to itself', () => {
+    for (const y of [758, 712, 666, 620, 574, 528, 482]) {
+      expect(snapRowY(y)).toBe(y);
+    }
+  });
+
+  it('clamps a y past the furthest-back row to that row', () => {
+    expect(snapRowY(-900)).toBe(482);
+    expect(snapRowY(0)).toBe(482);
+  });
+
+  it('clamps a y past the nearest-front row to that row', () => {
+    expect(snapRowY(9000)).toBe(758);
+    expect(snapRowY(759)).toBe(758);
+  });
+});
+
 describe('pinSpot', () => {
   it('snaps a drop to the nearest depth row', () => {
     // Rows: 758, 712, 666, 620, 574, 528, 482.
@@ -476,10 +493,17 @@ describe('pinSpot', () => {
   });
 
   it('pushes a drop off a prop it landed on', () => {
+    // Row 574 is genuinely covered by the tree's keep-out band (top-PERCH..base
+    // is 482..600); TREE_BASE_Y itself (600) snaps to row 620, which stands in
+    // front of the tree rather than on it, so it would not exercise this rule.
     const onATree = HOMES_TREE_XS[0]! + 20;
-    const spot = pinSpot(onATree, TREE_BASE_Y, []);
+    const spot = pinSpot(onATree, 574, []);
+    expect(spot.y).toBe(574);
     const blocked = keepOutAt(spot.y);
+    expect(blocked.some((b) => onATree > b.left && onATree < b.right)).toBe(true);
     expect(blocked.some((b) => spot.x > b.left && spot.x < b.right)).toBe(false);
+    // Not just clear of scenery — actually displaced off the x it asked for.
+    expect(spot.x).not.toBe(onATree);
   });
 
   it('will not stack two villagers on one spot', () => {
