@@ -37,6 +37,8 @@ import { createHeld, type HeldCreature } from './held.js';
 import { displayName } from '../render/label.js';
 import { pinCreature, resetLayout as resetLayoutCall } from '../net/client.js';
 import { resolveDrop, seatAll } from './placement.js';
+import { hex, block } from './prop.js';
+import { mountConstruction } from './construction.js';
 
 export interface VillageScene {
   k: KAPLAYCtx;
@@ -80,10 +82,6 @@ export interface VillageOptions {
 /** How far a press may travel and still count as a click, in client pixels. */
 const CLICK_SLOP = 6;
 
-function hex(k: KAPLAYCtx, value: string) {
-  return k.Color.fromHex(value);
-}
-
 /** Token counts at a glance: 483000 reads as "483k". */
 const fmt = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
@@ -104,42 +102,6 @@ const bar = (remainingTok: number, cap: number) => {
   const filled = cap > 0 ? Math.min(10, Math.max(0, Math.round((remainingTok / cap) * 10))) : 0;
   return '█'.repeat(filled) + '░'.repeat(10 - filled);
 };
-
-/**
- * A flat rectangle prop, tagged and coloured off a palette token rather than
- * a fixed hex. Spec §4.1: props are rectangles, never sprites. The colour is
- * struck at creation time from the *current* resolved theme (so a mid-day
- * boot starts correct); the `themed:<token>` tag lets `startVillage`'s
- * retint walker find and recolour every one of these on a later theme
- * change without this function knowing anything about that walker.
- *
- * `token` always seeds the initial colour, but `tagToken: false` skips
- * adding the `themed:<token>` tag itself — for a block whose colour is
- * owned by someone else (e.g. a house window, owned by sky.ts's
- * `windowsGlow` swap) and must not also be caught by this walker's generic
- * per-token pass, which would fight over the same paint every publish.
- */
-function block(
-  k: KAPLAYCtx,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  token: keyof Tokens,
-  z = 0,
-  extraTags: string[] = [],
-  tagToken = true,
-) {
-  const { tokens, tint } = themeStore.current();
-  return k.add([
-    k.rect(w, h),
-    k.pos(x, y),
-    k.color(hex(k, sceneryColor(tokens, tint, token))),
-    k.z(z),
-    ...(tagToken ? [tokenTag(token)] : []),
-    ...extraTags,
-  ]);
-}
 
 function house(k: KAPLAYCtx, x: number, y: number, wall: keyof Tokens, roof: keyof Tokens) {
   block(k, x, y - 66, 86, 66, wall, 1);
@@ -253,6 +215,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
   for (const zone of ZONES) {
     sign(k, signLeft(zone), SIGN_BASE_Y, zone.label, pixelFont);
   }
+  mountConstruction(k, monoFont);
 
   // House 1 and house 2 each get their own wall/roof pair; house 3 (the old
   // wallSand/roofClay THEME hexes, retired with THEME) reuses house 1's wall
