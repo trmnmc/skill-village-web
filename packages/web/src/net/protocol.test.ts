@@ -192,6 +192,38 @@ describe('pins in the view', () => {
     })!;
     expect(view.pins).toEqual({ good: { x: 1, y: 2 } });
   });
+
+  it('does not let a "__proto__" pin id pollute the record prototype', () => {
+    // A real payload arrives as JSON text. JSON.parse (unlike the
+    // object-literal `{ __proto__: ... }` shorthand, which sets the
+    // prototype right there at parse time instead of adding a property)
+    // always creates a genuine own property named "__proto__" — the same
+    // shape a hostile payload off the wire actually has. Build just the pins
+    // map this way so the test cannot accidentally exercise something a
+    // real JSON payload would never produce.
+    const hostilePins = JSON.parse(
+      '{"good":{"x":1,"y":2},"__proto__":{"x":999,"y":999},"constructor":{"x":1,"y":1}}',
+    ) as Record<string, unknown>;
+
+    const view = toView({ ...state, layout: { pins: hostilePins } })!;
+
+    // "__proto__" and "constructor" are just strings as far as a pin id
+    // goes, and neither entry is malformed (both are finite x/y pairs), so
+    // both must survive like any other valid pin.
+    expect(view.pins['good']).toEqual({ x: 1, y: 2 });
+    expect(view.pins['constructor']).toEqual({ x: 1, y: 1 });
+    expect(Object.keys(view.pins).sort()).toEqual(['__proto__', 'constructor', 'good']);
+
+    // The pollution check itself. `toEqual` alone would not catch this — it
+    // ignores the prototype chain, so a polluted record can still look right
+    // to `toEqual`. Read the record's own prototype and its own "x"/"y"
+    // directly instead: if the "__proto__" entry got treated as a real
+    // prototype assignment rather than a plain key, both would come back
+    // non-null/defined here even though neither was ever a real pin id.
+    expect(Object.getPrototypeOf(view.pins)).toBeNull();
+    expect(view.pins['x']).toBeUndefined();
+    expect(view.pins['y']).toBeUndefined();
+  });
 });
 
 describe('robot fields', () => {

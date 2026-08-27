@@ -125,7 +125,12 @@ export function toView(payload: unknown): VillageView | null {
   // A pin is only worth carrying if it is a real pair of numbers: a half-read
   // entry would place a villager at NaN, which draws nothing and is very hard
   // to see the cause of.
-  const pins: Record<string, { x: number; y: number }> = {};
+  // Object.create(null), not {}: a server-supplied pin id of "__proto__"
+  // would otherwise land on `pins[id] = ...`, which for a plain object goes
+  // through the inherited __proto__ setter and silently repoints the whole
+  // record's prototype instead of adding a key — invisible to Object.keys
+  // and JSON.stringify, but readable back off the prototype chain.
+  const pins: Record<string, { x: number; y: number }> = Object.create(null);
   const rawLayout = (p as { layout?: unknown }).layout;
   if (typeof rawLayout === 'object' && rawLayout !== null) {
     const rawPins = (rawLayout as { pins?: unknown }).pins;
