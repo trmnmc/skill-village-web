@@ -1,9 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { Creature } from '@village/core/visual';
-import { HOMES_LO, HOMES_HI } from './zones.js';
 import {
-  buildRenderList, instanceKey, instanceSpots, keyCreatureId, presenceScale, seatResident, TETHER,
+  HOMES_HI, HOMES_HOUSE_XS, HOMES_LO, HOMES_SIGN_X, HOUSE_BASE_Y, SIGN_BASE_Y, homesKeepOutAt,
+  type KeepOut, type Spot,
+} from './zones.js';
+import {
+  buildRenderList, INSTANCE_LEASH, instanceKey, instanceSpots, keyCreatureId, presenceScale,
+  seatResident, TETHER,
 } from './instances.js';
+
+/** Strictly inside a band — a band edge is standable ground (zones.ts). */
+const onProp = (x: number, bands: readonly KeepOut[]) =>
+  bands.some((b) => b.left < x && x < b.right);
+
+/** Does an instance's whole excursion stay off the props? */
+const leashReachesProp = (spot: Spot, bands: readonly KeepOut[]) =>
+  bands.some((b) => spot.x + spot.wander > b.left && spot.x - spot.wander < b.right);
 
 const creature = (id: string, kind: Creature['kind'], over: Partial<Creature> = {}): Creature => ({
   id, kind, name: id.split(':')[1]!, nickname: '',
@@ -33,7 +45,10 @@ describe('keys', () => {
 });
 
 describe('instanceSpots', () => {
-  const anchor = { x: 2000, y: 700, wander: 30 };
+  // Open ground: a stretch of Homes with no prop near it. The old fixture sat
+  // on the Homes sign — a spot placeCreatures can never hand out, so it told
+  // us nothing about what a real aura does.
+  const anchor = { x: 1000, y: HOUSE_BASE_Y - 16, wander: 30 };
   it('tethers every instance to the anchor, same depth row, short leash', () => {
     const spots = instanceSpots('project:p', anchor, ['skill:a', 'agent:b', 'skill:c']);
     expect(spots.size).toBe(3);
@@ -53,6 +68,52 @@ describe('instanceSpots', () => {
       expect(spot.x).toBeGreaterThanOrEqual(HOMES_LO);
       expect(spot.x).toBeLessThanOrEqual(HOMES_HI);
     }
+  });
+
+  // A row whose feet land among the house pixels — the row a house blocks.
+  const propRowY = HOUSE_BASE_Y - 16;
+  const propRowBands = homesKeepOutAt(propRowY);
+  const houseBand = propRowBands.find(
+    (b) => b.left < HOMES_HOUSE_XS[1]! && HOMES_HOUSE_XS[1]! < b.right,
+  )!;
+  const helpers = ['skill:a', 'agent:b', 'skill:c', 'skill:d'];
+
+  it('an aura beside a house keeps every instance off the house', () => {
+    const anchorX = houseBand.left - 10; // standable ground, ten pixels short of the eaves
+    expect(onProp(anchorX, propRowBands)).toBe(false);
+    const spots = instanceSpots('project:p', { x: anchorX, y: propRowY, wander: 30 }, helpers);
+    const fanned = [...spots.values()].map((s) => s.x);
+    // Without a keep-out pass the fan steps 40-96px straight into a band that
+    // is over 180px wide, and a villager stands in the wall of a house.
+    expect(fanned.filter((x) => onProp(x, propRowBands))).toEqual([]);
+    for (const spot of spots.values()) {
+      expect(Math.abs(spot.x - anchorX)).toBeLessThanOrEqual(TETHER);
+    }
+  });
+
+  it('the sign, which is never covered from any distance, is never stood on', () => {
+    const y = SIGN_BASE_Y - 20;
+    const bands = homesKeepOutAt(y);
+    const sign = bands.find((b) => b.left < HOMES_SIGN_X && HOMES_SIGN_X < b.right)!;
+    const spots = instanceSpots('project:p', { x: sign.left - 8, y, wander: 30 }, helpers);
+    expect([...spots.values()].filter((s) => onProp(s.x, bands))).toEqual([]);
+  });
+
+  it('the leash never carries an instance onto a prop either', () => {
+    const violations: Spot[] = [];
+    let clipped = 0;
+    for (let x = houseBand.left - 150; x <= houseBand.right + 150; x += 7) {
+      // placeCreatures never seats a villager inside a band, so an aura is
+      // never anchored on one; a leash is not a rescue from an impossible seat.
+      if (onProp(x, propRowBands)) continue;
+      const spots = instanceSpots('project:p', { x, y: propRowY, wander: 30 }, helpers);
+      for (const spot of spots.values()) {
+        if (spot.wander < INSTANCE_LEASH) clipped++;
+        if (leashReachesProp(spot, propRowBands)) violations.push(spot);
+      }
+    }
+    expect(violations).toEqual([]);
+    expect(clipped).toBeGreaterThan(0); // the clipping is actually exercised
   });
 });
 
@@ -97,6 +158,18 @@ describe('buildRenderList', () => {
     const entries = buildRenderList([ghostly]);
     expect(entries.map((e) => e.key)).toEqual(['project:g']);
     expect(entries[0]!.presence).toBeCloseTo(1.06, 10); // count is helperIds' length — links it *claims*
+  });
+
+  it('a whole village of auras leaves every prop standing alone', () => {
+    const helperIds = ['skill:h0', 'skill:h1', 'skill:h2', 'agent:h3'];
+    const cast = [
+      ...Array.from({ length: 12 }, (_, i) => creature(`project:p${i}`, 'project', { helperIds })),
+      ...helperIds.map((id) => creature(id, id.startsWith('agent') ? 'agent' : 'skill')),
+    ];
+    const trespassers = buildRenderList(cast).filter((e) =>
+      onProp(e.spot.x, homesKeepOutAt(e.spot.y)),
+    );
+    expect(trespassers.map((e) => e.key)).toEqual([]);
   });
 
   it('with no projects at all, today\'s village is exactly reproduced', () => {
