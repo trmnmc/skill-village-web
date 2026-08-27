@@ -14,6 +14,7 @@ export * from './files/agent.js';
 
 export * from './sim/stats.js';
 export * from './sim/friendship.js';
+export * from './sim/work.js';
 
 export * from './personality/prompt.js';
 
