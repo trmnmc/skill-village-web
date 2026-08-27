@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseSkill, parseAgent, generateAppearance } from '@village/core';
-import { creatureFromSkill, creatureFromAgent, creatureId } from './creature.js';
+import { creatureFromSkill, creatureFromAgent, creatureFromProject, creatureId } from './creature.js';
 import { skillFixture, agentFixture } from '../testing/sandbox.js';
 
 function parsedSkill(name: string) {
@@ -73,5 +73,27 @@ describe('creatureFromAgent', () => {
   it('falls back to DNA when the agent has no colour', () => {
     const creature = creatureFromAgent(parsedAgent('plain'), '/p', 0);
     expect(creature.appearance).toEqual(generateAppearance({ kind: 'agent', name: 'plain' }));
+  });
+});
+
+describe('creatureFromProject', () => {
+  const found = {
+    id: 'project:C--dev-proj-a', entryName: 'C--dev-proj-a', displayName: 'proj-a',
+    sourcePath: '/home/dev/proj-a', lastWorkedAt: 1234, helperMentions: ['brainstorming'],
+  };
+  it('is born an adult project with the starting stats and empty links', () => {
+    const c = creatureFromProject(found, 99);
+    expect(c.id).toBe('project:C--dev-proj-a');
+    expect(c.kind).toBe('project');
+    expect(c.name).toBe('proj-a');
+    expect(c.stage).toBe('adult');
+    expect(c.lastWorkedAt).toBe(1234);
+    expect(c.helperIds).toEqual([]);
+    expect(c.friendships).toEqual({});
+    expect(c.appearance.winged).toBe(false);
+  });
+  it('appearance is seeded from the immutable entry name, not the display name', () => {
+    const renamed = creatureFromProject({ ...found, displayName: 'totally-else' }, 99);
+    expect(renamed.appearance).toEqual(creatureFromProject(found, 99).appearance);
   });
 });

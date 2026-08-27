@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { parseSkill, type Creature } from '@village/core';
+import { parseSkill, generateAppearance, type Creature } from '@village/core';
 import { emptyState } from '../state/schema.js';
-import { creatureFromSkill } from './creature.js';
-import { reconcile } from './reconcile.js';
+import { creatureFromSkill, creatureFromProject } from './creature.js';
+import { reconcile, linkHelpers, reconcileProjects } from './reconcile.js';
 import { skillFixture } from '../testing/sandbox.js';
+import type { DiscoveredProject } from './projects.js';
 
 function makeCreature(name: string, sourcePath = `/h/.claude/skills/${name}/SKILL.md`): Creature {
   const parsed = parseSkill(skillFixture(name), name);
@@ -137,5 +138,109 @@ describe('reconcile', () => {
     const before = JSON.stringify(state);
     reconcile(state, { creatures: [makeCreature('x')], problems: [] }, 1000);
     expect(JSON.stringify(state)).toBe(before);
+  });
+});
+
+const project = (over: Partial<DiscoveredProject> = {}): DiscoveredProject => ({
+  id: 'project:C--dev-proj-a',
+  entryName: 'C--dev-proj-a',
+  displayName: 'proj-a',
+  sourcePath: '/home/dev/proj-a',
+  lastWorkedAt: 1000,
+  helperMentions: [],
+  ...over,
+});
+
+const anyCreature = (id: string, kind: 'skill' | 'agent'): Creature => ({
+  id,
+  kind,
+  name: id.slice(id.indexOf(':') + 1),
+  nickname: '',
+  appearance: generateAppearance({ kind, name: id.slice(id.indexOf(':') + 1) }),
+  stats: { mood: 70, energy: 70, bond: 10, xp: 0 },
+  stage: 'adult',
+  personality: null,
+  sourcePath: `/x/${id}`,
+  friendships: {},
+  lastSeenAt: 0,
+});
+
+const stateWithCreature = (c: Creature) => ({ ...emptyState(0), creatures: { [c.id]: c } });
+
+describe('reconcile leaves projects alone', () => {
+  it('a helper scan that finds nothing must NOT auto-release project creatures', () => {
+    // Without this guard, the first refresh() after a project moves in would
+    // evict every project — the helper scan knows nothing about them.
+    const resident = creatureFromProject(project(), 100);
+    const result = reconcile(stateWithCreature(resident), { creatures: [], problems: [] }, 2000);
+    expect(result.released).toEqual([]);
+    expect(result.state.creatures[resident.id]).toBeDefined();
+    expect(result.events.filter((e) => e.type === 'auto-released')).toEqual([]);
+  });
+});
+
+describe('linkHelpers — the §3 resolution table', () => {
+  const roster = {
+    'skill:brainstorming': anyCreature('skill:brainstorming', 'skill'),
+    'agent:code-reviewer': anyCreature('agent:code-reviewer', 'agent'),
+  };
+  it('resolves only mentions with a creature on disk; the rest are tallied, never lost', () => {
+    const { helperIds, unresolved } = linkHelpers(
+      ['brainstorming', 'anthropic-skills:xlsx', 'claude-api', 'general-purpose', 'code-reviewer'],
+      roster,
+    );
+    expect(helperIds).toEqual(['agent:code-reviewer', 'skill:brainstorming']);
+    expect(unresolved).toEqual(['anthropic-skills:xlsx', 'claude-api', 'general-purpose']);
+  });
+  it('a name that is both a skill and an agent links both', () => {
+    const both = { ...roster, 'agent:brainstorming': anyCreature('agent:brainstorming', 'agent') };
+    expect(linkHelpers(['brainstorming'], both).helperIds).toEqual([
+      'agent:brainstorming', 'skill:brainstorming',
+    ]);
+  });
+});
+
+describe('reconcileProjects', () => {
+  it('a new project moves in with resolved links and the unresolved tally', () => {
+    const state = stateWithCreature(anyCreature('skill:brainstorming', 'skill'));
+    const result = reconcileProjects(state, [project({ helperMentions: ['brainstorming', 'general-purpose'] })], 2000);
+    const c = result.state.creatures['project:C--dev-proj-a']!;
+    expect(c.kind).toBe('project');
+    expect(c.name).toBe('proj-a');
+    expect(c.helperIds).toEqual(['skill:brainstorming']);
+    expect(c.unresolvedMentions).toEqual(['general-purpose']);
+    expect(c.friendships).toEqual({});
+    expect(result.events).toContainEqual(
+      expect.objectContaining({ type: 'moved-in', creatureId: 'project:C--dev-proj-a' }),
+    );
+  });
+
+  it('the identity rule: an existing project keeps stats, bond, nickname; only the signal refreshes', () => {
+    const seed = creatureFromProject(project({ lastWorkedAt: 500 }), 100);
+    const existing = { ...seed, nickname: 'Bramble', stats: { ...seed.stats, bond: 40 } };
+    const result = reconcileProjects(stateWithCreature(existing), [project({ lastWorkedAt: 9000 })], 2000);
+    const c = result.state.creatures[existing.id]!;
+    expect(c.stats.bond).toBe(40);
+    expect(c.nickname).toBe('Bramble');
+    expect(c.lastWorkedAt).toBe(9000);
+  });
+
+  it('a retired project is never resurrected — discovery skips it whole', () => {
+    const retired = { ...creatureFromProject(project({ lastWorkedAt: 500 }), 100), retired: true };
+    const result = reconcileProjects(stateWithCreature(retired), [project({ lastWorkedAt: 9000 })], 2000);
+    expect(result.state.creatures[retired.id]!.lastWorkedAt).toBe(500);
+    expect(result.events).toEqual([]);
+  });
+
+  it('a project missing from the scan is kept, frozen — transcripts expire, villagers do not', () => {
+    const existing = creatureFromProject(project(), 100);
+    const result = reconcileProjects(stateWithCreature(existing), [], 2000);
+    expect(result.state.creatures[existing.id]).toEqual(existing);
+  });
+
+  it('helpers in state are untouched by the project fold', () => {
+    const helper = anyCreature('skill:brainstorming', 'skill');
+    const result = reconcileProjects(stateWithCreature(helper), [project()], 2000);
+    expect(result.state.creatures['skill:brainstorming']).toEqual(helper);
   });
 });
