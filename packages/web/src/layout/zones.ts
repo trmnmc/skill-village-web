@@ -537,3 +537,6 @@ export function placeInRange(ids: readonly string[], lo: number, hi: number): Ma
 
   return spots;
 }
+
+/** The layout's FNV hash, shared so instances.ts fans out on the same draws. */
+export { hash as layoutHash };
