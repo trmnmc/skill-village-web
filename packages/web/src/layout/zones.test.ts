@@ -14,6 +14,14 @@ import {
   homesKeepOutAt,
   personalSpace,
   placeCreatures,
+  pinSpot,
+  keepOutAt,
+  snapRowY,
+  PIN_LO,
+  PIN_HI,
+  CONSTRUCTION_XS,
+  CONSTRUCTION_BASE_Y,
+  TREE_BASE_Y,
 } from './zones.js';
 
 const ids = Array.from({ length: 70 }, (_, i) => `skill:s${i}`);
@@ -446,5 +454,57 @@ describe('placeCreatures', () => {
       expect(x).toBeGreaterThanOrEqual(homes.x);
       expect(x).toBeLessThanOrEqual(homes.x + homes.w);
     }
+  });
+});
+
+describe('pinSpot', () => {
+  it('snaps a drop to the nearest depth row', () => {
+    // Rows: 758, 712, 666, 620, 574, 528, 482.
+    expect(pinSpot(1000, 700, []).y).toBe(712);
+    expect(pinSpot(1000, 735, []).y).toBe(712);
+    expect(pinSpot(1000, 736, []).y).toBe(758);
+  });
+
+  it('clamps a drop past either end of the world', () => {
+    expect(pinSpot(-5000, 620, []).x).toBe(PIN_LO);
+    expect(pinSpot(999999, 620, []).x).toBe(PIN_HI);
+  });
+
+  it('clamps a drop above or below every row', () => {
+    expect(pinSpot(1000, -900, []).y).toBe(482);
+    expect(pinSpot(1000, 9000, []).y).toBe(758);
+  });
+
+  it('pushes a drop off a prop it landed on', () => {
+    const onATree = HOMES_TREE_XS[0]! + 20;
+    const spot = pinSpot(onATree, TREE_BASE_Y, []);
+    const blocked = keepOutAt(spot.y);
+    expect(blocked.some((b) => spot.x > b.left && spot.x < b.right)).toBe(false);
+  });
+
+  it('will not stack two villagers on one spot', () => {
+    const first = pinSpot(1500, 620, []);
+    const second = pinSpot(1500, 620, [first]);
+    expect(Math.abs(second.x - first.x)).toBeGreaterThanOrEqual(MIN_SEPARATION);
+    expect(second.y).toBe(first.y);
+  });
+
+  it('ignores pins on other rows when spacing', () => {
+    const other = pinSpot(1500, 758, []);
+    const here = pinSpot(1500, 620, [other]);
+    expect(here.x).toBe(1500);
+  });
+
+  it('keeps a pin clear of the building sites', () => {
+    for (const x of CONSTRUCTION_XS) {
+      const spot = pinSpot(x + 30, CONSTRUCTION_BASE_Y, []);
+      const blocked = keepOutAt(spot.y);
+      expect(blocked.some((b) => spot.x > b.left && spot.x < b.right)).toBe(false);
+    }
+  });
+
+  it('is idempotent — re-pinning a resolved spot does not move it', () => {
+    const once = pinSpot(1234, 640, []);
+    expect(pinSpot(once.x, once.y, [])).toEqual(once);
   });
 });

@@ -106,6 +106,17 @@ export const HOUSE_BASE_Y = GROUND_Y - 30;
 export const TREE_BASE_Y = GROUND_Y - 20;
 export const SIGN_BASE_Y = GROUND_Y - 6;
 
+/**
+ * The three unfinished zones each get one building site. Anchors live here,
+ * beside the house and tree anchors, for the same reason those do:
+ * `construction.ts` draws from them and `keepOutAt` derives their keep-out
+ * bands from them, so a moved scaffold moves its keep-out with it.
+ */
+export const CONSTRUCTION_XS: readonly number[] = [340, 3980, 4300];
+export const CONSTRUCTION_BASE_Y = GROUND_Y - 24;
+/** Post to post, plus the barrier board that overhangs them. */
+export const CONSTRUCTION_W = 96;
+
 /** A zone sign is a 100px board; village.ts centres one on every zone. */
 export const SIGN_W = 100;
 export const signLeft = (zone: Zone) => zone.x + zone.w / 2 - SIGN_W / 2;
@@ -153,6 +164,54 @@ const SIGN_BOARD = {
   top: SIGN_BASE_Y - 62,
   bottom: SIGN_BASE_Y - 32,
 };
+
+/** Every zone's sign board, not just the one in Homes. */
+const SIGN_BOARDS = ZONES.map((zone) => ({
+  left: signLeft(zone),
+  right: signLeft(zone) + SIGN_W,
+  top: SIGN_BASE_Y - 62,
+  bottom: SIGN_BASE_Y - 32,
+}));
+
+const CONSTRUCTION: readonly Prop[] = CONSTRUCTION_XS.map((x) => ({
+  left: x,
+  right: x + CONSTRUCTION_W,
+  top: CONSTRUCTION_BASE_Y - 104,
+  base: CONSTRUCTION_BASE_Y,
+  air: PROP_AIR,
+}));
+
+/**
+ * Everything a *pinned* villager must stand clear of, anywhere on the strip:
+ * the Homes decor, every zone's sign board, and the building sites.
+ *
+ * Deliberately separate from `homesKeepOutAt`, which must keep its exact
+ * present behaviour — `ROW_GROUND` is precomputed from it at module load and
+ * the whole automatic layout rests on that.
+ */
+export function keepOutAt(feetY: number): readonly KeepOut[] {
+  const bands: KeepOut[] = [...homesKeepOutAt(feetY)];
+
+  for (const prop of CONSTRUCTION) {
+    if (feetY >= prop.top - PERCH && feetY <= prop.base) {
+      bands.push({
+        left: prop.left - WIDEST_BODY / 2 - prop.air,
+        right: prop.right + WIDEST_BODY / 2 + prop.air,
+      });
+    }
+  }
+
+  for (const board of SIGN_BOARDS) {
+    if (feetY >= board.top && feetY - BODY_REACH <= board.bottom) {
+      bands.push({
+        left: board.left - WIDEST_BODY / 2 - SIGN_AIR,
+        right: board.right + WIDEST_BODY / 2 + SIGN_AIR,
+      });
+    }
+  }
+
+  return mergeBands(bands);
+}
 
 /** Overlapping or touching bands folded together, so a band edge is always standable ground. */
 function mergeBands(bands: readonly KeepOut[]): readonly KeepOut[] {
@@ -425,6 +484,50 @@ function seatRowPacked(members: readonly RowMember[], ground: RowGround): Map<st
     cursor = x + MIN_SEPARATION;
   }
   return xs;
+}
+
+/** A pinned villager's home: already snapped to a row, clamped and cleared. */
+export interface Pin {
+  x: number;
+  y: number;
+}
+
+/** Keeps a whole body inside the world when a drop lands hard against an edge. */
+const PIN_MARGIN = WIDEST_BODY / 2 + 8;
+export const PIN_LO = PIN_MARGIN;
+export const PIN_HI = WORLD_W - PIN_MARGIN;
+
+/**
+ * The feet height of the depth row nearest `y`. Placement stays on the seven
+ * rows however wild the drop: free y would break both the depth illusion and
+ * the draw order, which sorts on exactly this number.
+ */
+export function snapRowY(y: number): number {
+  const row = Math.min(ROWS - 1, Math.max(0, Math.round((GROUND_FRONT - y) / ROW_DEPTH)));
+  return rowY(row);
+}
+
+/**
+ * Resolve a raw drop into a legal home. The caller stores the *result*, so
+ * what the player sees on release is exactly what reloads a week later.
+ *
+ * Four rules, in order: snap the row, clamp inside the world, step off any
+ * prop, and step clear of any villager already pinned on that row.
+ */
+export function pinSpot(x: number, y: number, others: readonly Pin[]): Pin {
+  const feetY = snapRowY(y);
+  const blocked = keepOutAt(feetY);
+  const wanted = Math.round(Math.min(PIN_HI, Math.max(PIN_LO, x)));
+  const taken: Occupant[] = others
+    .filter((pin) => pin.y === feetY)
+    .map((pin) => ({ x: pin.x, r: 0 }));
+  // Spacing gives way before the scenery rule does, the same order of
+  // priorities the automatic seating uses: two overlapped villagers read as a
+  // crowd, one standing on a roof reads as a bug.
+  const x2 =
+    findNearest(wanted, taken, PIN_LO, PIN_HI, blocked, () => MIN_SEPARATION) ??
+    nearestGround(wanted, PIN_LO, PIN_HI, blocked);
+  return { x: x2, y: feetY };
 }
 
 /**
