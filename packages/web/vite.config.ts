@@ -1,7 +1,16 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 
-/** The server owns 8262; Vite proxies to it so the browser sees one origin. */
+/**
+ * The server owns 8262; Vite proxies to it so the browser sees one origin.
+ *
+ * Both ports follow the server's own env vars, so a second checkout running
+ * an isolated village (VILLAGE_DATA_DIR + VILLAGE_PORT) gets a web half that
+ * proxies to *its* server rather than to whichever one happens to hold 8262.
+ */
+const apiPort = process.env.VILLAGE_PORT ?? '8262';
+const webPort = Number(process.env.VILLAGE_WEB_PORT ?? 5173);
+
 export default defineConfig({
   // Resolved against this file's own location, not the process cwd: `npm run
   // dev:web` invokes `vite --config packages/web/vite.config.ts` from the
@@ -19,7 +28,7 @@ export default defineConfig({
     target: 'esnext',
   },
   server: {
-    port: 5173,
+    port: webPort,
     // Vite 5.4.12+ rejects requests whose Host header isn't localhost or a
     // bare IP (DNS-rebinding protection). Tailscale MagicDNS names are how
     // you reach a dev village from another machine — `tailscale serve`
@@ -28,8 +37,8 @@ export default defineConfig({
     // route, inside your own tailnet.
     allowedHosts: ['.ts.net'],
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8262', changeOrigin: true },
-      '/ws': { target: 'ws://127.0.0.1:8262', ws: true },
+      '/api': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true },
+      '/ws': { target: `ws://127.0.0.1:${apiPort}`, ws: true },
     },
   },
 });

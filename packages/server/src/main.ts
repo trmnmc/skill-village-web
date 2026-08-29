@@ -16,7 +16,16 @@ const TICK_MS_HEADLESS = 60_000;
 
 async function main(): Promise<void> {
   const port = Number(process.env.VILLAGE_PORT ?? DEFAULT_PORT);
-  const paths = resolvePaths({ projectDir: process.cwd() });
+  // VILLAGE_DATA_DIR gives this process its own save, away from the shared
+  // ~/.skill-village. Two servers on one machine — a second checkout, a
+  // worktree mid-migration — otherwise write the same state.json, and a
+  // save stamped with a newer STATE_VERSION is rejected wholesale by the
+  // older one, which then starts a fresh village over the top of it. The
+  // data dir is the whole village: state, backup, events, shadows, archive.
+  const paths = resolvePaths({
+    projectDir: process.cwd(),
+    dataDir: process.env.VILLAGE_DATA_DIR || undefined,
+  });
 
   const running = await readInstance(paths);
   if (running && (await isVillageServing(running.port))) {
