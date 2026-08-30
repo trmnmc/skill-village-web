@@ -431,8 +431,12 @@ export interface CloudBlobSpec {
  * Slow billow, one-sided: the authored size is the *floor* and the cloud
  * swells upward from it, oscillating between authored and ~1.35x on two
  * incommensurate sines (the same trick the village's wander uses), seeded
- * per rect so no two swell together. Slow enough that one frame's change is
- * invisible — a swell, never a morph or a jitter.
+ * per CLUSTER so no two clouds swell together — but each cloud swells as one
+ * mass. The seeds used to be per rect, which was fine when a cloud was two
+ * slabs and shredding once puffRects made it a ten-rect dome: steps swelling
+ * and swaying out of sync read as "uneven stacked and overlapped rectangles"
+ * (the owner's 2026-08-30 night-storm verdict). Slow enough that one frame's
+ * change is invisible — a swell, never a morph or a jitter.
  */
 function billow(tSec: number, seed: number): number {
   const wave = (Math.sin(tSec * 0.09 + seed * 7) + 0.5 * Math.sin(tSec * 0.157 + seed * 3)) / 1.5;
@@ -473,18 +477,22 @@ export function driftedClusterRects(
       CLOUD_DRIFT_PERIOD,
     ) - CLOUD_DRIFT_LEFT_MARGIN;
     const anchorX = mapX(driftedRefX, width);
+    // One seed, one swell, one sway for the whole cluster: the dome scales
+    // around its slab's base like a single mass, so steps authored edge to
+    // edge stay sealed mid-swell and the silhouette survives the animation.
+    const slabRect = cluster.rects[0]!;
+    const scaleCx = slabRect.dx + slabRect.w / 2;
+    const scaleBaseY = slabRect.y + slabRect.h;
+    const seed = frac(cluster.baseX * 0.317);
+    const bw = billow(tSec, seed);
+    // Height swells on the same one-sided rule, gentler and on its own
+    // phase, so a swelling cloud thickens rather than only stretching.
+    const bh = 1 + 0.2 * (Math.sin(tSec * 0.11 + seed * 5) + 1) / 2;
+    const sway = 3 * Math.sin(tSec * 0.073 + seed * 11);
     cluster.rects.forEach((r, ri) => {
-      const seed = frac(cluster.baseX * 0.317 + ri * 0.611);
-      const bw = billow(tSec, seed);
-      // Height swells on the same one-sided rule, gentler and on its own
-      // phase, so a swelling cloud thickens rather than only stretching.
-      const bh = 1 + 0.2 * (Math.sin(tSec * 0.11 + seed * 5) + 1) / 2;
-      const sway = 3 * Math.sin(tSec * 0.073 + seed * 11);
-      // Growth is centred: the rect swells in place instead of bulging
-      // right- and downward off its authored anchor.
       out.push({
-        x: anchorX + (r.dx + sway - (r.w * (bw - 1)) / 2) * s,
-        y: (r.y - (r.h * (bh - 1)) / 2) * s,
+        x: anchorX + (scaleCx + (r.dx - scaleCx) * bw + sway) * s,
+        y: (scaleBaseY + (r.y - scaleBaseY) * bh) * s,
         w: r.w * bw * s,
         h: r.h * bh * s,
         tone: r.tone,

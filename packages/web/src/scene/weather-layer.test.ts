@@ -444,10 +444,16 @@ describe('overcastCloudSpecs', () => {
   it('drifts the near layer faster than the far layer', () => {
     const a = overcastCloudSpecs('cloudy', false, 0, 0, 480, 182);
     const b = overcastCloudSpecs('cloudy', false, 30, 0, 480, 182);
-    // Anchors drift leftward, wrapping over 700 ref px; 30s is far below any
-    // wrap for either layer speed, so raw deltas compare cleanly.
+    // Anchors drift leftward; 30s is far below any wrap for either layer
+    // speed, so raw deltas compare cleanly. Index into the first NEAR-layer
+    // rect properly: `b[2]` was a near rect back when a cluster was two slab
+    // rects, but a puffRects dome is ~9 rects, so index 2 still sat inside
+    // the first far cluster and the assertion passed only on per-rect billow
+    // noise — noise the one-body billow has since removed.
+    const nearStart = OVERCAST_CLOUD_CLUSTERS.filter((c) => c.layer === 0)
+      .reduce((n, c) => n + c.rects.length, 0);
     const farDelta = Math.abs(b[0]!.x - a[0]!.x);
-    const nearDelta = Math.abs(b[2]!.x - a[2]!.x);
+    const nearDelta = Math.abs(b[nearStart]!.x - a[nearStart]!.x);
     expect(nearDelta).toBeGreaterThan(farDelta);
   });
 
@@ -471,6 +477,32 @@ describe('overcastCloudSpecs', () => {
     expect(Math.max(...widths)).toBeGreaterThan(floor * 1.2);
     // One frame at 60fps changes the width imperceptibly — billow never jitters.
     expect(Math.abs(at(10 + 1 / 60).w - at(10).w)).toBeLessThan(0.2);
+  });
+
+  it('a cluster billows as ONE body: every rect swells by the same factor and sealed steps stay sealed', () => {
+    // The owner's 2026-08-30 verdict on the night storm: "uneven stacked and
+    // overlapped rectangles". Per-rect billow seeds were the cause — ten
+    // rects of one authored dome swelling and swaying out of sync shred the
+    // silhouette. A cumulus is one mass: it swells together or not at all.
+    const near = OVERCAST_CLOUD_CLUSTERS.filter((c) => c.layer === 2).at(-1)!;
+    const n = near.rects.length;
+    const at = (t: number) => overcastCloudSpecs('cloudy', false, t, 0, 480, 182).slice(-n);
+    const ref = at(0);
+    for (const t of [3.7, 11.9, 47.3, 200.1]) {
+      const now = at(t);
+      const grow = now[0]!.w / ref[0]!.w;
+      for (let i = 1; i < n; i++) {
+        expect(now[i]!.w / ref[i]!.w, `rect ${i} at t=${t}`).toBeCloseTo(grow, 6);
+      }
+      // Steps authored edge to edge stay edge to edge mid-swell: no sky
+      // opening between a dome's steps, no step sliding over its neighbour.
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          if (near.rects[j]!.y + near.rects[j]!.h !== near.rects[i]!.y) continue;
+          expect(now[j]!.y + now[j]!.h, `seal ${j}->${i} at t=${t}`).toBeCloseTo(now[i]!.y, 4);
+        }
+      }
+    }
   });
 
   it('scales intra-cluster offsets and sizes by fy(horizonY) on both axes (class-2 cluster)', () => {
