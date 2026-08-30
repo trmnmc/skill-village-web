@@ -6,7 +6,8 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./visual": "./src/visual.ts"
+    "./visual": "./src/visual.ts",
+    "./sim/work": "./src/sim/work.ts"
   },
   "dependencies": {
     "yaml": "^2.5.1"

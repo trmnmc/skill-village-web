@@ -67,11 +67,15 @@ describe('resolveHeldDrop', () => {
 
 /**
  * Only the fields the render list actually reads. A whole Creature carries an
- * appearance, stats and a persona that no seating decision consults, and
- * spelling one out per test would bury the thing each test is about.
+ * appearance and a persona that no seating decision consults, and spelling
+ * one out per test would bury the thing each test is about. Mood is read:
+ * a project's presence is the work signal (presenceScale).
  */
 const creature = (id: string, kind: CreatureKind = 'skill', helperIds: string[] = []): Creature =>
-  ({ id, kind, name: id, nickname: '', helperIds }) as unknown as Creature;
+  ({
+    id, kind, name: id, nickname: '', helperIds,
+    stats: { mood: 70, energy: 70, bond: 0, xp: 0 },
+  }) as unknown as Creature;
 
 describe('seatAll', () => {
   const spotOf = (entries: readonly RenderEntry[], key: string) =>

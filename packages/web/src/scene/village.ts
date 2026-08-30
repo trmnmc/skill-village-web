@@ -544,7 +544,7 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
         // itself is drawn larger than life.
         const heldPresence =
           dragged && keyCreatureId(heldId) === heldId && role(dragged.kind) === 'project'
-            ? presenceScale(dragged.helperIds?.length ?? 0)
+            ? presenceScale(dragged.stats.mood)
             : 1;
         held = dragged
           ? createHeld(k, dragged, { pixel: pixelFont, mono: monoFont }, heldPresence)

@@ -1,3 +1,4 @@
+import { CONTENT_MOOD, THRIVING_MOOD } from '@village/core/sim/work';
 import { role, type Creature } from '@village/core/visual';
 import {
   clipLeashAtBands, findNearest, HOMES_HI, HOMES_LO, homesKeepOutAt, keepOutAt, layoutHash,
@@ -16,13 +17,33 @@ export interface RenderEntry {
   key: string;
   creature: Creature;
   spot: Spot;
-  /** Body scale multiplier — the genie framing. 1 for everything but projects. */
+  /**
+   * Body scale multiplier — the genie framing, sized by the work signal.
+   * 1 for everything but projects.
+   */
   presence: number;
 }
 
-/** Mild and capped: a ten-helper project is a big genie, not a kaiju. */
-export function presenceScale(helperCount: number): number {
-  return Math.min(1.3, 1 + 0.06 * helperCount);
+/**
+ * The genie's size follows the work signal, in three legible steps: a project
+ * Claude worked in today stands the big genie, one touched this week stands
+ * upright, and a drooped one is villager-sized — its crowd alone says it is a
+ * project. Helper count never sets size: the crowd IS the helper count, and
+ * one channel carries one meaning (owner's verdict, 2026-08-30: count-driven
+ * size read as "arbitrary"). A project's mood is workStats' pure decay curve,
+ * so mood is the signal, and the same signal behaviour.ts hops on — big and
+ * bouncy agree.
+ *
+ * Stepped, not continuous: presence is baked into an actor at spawn and a
+ * changed presence respawns the body (village.ts), so a smooth map would
+ * respawn genies all day as moods slide. The 5-point margins sit each
+ * boundary just under the curve's own anchors, where a mood never lingers.
+ * Still capped at 1.3: a thriving project is a big genie, not a kaiju.
+ */
+export function presenceScale(mood: number): number {
+  if (mood >= THRIVING_MOOD - 5) return 1.3;
+  if (mood >= CONTENT_MOOD - 5) return 1.15;
+  return 1;
 }
 
 /**
@@ -167,7 +188,7 @@ export function buildRenderList(
     key: c.id,
     creature: c,
     spot: spots.get(c.id)!,
-    presence: role(c.kind) === 'project' ? presenceScale((c.helperIds ?? []).length) : 1,
+    presence: role(c.kind) === 'project' ? presenceScale(c.stats.mood) : 1,
   }));
 
   // Everybody already standing, by depth row: the fans seat around the whole

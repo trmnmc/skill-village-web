@@ -29,10 +29,17 @@ const creature = (id: string, kind: Creature['kind'], over: Partial<Creature> = 
 });
 
 describe('presenceScale', () => {
-  it('grows mildly with helpers and caps', () => {
-    expect(presenceScale(0)).toBe(1);
-    expect(presenceScale(2)).toBeCloseTo(1.12, 10);
-    expect(presenceScale(50)).toBe(1.3);
+  it('reads the work signal: worked today is the big genie, this week upright, drooped villager-sized', () => {
+    expect(presenceScale(85)).toBe(1.3); // thriving — Claude worked in it today
+    expect(presenceScale(80)).toBe(1.3);
+    expect(presenceScale(70)).toBe(1.15); // content — touched this week
+    expect(presenceScale(55)).toBe(1.15);
+    expect(presenceScale(40)).toBe(1); // drooped — its crowd alone says "project"
+  });
+
+  it('steps in bands: a mood sliding by the hour cannot respawn a body per tick', () => {
+    expect(presenceScale(79)).toBe(presenceScale(56));
+    expect(presenceScale(54)).toBe(presenceScale(5));
   });
 });
 
@@ -189,7 +196,8 @@ describe('buildRenderList', () => {
 
   it('a project wears its presence; everyone else wears 1', () => {
     const entries = buildRenderList([project, linked, loner]);
-    expect(entries.find((e) => e.key === 'project:p')!.presence).toBeCloseTo(1.06, 10);
+    // The factory's mood is 70 — a content project, the middle band.
+    expect(entries.find((e) => e.key === 'project:p')!.presence).toBe(1.15);
     expect(entries.find((e) => e.key === 'skill:loner')!.presence).toBe(1);
   });
 
@@ -197,7 +205,7 @@ describe('buildRenderList', () => {
     const ghostly = creature('project:g', 'project', { helperIds: ['skill:gone'] });
     const entries = buildRenderList([ghostly]);
     expect(entries.map((e) => e.key)).toEqual(['project:g']);
-    expect(entries[0]!.presence).toBeCloseTo(1.06, 10); // count is helperIds' length — links it *claims*
+    expect(entries[0]!.presence).toBe(1.15); // presence is the work signal, not the links it claims
   });
 
   it('a whole village of auras leaves every prop standing alone', () => {
@@ -266,7 +274,7 @@ describe('seatResident', () => {
     const seated = entries.find((e) => e.key === 'project:p')!;
     expect(seated.spot).toEqual(porch);
     expect(seated.spot).not.toBe(porch); // a copy: PORCH_SPOT is frozen and shared
-    expect(seated.presence).toBeCloseTo(1.06, 10); // its genie size survives the move
+    expect(seated.presence).toBe(1.15); // its genie size survives the move
   });
 
   it('a helper resident collapses to one body, however many auras it stood in', () => {
