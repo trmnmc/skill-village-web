@@ -22,7 +22,7 @@ import {
 import { buildRenderList, keyCreatureId, presenceScale, seatResident, type RenderEntry } from '../layout/instances.js';
 import type { VillageView } from '../net/protocol.js';
 import { ZOOM, screenToWorld, clampCamX } from './camera.js';
-import { spawnCreature, type CreatureActor } from './creature.js';
+import { spawnCreature, puff, type CreatureActor } from './creature.js';
 import { sound } from '../sound/player.js';
 import { voiceParamsFor } from '../sound/voice.js';
 import { hudChipRect } from './hud-chip.js';
@@ -32,7 +32,9 @@ import { mountSky } from './sky.js';
 import { mountWeather } from './weather-layer.js';
 import { createRobotHouse } from './robotHouse.js';
 import { buildGroundTexture, retintGroundTexture, groundPreset } from './ground.js';
-import { inRobotHouse } from '../layout/robot.js';
+import { inRobotHouse, PORCH_SPOT, ROBOT_HOUSE_X, ROBOT_HOUSE_Y } from '../layout/robot.js';
+import { ceremonyPreset } from './ceremony.js';
+import { playCeremony } from './ceremonyPlay.js';
 import { createDragTracker } from '../input/drag.js';
 import { createHeld, type HeldCreature } from './held.js';
 import { displayName } from '../render/label.js';
@@ -40,6 +42,9 @@ import { pinCreature, resetLayout as resetLayoutCall } from '../net/client.js';
 import { resolveHeldDrop, seatAll } from './placement.js';
 import { hex, block } from './prop.js';
 import { mountConstruction } from './construction.js';
+
+/** Where the suck-in lands: the centre of the robot's face-screen. */
+const ROBOT_SCREEN = { x: ROBOT_HOUSE_X + 49, y: ROBOT_HOUSE_Y - 44 };
 
 export interface VillageScene {
   k: KAPLAYCtx;
@@ -629,7 +634,35 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
     // bodies, so drag any instance of a helper and the helper moves in.
     const draggedId = keyCreatureId(gesture.targetId);
     if (inRobotHouse(worldX, worldY)) {
-      release();
+      const flying = held;
+      const flownKey = heldId;
+      if (flying && flownKey !== null) {
+        // The ceremony takes ownership of the dangling visual. Clear the
+        // hand WITHOUT release() — that would destroy the body and unhide
+        // the actor mid-flight — so the streak can fly while the actor
+        // stays hidden at its old spot.
+        held = null;
+        heldId = null;
+        lastHeldX = null;
+        const preset = ceremonyPreset();
+        playCeremony(k, flying, { x: worldX, y: worldY }, ROBOT_SCREEN, {
+          onContact: () => {
+            robotHouse.impact(preset);
+            puff(k, ROBOT_SCREEN.x, ROBOT_SCREEN.y);
+            const c = known.get(flownKey);
+            if (c) sound.event({ type: 'moved-in', x: ROBOT_SCREEN.x, voice: voiceParamsFor(c) });
+            // Hand the body back a beat later. By then the server view has
+            // normally seated them at the porch, so setHeld(false)'s own
+            // puff-and-thud lands where they reappear; on a slow echo it
+            // lands at the old spot, which is today's exact behaviour.
+            k.wait(0.35, () => actors.get(flownKey)?.setHeld(false));
+          },
+        });
+      } else {
+        // Sprites never baked, nothing was ever drawn in the hand — degrade
+        // to today's instant drop.
+        release();
+      }
       opts.onRobotDrop?.(draggedId);
     } else if (draggedId === residentId) {
       release();
@@ -737,7 +770,13 @@ export async function startVillage(opts: VillageOptions = {}): Promise<VillageSc
       // the robot's resident lifted out of the crowd onto the porch, aura and
       // all. `residentId` has to be current before this runs, since the porch
       // override reads it.
+      const prevResident = residentId;
       residentId = view.robotResidentId;
+      if (prevResident !== null && prevResident !== residentId) {
+        // Evict or swap: the outgoing resident pops off the porch. Half a
+        // ceremony — the one who left gets punctuation, not a whole beat.
+        puff(k, PORCH_SPOT.x, PORCH_SPOT.y - 12);
+      }
       const entries: RenderEntry[] = seatAll(view.creatures, pins, residentId);
 
       const resident = residentId ? view.creatures.find((c) => c.id === residentId) : undefined;

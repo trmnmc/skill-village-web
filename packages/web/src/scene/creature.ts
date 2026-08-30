@@ -237,7 +237,7 @@ function loadSprite(k: KAPLAYCtx, name: string, canvas: HTMLCanvasElement): Prom
  * Nothing holds on to them: `lifespan` fades each one out and removes it from
  * the scene 0.45s later, so the scene graph owns them from here.
  */
-function puff(k: KAPLAYCtx, x: number, y: number): void {
+export function puff(k: KAPLAYCtx, x: number, y: number): void {
   for (let i = 0; i < 5; i++) {
     const angle = (i / 5) * Math.PI * 2;
     k.add([
