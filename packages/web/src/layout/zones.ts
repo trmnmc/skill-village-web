@@ -32,7 +32,8 @@ const BACK_ROWS = 3;
 /** Depth rows in front of the baseline, toward the viewer. */
 const FRONT_ROWS = 3;
 const ROWS = BACK_ROWS + FRONT_ROWS + 1;
-const ROW_DEPTH = 46;
+/** Feet-height step between depth rows; exported so instances.ts can tell which rows adjoin. */
+export const ROW_DEPTH = 46;
 const MARGIN = 90;
 
 /**
@@ -346,6 +347,15 @@ export interface Spot {
 const WANDER_CAP = 60;
 
 /**
+ * The sideways offset a villager keeps from anyone on the row directly
+ * behind it. Bodies are ~120px tall on rows 46px apart, so a shared x draws
+ * one villager standing on the other's head — the owner's 2026-08-30 verdict
+ * on that was "noise". A third of a body width is enough for two offset
+ * silhouettes to read as one behind the other.
+ */
+export const STACK_GAP = 24;
+
+/**
  * A leash cut back so no excursion reaches a keep-out band, floored at zero.
  * A villager seated on a band edge therefore stands still — the edge is
  * standable ground, but the first step off it would not be.
@@ -364,7 +374,7 @@ export function clipLeashAtBands(x: number, leash: number, bands: readonly KeepO
 }
 
 /** A villager already seated in a row: its centre and the radius it claims. */
-interface Occupant {
+export interface Occupant {
   x: number;
   r: number;
 }
@@ -415,8 +425,12 @@ export function nearestGround(
  * occupied creature's exclusion zone, the edges of each scenery band, and the
  * row's own ends: any other clear position has one of those between it and
  * `wanted`, so it is never the nearest.
+ *
+ * Shared with instances.ts, which seats an aura's crowd through it: one
+ * seat-finder, so a fan obeys the same scenery rule as the villagers it
+ * presses in among.
  */
-function findNearest(
+export function findNearest(
   wanted: number,
   taken: readonly Occupant[],
   lo: number,
@@ -456,20 +470,28 @@ interface RowMember {
  * Seat one row's members in order under a spacing rule. Returns the x per id,
  * or null if somebody could not be seated — a greedy pass spends ground as it
  * goes, so "somebody failed" means the row cannot hold everyone at this rule.
+ *
+ * `ghosts` are the row behind, seated already: soft occupants that claim
+ * their own flat radius (STACK_GAP) rather than the pairwise sum, so this
+ * row's members step sideways out from underfoot without treating the other
+ * row as a crowd of their own.
  */
 function seatRow(
   members: readonly RowMember[],
   ground: RowGround,
   gapFor: (a: RowMember, other: Occupant) => number,
   pinned: readonly Occupant[] = [],
+  ghosts: readonly Occupant[] = [],
 ): Map<string, number> | null {
-  // Seeded, not empty: the player's arrangement is ground already spent, so
-  // every rung of the degradation ladder routes around it for free.
-  const taken: Occupant[] = [...pinned];
+  // Seeded, not empty: the player's arrangement and the row behind are ground
+  // already spent, so every rung of the degradation ladder routes around them
+  // for free.
+  const soft = new Set<Occupant>(ghosts);
+  const taken: Occupant[] = [...pinned, ...ghosts];
   const xs = new Map<string, number>();
   for (const member of members) {
     const x = findNearest(member.wanted, taken, HOMES_LO, HOMES_HI, ground.bands, (other) =>
-      gapFor(member, other),
+      soft.has(other) ? other.r : gapFor(member, other),
     );
     if (x === null) return null;
     taken.push({ x, r: member.r });
@@ -583,12 +605,16 @@ export function pinSpot(x: number, y: number, others: readonly Pin[]): Pin {
  * with — so the same villagers always produce the same village, however the
  * caller ordered them, on every reload. Membership changes are the
  * exception: a newcomer widens its row's strata, so its row-mates each
- * shuffle a step while every other row stands still; `village.ts` moves the
- * actors to match.
+ * shuffle a step — and because rows seat back to front, each keeping
+ * STACK_GAP clear of the row behind it, the rows in FRONT may take a step
+ * to stay out from underfoot. The rows behind never move; nobody changes
+ * row; `village.ts` moves the actors to match.
  *
  * Comfort degrades per row, in whole-row steps: everyone's personal margins
- * first; then greedy seating at the MIN_SEPARATION floor (a late arrival
- * must not overlap just because earlier ones were seated generously); then a
+ * plus the ghost offsets from the row behind; the MIN_SEPARATION floor with
+ * the ghosts kept (a late arrival must not overlap just because earlier
+ * ones were seated generously); the same two rungs with the ghosts dropped
+ * — stepping out from underfoot yields before anyone goes unseated; then a
  * left-to-right pack at the floor, which trades wanted-proximity for the
  * row's full carrying capacity; and only a row past even that seats
  * spacing-blind on clear ground. Scenery stays clear throughout.
@@ -631,11 +657,21 @@ export function placeCreatures(
   }
 
   const spots = new Map<string, Spot>();
-  for (const row of new Set([...byRow.keys(), ...pinnedByRow.keys()])) {
+  // Back to front: each row seats knowing where the row behind it stands, so
+  // nobody plants their feet where a body behind already rises. The front
+  // rows — the most visible — therefore get the most say.
+  const rowOrder = [...new Set([...byRow.keys(), ...pinnedByRow.keys()])].sort((a, b) => b - a);
+  let ghostRow = Number.NaN;
+  let ghostXs: number[] = [];
+  for (const row of rowOrder) {
     const ground = ROW_GROUND[row]!;
     const members = byRow.get(row) ?? [];
     const pinnedHere = pinnedByRow.get(row) ?? [];
     const pinnedOccupants: Occupant[] = pinnedHere.map((p) => ({ x: p.x, r: personalSpace(p.id) }));
+    // Only a row DIRECTLY behind casts ghosts: two rows apart, the front body
+    // covers the back one to the shoulders anyway and offsetting buys nothing.
+    const ghosts: Occupant[] =
+      row === ghostRow - 1 ? ghostXs.map((x) => ({ x, r: STACK_GAP })) : [];
 
     // Stratified, not uniform: hashing positions independently leaves Poisson
     // voids — stretches of empty field beside bunched-up stretches. Each
@@ -649,11 +685,18 @@ export function placeCreatures(
       member.wanted = groundAt((i + 0.15 + 0.7 * member.jitter) / ordered.length, ground);
     });
 
+    // The ghost rungs come first and give way first: stepping out from under
+    // the row behind is comfort, and comfort yields before anyone goes
+    // unseated. The bare rungs and the pack never see the ghosts at all.
     const xs =
+      seatRow(ordered, ground, (a, other) => other.r + a.r, pinnedOccupants, ghosts) ??
+      seatRow(ordered, ground, () => MIN_SEPARATION, pinnedOccupants, ghosts) ??
       seatRow(ordered, ground, (a, other) => other.r + a.r, pinnedOccupants) ??
       seatRow(ordered, ground, () => MIN_SEPARATION, pinnedOccupants) ??
       seatRowPacked(ordered, ground, pinnedOccupants);
     for (const p of pinnedHere) xs.set(p.id, p.x);
+    ghostRow = row;
+    ghostXs = [...xs.values()];
 
     // The leash: half the spare gap to each neighbour (both may be at their
     // limits at once), never past a band edge or the villager's own bounds.

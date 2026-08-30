@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Creature } from '@village/core/visual';
 import {
-  HOMES_HI, HOMES_HOUSE_XS, HOMES_LO, HOMES_SIGN_X, HOUSE_BASE_Y, SIGN_BASE_Y, homesKeepOutAt,
-  type KeepOut, type Spot,
+  GROUND_FRONT, HOMES_HI, HOMES_HOUSE_XS, HOMES_LO, HOMES_SIGN_X, HOUSE_BASE_Y, SIGN_BASE_Y,
+  homesKeepOutAt, type KeepOut, type Spot,
 } from './zones.js';
 import {
-  buildRenderList, INSTANCE_LEASH, instanceKey, instanceSpots, keyCreatureId, presenceScale,
-  seatResident, TETHER,
+  buildRenderList, CROWD_GAP, INSTANCE_LEASH, instanceKey, instanceSpots, keyCreatureId,
+  presenceScale, seatResident, TETHER,
 } from './instances.js';
 
 /** Strictly inside a band — a band edge is standable ground (zones.ts). */
@@ -115,6 +115,46 @@ describe('instanceSpots', () => {
     expect(violations).toEqual([]);
     expect(clipped).toBeGreaterThan(0); // the clipping is actually exercised
   });
+
+  // The owner's verdict (2026-08-30): auras stacked into noise. Pressed close
+  // is still the reading; two bodies on one spot never is.
+  const minPairGap = (xs: readonly number[]) => {
+    let min = Infinity;
+    for (let i = 0; i < xs.length; i++)
+      for (let j = i + 1; j < xs.length; j++) min = Math.min(min, Math.abs(xs[i]! - xs[j]!));
+    return min;
+  };
+
+  it('a big aura never stands two instances on one spot', () => {
+    const many = Array.from({ length: 10 }, (_, i) => `skill:h${i}`);
+    const spots = instanceSpots('project:p', anchor, many);
+    const xs = [...spots.values()].map((s) => s.x);
+    // The ladder may relax to half the crowd gap and spill to a doubled
+    // tether — never to coincidence.
+    expect(minPairGap(xs)).toBeGreaterThanOrEqual(CROWD_GAP / 2);
+    for (const spot of spots.values()) {
+      expect(Math.abs(spot.x - anchor.x)).toBeLessThanOrEqual(TETHER * 2);
+    }
+  });
+
+  it('a fan flows around bodies already standing on the row', () => {
+    // Two outsiders parked exactly on the fan's designed first ring.
+    const taken = [anchor.x + 40, anchor.x - 40].map((x) => ({ x, r: 0 }));
+    const spots = instanceSpots('project:p', anchor, ['skill:a', 'skill:b'], taken);
+    for (const spot of spots.values()) {
+      for (const o of taken) expect(Math.abs(spot.x - o.x)).toBeGreaterThanOrEqual(CROWD_GAP / 2);
+    }
+    expect(minPairGap([...spots.values()].map((s) => s.x))).toBeGreaterThanOrEqual(CROWD_GAP / 2);
+  });
+
+  it("an occupant's own radius outranks the rung's gap — how adjacent-row ghosts hold their offset", () => {
+    // One ghost with a fat radius sitting where the fan wants to start.
+    const ghost = { x: anchor.x + 44, r: 38 };
+    const spots = instanceSpots('project:p', anchor, ['skill:a', 'skill:b', 'skill:c'], [ghost]);
+    for (const spot of spots.values()) {
+      expect(Math.abs(spot.x - ghost.x)).toBeGreaterThanOrEqual(ghost.r);
+    }
+  });
 });
 
 describe('buildRenderList', () => {
@@ -170,6 +210,29 @@ describe('buildRenderList', () => {
       onProp(e.spot.x, homesKeepOutAt(e.spot.y)),
     );
     expect(trespassers.map((e) => e.key)).toEqual([]);
+  });
+
+  it('two auras side by side interleave without standing in each other', () => {
+    const helpersA = ['skill:a1', 'skill:a2', 'skill:a3'];
+    const helpersB = ['skill:b1', 'skill:b2', 'skill:b3'];
+    const cast = [
+      creature('project:west', 'project', { helperIds: helpersA }),
+      creature('project:east', 'project', { helperIds: helpersB }),
+      ...[...helpersA, ...helpersB].map((id) => creature(id, 'skill')),
+    ];
+    // Pinned onto one row with overlapping tethers — the collision the
+    // automatic layout meets whenever two genies seat near each other.
+    const pins = new Map([
+      ['project:west', { x: 1500, y: GROUND_FRONT }],
+      ['project:east', { x: 1620, y: GROUND_FRONT }],
+    ]);
+    const row = buildRenderList(cast, pins).filter((e) => e.spot.y === GROUND_FRONT);
+    expect(row.length).toBe(8); // both genies and every instance share the row
+    const xs = row.map((e) => e.spot.x);
+    let min = Infinity;
+    for (let i = 0; i < xs.length; i++)
+      for (let j = i + 1; j < xs.length; j++) min = Math.min(min, Math.abs(xs[i]! - xs[j]!));
+    expect(min).toBeGreaterThanOrEqual(CROWD_GAP / 2);
   });
 
   it('with no projects at all, today\'s village is exactly reproduced', () => {

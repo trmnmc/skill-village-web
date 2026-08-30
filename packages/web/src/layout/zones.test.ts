@@ -6,6 +6,7 @@ import {
   GROUND_FRONT,
   GROUND_TOP,
   MIN_SEPARATION,
+  STACK_GAP,
   HOMES_HOUSE_XS,
   HOMES_TREE_XS,
   HOMES_SIGN_X,
@@ -72,12 +73,17 @@ describe('placeCreatures', () => {
     expect([...placeCreatures(interleaved)].sort()).toEqual([...placeCreatures(ids)].sort());
   });
 
-  it('nudges only same-row neighbours, and only within reach, when a villager arrives', () => {
+  it('an arrival ripples only toward the viewer, within reach, and the same way every time', () => {
     // Guaranteed spacing and per-id-only placement cannot both hold: with a
     // finite number of non-overlapping spots, a newcomer landing on an
     // occupied one has to move somebody. So this does not assert that nobody
-    // moves — that is false. It asserts the disruption stays local, stays
-    // bounded, and is the same disruption every time.
+    // moves — that is false. It asserts the disruption stays bounded, stays
+    // directional, and is the same disruption every time.
+    //
+    // Directional: rows seat back to front, each keeping clear of the row
+    // behind it, so an arrival can shuffle its own row and make the rows in
+    // FRONT step out from underfoot — it can never reach the rows behind,
+    // and nobody ever changes row.
     //
     // The newcomer is inserted in *sorted* position, mirroring the order
     // protocol.ts hands over. Appending to the end instead — as this test used
@@ -92,24 +98,23 @@ describe('placeCreatures', () => {
       expect(after.size).toBe(ids.length + 1);
 
       const arrivalRow = after.get(newcomer)!.y;
-      const rowSize = [...after.values()].filter((s) => s.y === arrivalRow).length;
-      // A displaced villager may also have to hop its row's scenery bands —
-      // nothing may stand inside one — so the reach bound grows by their
-      // width; a packed stretch is at most everyone's personal diameters end
-      // to end.
-      const bandWidth = homesKeepOutAt(arrivalRow).reduce((sum, b) => sum + (b.right - b.left), 0);
       const maxDiameter = 2 * Math.max(...list.map((id) => personalSpace(id)));
 
       for (const id of ids) {
         const was = before.get(id)!;
         const now = after.get(id)!;
         // Depth comes straight from the id's own hash, so nobody ever changes
-        // row — an arrival cannot ripple into a different band of the field.
+        // row — an arrival cannot move a villager into a different band.
         expect(now.y).toBe(was.y);
         if (now.x === was.x) continue;
-        expect(now.y).toBe(arrivalRow);
+        // Rows in front of the arrival have larger y (rowY runs toward the
+        // viewer); anything behind it seated before the arrival existed.
+        expect(now.y).toBeGreaterThanOrEqual(arrivalRow);
         // A displaced villager steps clear of the cluster it was standing in.
-        // It can never travel further than that row could pack end to end.
+        // It can never travel further than its own row could pack end to end
+        // — plus that row's scenery bands, which nothing may stand inside.
+        const rowSize = [...after.values()].filter((s) => s.y === now.y).length;
+        const bandWidth = homesKeepOutAt(now.y).reduce((sum, b) => sum + (b.right - b.left), 0);
         expect(Math.abs(now.x - was.x)).toBeLessThanOrEqual(rowSize * maxDiameter + bandWidth);
       }
 
@@ -143,6 +148,29 @@ describe('placeCreatures', () => {
         expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(MIN_SEPARATION);
       }
     }
+  });
+
+  it('never stands a villager directly underfoot of the row behind', () => {
+    // Bodies are ~120px tall and rows 46px apart, so a body sharing an x with
+    // the row behind it draws standing on that body's head — the owner's
+    // 2026-08-30 verdict called the result noise. Rows seat back to front and
+    // each keeps STACK_GAP of sideways offset from the row it fronts.
+    const crowd = Array.from({ length: 100 }, (_, i) => `skill:c${i}`);
+    const rows = new Map<number, number[]>();
+    for (const { x, y } of placeCreatures(crowd).values()) {
+      const row = rows.get(y) ?? [];
+      row.push(x);
+      rows.set(y, row);
+    }
+    const ys = [...rows.keys()].sort((a, b) => a - b);
+    const stacked: string[] = [];
+    for (let i = 1; i < ys.length; i++) {
+      if (ys[i]! - ys[i - 1]! > 46) continue;
+      for (const a of rows.get(ys[i - 1]!)!)
+        for (const b of rows.get(ys[i]!)!)
+          if (Math.abs(a - b) < STACK_GAP) stacked.push(`${ys[i]}: ${a} vs ${b}`);
+    }
+    expect(stacked).toEqual([]);
   });
 
   it('stands every villager on painted ground, shadow included', () => {

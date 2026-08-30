@@ -1,7 +1,7 @@
 import { role, type Creature } from '@village/core/visual';
 import {
-  clipLeashAtBands, HOMES_HI, HOMES_LO, homesKeepOutAt, keepOutAt, layoutHash, nearestGround,
-  PIN_HI, PIN_LO, placeCreatures, type Pin,
+  clipLeashAtBands, findNearest, HOMES_HI, HOMES_LO, homesKeepOutAt, keepOutAt, layoutHash,
+  nearestGround, PIN_HI, PIN_LO, placeCreatures, ROW_DEPTH, STACK_GAP, type Occupant, type Pin,
   type Spot,
 } from './zones.js';
 
@@ -25,13 +25,24 @@ export function presenceScale(helperCount: number): number {
   return Math.min(1.3, 1 + 0.06 * helperCount);
 }
 
-/** How far an instance may stand from its project's anchor (spec §4's tether). */
+/**
+ * How far an instance may stand from its project's anchor (spec §4's tether).
+ * A crowd too big to fit inside it spills to at most twice this rather than
+ * stack — the last rung but one of the seating ladder in instanceSpots.
+ */
 export const TETHER = 96;
 /** The fan: nearest ring, step per pair. */
 const FAN_START = 40;
 const FAN_STEP = 34;
 /** The short leash an instance ambles on, before scenery cuts it back. */
 export const INSTANCE_LEASH = 18;
+/**
+ * The closest two crowd bodies stand, centre to centre — a shade under the
+ * fan's own step, so the pressed-close reading survives while two bodies on
+ * one spot does not (owner's verdict, 2026-08-30: the spacing-free fan
+ * "stacked into noise"). The seating ladder may halve it, never drop it.
+ */
+export const CROWD_GAP = 30;
 
 /**
  * No creature id contains `>`, so the split below is unambiguous. A helper's
@@ -54,26 +65,34 @@ export function keyCreatureId(key: string): string {
  * outward, and a per-key jitter keeps two projects' auras from being
  * congruent. Same depth row as the project, so feet stay on believable ground.
  *
- * No *spacing* pass — a crowd pressed close around its genie is the intended
- * reading, not a seating bug. The scenery keep-outs are another matter: they
- * are the village's standing rule that everything is grounded and nothing
- * perches on a prop, and a 40-96px fan crosses a house band easily. The rule
- * is borrowed from zones.ts whole rather than restated: the row's bands come
- * from `homesKeepOutAt` — the very function that defines a row's bands — and
- * a fanned x is pushed off them by `nearestGround`, exactly as placeCreatures
- * seats a villager.
+ * A *crowd* pass, not a queue pass: each instance seats through findNearest
+ * against everything already standing near it — the genie, which keeps its
+ * FAN_START clearing; its own fan-mates; and whatever the caller reports in
+ * `taken` (other fans, the commons crowd; an occupant's own `r` wins over the
+ * rung's gap, which is how the adjacent rows' STACK_GAP ghosts keep their
+ * offset) — at CROWD_GAP, well under a villager's own floor. Pressed close is still the reading. The spacing-free
+ * fan this replaces stacked bodies onto one spot whenever nearestGround
+ * snapped two of them to the same band edge, or the tether clamp piled up a
+ * big aura's outer ring — the owner's 2026-08-30 verdict on it was "noise".
+ * Comfort degrades in whole steps, the placeCreatures idiom: the full crowd
+ * gap, then half of it, then half of it on a doubled tether — the crowd
+ * spills a step wide before anyone stacks — and only then a spacing-blind
+ * seat. An overlapped pair reads as a crowd, a body on a prop reads as a
+ * bug, so the scenery keep-outs hold through every rung.
  *
- * The window handed to nearestGround is the tether, so an instance pushed off
- * a prop still reads as part of its genie's crowd. That window always holds
- * clear ground when the anchor does — placeCreatures never seats a project on
- * a band, and the anchor itself is inside its own tether.
+ * The seating window is the tether, so an instance pushed off a prop or a
+ * neighbour still reads as part of its genie's crowd. That window always
+ * holds clear ground when the anchor does — placeCreatures never seats a
+ * project on a band, and the anchor itself is inside its own tether.
  *
- * Pure and deterministic: no clock, no randomness.
+ * Pure and deterministic: no clock, no randomness, and the result does not
+ * depend on the order of `taken`.
  */
 export function instanceSpots(
   projectId: string,
   anchor: Spot,
   helperIds: readonly string[],
+  taken: readonly Occupant[] = [],
 ): Map<string, Spot> {
   // The player can pin a project anywhere on the strip, and outside Homes the
   // Homes bounds *invert* (lo > hi) — which strands the whole aura at the far
@@ -86,13 +105,24 @@ export function instanceSpots(
   const bands = inHomes ? homesKeepOutAt(anchor.y) : keepOutAt(anchor.y);
   const lo = Math.max(boundLo, anchor.x - TETHER);
   const hi = Math.min(boundHi, anchor.x + TETHER);
+  const spillLo = Math.max(boundLo, anchor.x - TETHER * 2);
+  const spillHi = Math.min(boundHi, anchor.x + TETHER * 2);
+
+  // The genie's own clearing is the fan's first ring: nothing seats closer.
+  const occupied: Occupant[] = [{ x: anchor.x, r: FAN_START }, ...taken];
 
   const spots = new Map<string, Spot>();
   [...helperIds].sort().forEach((helperId, i) => {
     const key = instanceKey(projectId, helperId);
     const side = i % 2 === 0 ? 1 : -1;
     const dist = Math.min(TETHER, FAN_START + Math.floor(i / 2) * FAN_STEP + (layoutHash(key) % 13));
-    const x = nearestGround(anchor.x + side * dist, lo, hi, bands);
+    const wanted = anchor.x + side * dist;
+    const x =
+      findNearest(wanted, occupied, lo, hi, bands, (o) => Math.max(o.r, CROWD_GAP)) ??
+      findNearest(wanted, occupied, lo, hi, bands, (o) => Math.max(o.r, CROWD_GAP / 2)) ??
+      findNearest(wanted, occupied, spillLo, spillHi, bands, (o) => Math.max(o.r, CROWD_GAP / 2)) ??
+      nearestGround(wanted, lo, hi, bands);
+    occupied.push({ x, r: 0 });
     const leash = Math.min(INSTANCE_LEASH, x - boundLo, boundHi - x);
     spots.set(key, { x, y: anchor.y, wander: Math.floor(clipLeashAtBands(x, leash, bands)) });
   });
@@ -140,12 +170,35 @@ export function buildRenderList(
     presence: role(c.kind) === 'project' ? presenceScale((c.helperIds ?? []).length) : 1,
   }));
 
-  for (const project of villagers) {
-    if (role(project.kind) !== 'project') continue;
+  // Everybody already standing, by depth row: the fans seat around the whole
+  // village, not just their own genie. Projects fan in sorted id order — one
+  // more place the caller's creature order must not reshuffle the layout.
+  const takenByRow = new Map<number, number[]>();
+  for (const e of entries) {
+    const list = takenByRow.get(e.spot.y) ?? [];
+    list.push(e.spot.x);
+    takenByRow.set(e.spot.y, list);
+  }
+  // A fan's obstacles: its own row at the rung's crowd gap, and the rows
+  // directly behind and in front as STACK_GAP ghosts — the same
+  // no-standing-underfoot rule the villagers seat by.
+  const obstaclesAt = (y: number): Occupant[] => [
+    ...(takenByRow.get(y) ?? []).map((x) => ({ x, r: 0 })),
+    ...(takenByRow.get(y - ROW_DEPTH) ?? []).map((x) => ({ x, r: STACK_GAP })),
+    ...(takenByRow.get(y + ROW_DEPTH) ?? []).map((x) => ({ x, r: STACK_GAP })),
+  ];
+
+  const projects = villagers
+    .filter((c) => role(c.kind) === 'project')
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (const project of projects) {
     const anchor = spots.get(project.id)!;
     const links = (project.helperIds ?? []).filter((id) => byId.has(id));
-    for (const [key, spot] of instanceSpots(project.id, anchor, links)) {
+    const rowTaken = takenByRow.get(anchor.y) ?? [];
+    takenByRow.set(anchor.y, rowTaken);
+    for (const [key, spot] of instanceSpots(project.id, anchor, links, obstaclesAt(anchor.y))) {
       entries.push({ key, creature: byId.get(keyCreatureId(key))!, spot, presence: 1 });
+      rowTaken.push(spot.x);
     }
   }
 
