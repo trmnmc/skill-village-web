@@ -16,7 +16,7 @@
  * `createHeld` returns null rather than inventing a placeholder.
  */
 
-import type { KAPLAYCtx, GameObj, PosComp, TextComp, ScaleComp, AnchorComp, ColorComp, ZComp } from 'kaplay';
+import type { KAPLAYCtx, GameObj, PosComp, TextComp, ScaleComp, AnchorComp, ColorComp, ZComp, OpacityComp } from 'kaplay';
 import type { Creature } from '@village/core/visual';
 import { TEXT_SS, U } from '../theme.js';
 import { themeStore } from '../theme/index.js';
@@ -73,6 +73,13 @@ export interface HeldCreature {
    * that gets stored is the one the player saw, not the hand that let go.
    */
   footOffset(): number;
+  /**
+   * Ceremony hook: squash/stretch multiplied onto the baked presence scale.
+   * (1, 1) is the resting shape; the suck-in drives this toward a streak.
+   */
+  setStretch(sx: number, sy: number): void;
+  /** Ceremony hook: fades the name sign without touching the body. */
+  setLabelAlpha(alpha: number): void;
   destroy(): void;
 }
 
@@ -169,12 +176,15 @@ export function createHeld(
   // The sign stays upright and stays put: it is the player's label for what is
   // in their hand, not part of the creature's body, and pinning it to a
   // swinging root would set the name rocking with it.
-  const label: GameObj<TextComp | ScaleComp | PosComp | AnchorComp | ColorComp | ZComp> = k.add([
+  const label: GameObj<
+    TextComp | ScaleComp | PosComp | AnchorComp | ColorComp | ZComp | OpacityComp
+  > = k.add([
     k.text(displayName(creature), { size: 12 * TEXT_SS, font: fonts.mono }),
     k.scale(1 / TEXT_SS),
     k.pos(0, 0),
     k.anchor('center'),
     k.color(k.Color.fromHex(sceneryColor(theme.tokens, theme.tint, 'ink'))),
+    k.opacity(1),
     tokenTag('ink'),
     k.z(LABEL_Z),
   ]);
@@ -217,6 +227,12 @@ export function createHeld(
       // resolved off the unscaled height would land it short of where the
       // player watched it touch down.
       return (GRAB_INSET + bh) * presence;
+    },
+    setStretch(sx, sy) {
+      root.scale = k.vec2(presence * sx, presence * sy);
+    },
+    setLabelAlpha(alpha) {
+      label.opacity = alpha;
     },
     destroy() {
       k.destroy(root);
