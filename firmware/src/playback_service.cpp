@@ -2,10 +2,8 @@
 #include <math.h>
 #include <queue>
 #include "playback_service.h"
-#include "audio_download.h"
 #include "config_loader.h"
 #include "face_service.h"
-#include "wav_parser.h"
 #include "audio_gate.h"
 #include "pcm_stream_service.h"
 
@@ -22,15 +20,12 @@ struct PlaybackRuntimeState {
 };
 
 static PlaybackRuntimeState s_playbackState;
-static std::priority_queue<AudioTask> s_audioQueue;
 static bool s_isPlaying = false;
 static uint8_t* s_currentAudioData = nullptr;
 static size_t s_currentAudioSize = 0;
 static unsigned long s_playbackDeadlineMs = 0;
 static unsigned long s_playbackStartMs = 0;
 static bool s_micResumeRequested = false;
-static String s_lastPlayedVoiceId = "";
-static uint32_t s_nextAudioSequence = 0;
 
 #define LIPSYNC_INTERVAL_MS   50
 #define LIPSYNC_CHUNK_SAMPLES 1024
@@ -39,12 +34,9 @@ static uint32_t s_nextAudioSequence = 0;
 #define MAX_PCM_BYTES         (2 * 1024 * 1024)
 #define MAX_QUEUED_PCM_BYTES  (2 * 1024 * 1024)
 #define SPEAKER_PLAYBACK_CHANNEL 0
-#define MAX_AUDIO_QUEUE_DEPTH 16
 
-// ── FreeRTOS: URLをCore 0に渡すキュー
-//    StringはFreeRTOSキューに乗せられないのでchar配列で渡す
-#define MAX_URL_LEN 256
-static QueueHandle_t s_downloadQueue = nullptr;
+// The download engine is gone by design: the device never fetches a URL.
+// Playback arrives only as pushed PCM (HTTP chunks, TCP stream, or UDP).
 
 struct PcmBuffer {
     uint8_t* data;
@@ -53,16 +45,8 @@ struct PcmBuffer {
     bool finalSegment;
 };
 
-struct DownloadedAudio {
-    uint8_t* data;
-    size_t size;
-    bool success;
-};
-
 static std::queue<PcmBuffer> s_pcmQueue;
 static size_t s_pcmQueuedBytes = 0;
-static QueueHandle_t s_downloadCompleteQueue = nullptr;
-static bool s_downloadInFlight = false;
 static unsigned long s_lastSpeakerEndMs = 0;
 static uint8_t* s_stagedPcmData = nullptr;
 static size_t s_stagedPcmSize = 0;
@@ -74,7 +58,7 @@ static void processAudioQueue();
 static void clearStagedPcmPlayback();
 
 static bool hasPendingPlaybackWork() {
-    return s_downloadInFlight || !s_audioQueue.empty() || !s_pcmQueue.empty() || isPcmStreamActive();
+    return !s_pcmQueue.empty() || isPcmStreamActive();
 }
 
 void clearQueuedPcmPlayback() {
@@ -193,175 +177,10 @@ static bool endSpeakerPlayback() {
 }
 
 // ════════════════════════════════════════
-//  ダウンロードタスク（loop()とは別タスクで動く）
-//  loop()をブロックしないための分離
-// ════════════════════════════════════════
-static void downloadTask(void* arg) {
-    char url[MAX_URL_LEN];
-    for (;;) {
-        if (xQueueReceive(s_downloadQueue, url, portMAX_DELAY) != pdTRUE) continue;
-
-        uint8_t* data = nullptr;
-        size_t   size = 0;
-
-        if (downloadVoice(String(url), &data, &size)) {
-            DownloadedAudio completed = {data, size, true};
-            if (!s_downloadCompleteQueue ||
-                xQueueSend(s_downloadCompleteQueue, &completed, 0) != pdTRUE) {
-                Serial.println("[DOWNLOAD] Complete queue full; dropping audio");
-                free(data);
-                continue;
-            }
-            Serial.printf("[DOWNLOAD] Ready: %u bytes\n", (unsigned)size);
-        } else {
-            Serial.println("[DOWNLOAD] Failed");
-            DownloadedAudio completed = {nullptr, 0, false};
-            if (s_downloadCompleteQueue) {
-                xQueueSend(s_downloadCompleteQueue, &completed, 0);
-            }
-        }
-    }
-}
-
-// ════════════════════════════════════════
 //  初期化（setup()から呼ぶ）
 // ════════════════════════════════════════
 void initPlayback() {
-    s_downloadQueue = xQueueCreate(4, sizeof(char) * MAX_URL_LEN);
-    s_downloadCompleteQueue = xQueueCreate(2, sizeof(DownloadedAudio));
-    if (!s_downloadQueue || !s_downloadCompleteQueue) {
-        Serial.println("[PLAY] Failed to create playback queues");
-        return;
-    }
-    xTaskCreatePinnedToCore(
-        downloadTask,
-        "downloadTask",
-        8192,
-        nullptr,
-        1,
-        nullptr,
-        1   // Core 1
-    );
-    Serial.println("[PLAY] Download task started on Core 1");
     logAudioMemory("play-init");
-}
-
-// ════════════════════════════════════════
-//  再生リクエスト受付（ノンブロッキング）
-//  enqueueAudioTask()から呼ばれる
-// ════════════════════════════════════════
-static bool startPlayback(const AudioTask& task) {
-    if (!s_downloadQueue) {
-        Serial.println("[PLAY] Queue not initialized!");
-        return false;
-    }
-    if (s_downloadInFlight) {
-        Serial.println("[PLAY] Download already in flight");
-        return false;
-    }
-    char url[MAX_URL_LEN];
-    task.voice_url.toCharArray(url, MAX_URL_LEN);
-    if (xQueueSend(s_downloadQueue, url, 0) != pdTRUE) {
-        Serial.printf("[PLAY] Download queue full; dropped: %s\n", url);
-        return false;
-    }
-    s_downloadInFlight = true;
-    setFaceExpression(FACE_THINKING);
-    Serial.printf("[PLAY] Queued for download: %s\n", url);
-    return true;
-}
-
-// ════════════════════════════════════════
-//  ダウンロード完了チェック → Speaker起動
-//  loop()から毎回呼ぶ（Core 1でSpeaker操作するために分離）
-// ════════════════════════════════════════
-static bool startDownloadedWavPlayback(uint8_t* wavData, size_t wavSize) {
-    WavInfo wavInfo;
-    if (!parseWavInfo(wavData, wavSize, &wavInfo)) {
-        Serial.println("[PLAY] Refusing invalid WAV");
-        free(wavData);
-        setFaceExpression(FACE_IDLE);
-        return false;
-    }
-
-    releaseCurrentPlaybackBuffer();
-    s_currentAudioData = wavData;
-    s_currentAudioSize = wavSize;
-    s_playbackState.pcmOffset = wavInfo.dataOffset;
-    s_playbackState.pcmSize = wavInfo.dataSize;
-    s_playbackState.sampleRate = wavInfo.sampleRate;
-    s_playbackState.bytesPerFrame = (wavInfo.channels * wavInfo.bitsPerSample) / 8;
-
-    // 再生時間 + 2秒のデッドライン
-    const float bytes_per_sec = (float)s_playbackState.sampleRate * (float)s_playbackState.bytesPerFrame;
-    s_playbackDeadlineMs = millis() +
-        (unsigned long)((s_playbackState.pcmSize / bytes_per_sec) * 1000.0f) + 2000;
-
-    if (!audioGateEnter("wav-play", 1000)) {
-        Serial.println("[PLAY] Audio gate busy; dropped WAV playback");
-        releaseCurrentPlaybackBuffer();
-        setFaceExpression(FACE_IDLE);
-        return false;
-    }
-
-    // マイク停止 → スピーカー起動
-    if (!prepareSpeakerPlayback()) {
-        Serial.println("[PLAY] Speaker prepare failed");
-        releaseCurrentPlaybackBuffer();
-        setFaceExpression(FACE_IDLE);
-        audioGateLeave("wav-play");
-        return false;
-    }
-    Serial.println("[PLAY] Mic stopped");
-    bool ok = M5.Speaker.playRaw(
-        (const int16_t*)(s_currentAudioData + s_playbackState.pcmOffset),
-        s_playbackState.pcmSize / sizeof(int16_t),
-        s_playbackState.sampleRate,
-        false,
-        1,
-        SPEAKER_PLAYBACK_CHANNEL,
-        true
-    );
-    if (!ok) {
-        Serial.println("[PLAY] Speaker rejected WAV playRaw");
-        releaseCurrentPlaybackBuffer();
-        setFaceExpression(FACE_IDLE);
-        audioGateLeave("wav-play");
-        return false;
-    }
-    setFaceExpression(FACE_PLAYING);
-
-    s_playbackState.lipSyncOffset = s_playbackState.pcmOffset;
-    s_playbackState.lastLipMs     = 0;
-    s_isPlaying     = true;
-    s_playbackState.currentIsPcm = false;
-    s_playbackState.pcmSessionId = "";
-    s_playbackState.pcmFinalSegment = false;
-    clearQueuedPcmPlayback();
-    s_playbackStartMs  = millis();
-    Serial.println("[PLAY] Speaker started");
-    logAudioMemory("wav-start");
-    audioGateLeave("wav-play");
-    return true;
-}
-
-static void checkPendingPlayback() {
-    if (s_isPlaying || !s_downloadCompleteQueue) {
-        return;
-    }
-
-    DownloadedAudio completed = {};
-    if (xQueueReceive(s_downloadCompleteQueue, &completed, 0) != pdTRUE) {
-        return;
-    }
-    s_downloadInFlight = false;
-    if (!completed.success || !startDownloadedWavPlayback(completed.data, completed.size)) {
-        setFaceExpression(FACE_IDLE);
-        processAudioQueue();
-        if (!s_isPlaying && !hasPendingPlaybackWork()) {
-            s_micResumeRequested = true;
-        }
-    }
 }
 
 PcmPlaybackResult startPcmPlayback(uint8_t* pcmData, size_t pcmSize, const String& sessionId, bool finalSegment) {
@@ -474,8 +293,7 @@ PcmPlaybackResult stagePcmPlayback(uint8_t* pcmData, size_t pcmSize, const Strin
         Serial.printf("[PCM] Invalid staged size: %u\n", (unsigned)pcmSize);
         return PCM_PLAYBACK_INVALID;
     }
-    if (s_isPlaying || isPcmStreamActive() || M5.Speaker.isPlaying() || s_downloadInFlight ||
-        !s_audioQueue.empty() || !s_pcmQueue.empty()) {
+    if (s_isPlaying || isPcmStreamActive() || M5.Speaker.isPlaying() || !s_pcmQueue.empty()) {
         Serial.printf("[PCM] Busy; refusing staged segment session=%s\n", sessionId.c_str());
         return PCM_PLAYBACK_BUSY;
     }
@@ -575,9 +393,6 @@ PlaybackStatus getPlaybackStatus() {
     status.currentBytes = s_currentAudioSize;
     status.queuedPcmBytes = s_pcmQueuedBytes;
     status.queuedPcmSegments = s_pcmQueue.size();
-    status.audioQueueDepth = s_audioQueue.size();
-    status.downloadQueueDepth = s_downloadQueue ? uxQueueMessagesWaiting(s_downloadQueue) : 0;
-    status.downloadInFlight = s_downloadInFlight;
     status.micResumeRequested = s_micResumeRequested;
     status.startedMs = s_playbackStartMs;
     status.deadlineMs = s_playbackDeadlineMs;
@@ -614,48 +429,13 @@ static void processAudioQueue() {
         }
     }
 
-    checkPendingPlayback();
-    if (s_isPlaying) {
-        return;
+    if (s_playbackState.currentIsPcm && s_playbackState.pcmFinalSegment) {
+        Serial.printf("[PCM] Session complete: %s\n", s_playbackState.pcmSessionId.c_str());
     }
-
-    if (s_audioQueue.empty()) {
-        if (s_playbackState.currentIsPcm && s_playbackState.pcmFinalSegment) {
-            Serial.printf("[PCM] Session complete: %s\n", s_playbackState.pcmSessionId.c_str());
-        }
-        s_playbackState.currentIsPcm = false;
-        s_playbackState.pcmSessionId = "";
-        s_playbackState.pcmFinalSegment = false;
-        setFaceExpression(FACE_IDLE);
-        return;
-    }
-
-    AudioTask next = s_audioQueue.top();
-    s_audioQueue.pop();
-    if (startPlayback(next)) {
-        s_lastPlayedVoiceId = next.voice_id;
-    } else {
-        Serial.println("[PLAY] Dropped queued audio task: download start failed");
-        processAudioQueue();
-    }
-}
-
-bool enqueueAudioTask(const AudioTask& task) {
-    AudioTask queuedTask = task;
-    queuedTask.sequence = s_nextAudioSequence++;
-    if (s_isPlaying || s_downloadInFlight || isPcmStreamActive()) {
-        if (s_audioQueue.size() >= MAX_AUDIO_QUEUE_DEPTH) {
-            Serial.printf("[PLAY] Audio queue full; dropped: %s\n", queuedTask.voice_url.c_str());
-            return false;
-        }
-        s_audioQueue.push(queuedTask);
-        return true;
-    }
-    if (!startPlayback(queuedTask)) {
-        return false;
-    }
-    s_lastPlayedVoiceId = queuedTask.voice_id;
-    return true;
+    s_playbackState.currentIsPcm = false;
+    s_playbackState.pcmSessionId = "";
+    s_playbackState.pcmFinalSegment = false;
+    setFaceExpression(FACE_IDLE);
 }
 
 static bool notifyPlaybackFinished() {
@@ -675,7 +455,6 @@ static bool notifyPlaybackFinished() {
 }
 
 void updatePlayback() {
-    checkPendingPlayback();
     updateLipSync();
 
     if (s_isPlaying &&

@@ -5,7 +5,6 @@
 #include "http_server.h"
 #include "types.h"
 #include "servo_service.h"
-#include "camera_service.h"
 #include "face_service.h"
 #include "playback_service.h"
 #include "mic_service.h"
@@ -25,42 +24,8 @@ static const char* PCM_HEADER_SEQ = "X-Stackchan-Pcm-Seq";
 static const char* PCM_HEADER_FINAL = "X-Stackchan-Pcm-Final";
 static const char* PCM_HEADER_MODE = "X-Stackchan-Pcm-Mode";
 
-// ────────────────────────────────────────────
-// POST /play
-// body: {"voice_url": "http://..."}
-// → AudioTaskをキューに積んで再生
-// ────────────────────────────────────────────
-static void handlePlay() {
-    if (!server.hasArg("plain")) {
-        server.send(400, "application/json", "{\"success\":false,\"error\":\"no body\"}");
-        return;
-    }
-
-    JsonDocument doc;
-    if (deserializeJson(doc, server.arg("plain")) != DeserializationError::Ok) {
-        server.send(400, "application/json", "{\"success\":false,\"error\":\"json parse error\"}");
-        return;
-    }
-
-    const char* voice_url = doc["voice_url"] | "";
-    if (strlen(voice_url) == 0) {
-        server.send(400, "application/json", "{\"success\":false,\"error\":\"voice_url required\"}");
-        return;
-    }
-
-    AudioTask task;
-    task.voice_id  = String("mcp_") + String(millis());
-    task.voice_url = String(voice_url);
-    task.priority  = PRIORITY_NORMAL;
-    if (!enqueueAudioTask(task)) {
-        Serial.printf("[HTTP] POST /play -> queue failed: %s\n", voice_url);
-        server.send(503, "application/json", "{\"success\":false,\"error\":\"play queue full\"}");
-        return;
-    }
-
-    Serial.printf("[HTTP] POST /play -> queued: %s\n", voice_url);
-    server.send(200, "application/json", "{\"success\":true}");
-}
+// POST /play (caller-supplied voice_url) is gone by design: the device
+// must never fetch a URL. All playback arrives as pushed PCM.
 
 static String headerOrArg(const char* headerName, const char* argName) {
     String value = server.header(headerName);
@@ -402,9 +367,6 @@ static void handlePlaybackStatus() {
     doc["current_bytes"] = playback.currentBytes;
     doc["queued_pcm_bytes"] = playback.queuedPcmBytes;
     doc["queued_pcm_segments"] = playback.queuedPcmSegments;
-    doc["audio_queue_depth"] = playback.audioQueueDepth;
-    doc["download_queue_depth"] = playback.downloadQueueDepth;
-    doc["download_in_flight"] = playback.downloadInFlight;
     doc["started_ms"] = playback.startedMs;
     doc["deadline_ms"] = playback.deadlineMs;
     doc["mic_state"] = getMicStateName();
@@ -524,23 +486,7 @@ static void handleFace() {
     server.send(200, "application/json", "{\"success\":true}");
 }
 
-// ────────────────────────────────────────────
-// GET /snapshot
-// → Capture JPEG from camera and return it
-// ────────────────────────────────────────────
-static void handleSnapshot() {
-    uint8_t* jpgBuf = nullptr;
-    size_t jpgLen = 0;
-
-    if (!captureJpeg(&jpgBuf, &jpgLen, 80)) {
-        server.send(500, "application/json", "{\"success\":false,\"error\":\"capture failed\"}");
-        return;
-    }
-
-    server.send_P(200, "image/jpeg", (const char*)jpgBuf, jpgLen);
-    free(jpgBuf);
-    Serial.printf("[HTTP] GET /snapshot -> %u bytes JPEG\n", (unsigned)jpgLen);
-}
+// GET /snapshot is gone with the camera service (privacy rule).
 
 // GET /env/debug — QMP6988校准字节+原始ADC快照，电脑端验算补偿公式用
 static void handleEnvDebug() {
@@ -601,7 +547,6 @@ void initHttpServer() {
         PCM_HEADER_MODE,
     };
     server.collectHeaders(headerKeys, sizeof(headerKeys) / sizeof(headerKeys[0]));
-    server.on("/play",         HTTP_POST, handlePlay);
     server.on("/play/pcm",     HTTP_POST, handlePlayPcm, handlePlayPcmRaw);
     server.on("/audio/session", HTTP_POST, handleAudioSessionStart);
     server.on(UriBraces("/audio/session/{}"), HTTP_DELETE, handleAudioSessionStop);
@@ -614,7 +559,6 @@ void initHttpServer() {
     server.on("/shake",        HTTP_POST, handleShake);
     server.on("/servo/status", HTTP_GET,  handleServoStatus);
     server.on("/playback/status", HTTP_GET, handlePlaybackStatus);
-    server.on("/snapshot",     HTTP_GET,  handleSnapshot);
     server.on("/face",         HTTP_POST, handleFace);
     server.on("/face",         HTTP_GET,  handleFace);
     server.on("/env",          HTTP_GET,  handleEnv);

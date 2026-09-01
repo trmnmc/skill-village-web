@@ -12,7 +12,6 @@
 #include "pcm_stream_service.h"
 #include "face_service.h"
 #include "servo_service.h"
-#include "camera_service.h"
 #include "audio_gate.h"
 #include "env_service.h"
 
@@ -40,9 +39,8 @@ void setup() {
         Serial.println("[WARN] Servo init failed - head movement disabled");
     }
 
-    if (!initCamera()) {
-        Serial.println("[WARN] Camera init failed - vision disabled");
-    }
+    // Camera stays dark by design (privacy rule): its service is not in
+    // this build at all — no init, no /snapshot, no esp_camera in the image.
     if (!initEnvService()) {
         Serial.println("[WARN] Env sensor init failed - no temperature/humidity/pressure");
     }

@@ -3,27 +3,7 @@
 
 #include <Arduino.h>
 
-// 優先度定義
-enum PlayPriority {
-    PRIORITY_LOW    = 1,
-    PRIORITY_NORMAL = 5,
-    PRIORITY_HIGH   = 10
-};
-
-// 音声タスク構造体
-struct AudioTask {
-    String voice_id;
-    String voice_url;
-    PlayPriority priority;
-    uint32_t sequence = 0;
-    
-    // priority_queue用の比較演算子
-    bool operator<(const AudioTask& other) const {
-        if (priority != other.priority) {
-            return priority < other.priority;
-        }
-        return sequence > other.sequence;
-    }
-};
+// AudioTask and its priority queue left with the download engine: playback
+// arrives only as pushed PCM now, so there is nothing to schedule.
 
 #endif

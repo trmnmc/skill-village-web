@@ -5,9 +5,8 @@
 
 /**
  * Stack-chan Servo Control Service
- * Uses SCServo (SCSCL) bus servos via UART1 (GPIO 6 TX, GPIO 7 RX)
- * Yaw servo: ID 1, ±128 degrees
- * Pitch servo: ID 2, 0-90 degrees
+ * Drives the head exclusively through M5StackChan.Motion (StackChan-BSP).
+ * Yaw servo: ±128 degrees · Pitch servo: 5-85 degrees
  */
 
 struct ServoFeedback {
