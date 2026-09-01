@@ -14,15 +14,17 @@ _Updated: 2026-08-31 — main_
 - [ ] Droplet: still pre-M5 (deploy M5 + reseed decision — reseed publishes real folder paths, wipes visitor state); voice login decision; LICENSE; M6 plan
 - [ ] Housekeeping (carried): droplet reboot pending, memory tight; 8 merged remote branches deletable; Chunks server restart
 
-## Robot A′ redesign (see pause-2026-08-31-robot-aprime-design.md)
+## Robot A″ (was A′) — eng review passed, all decisions locked (see docs/superpowers/reviews/2026-08-31-robot-aprime-eng-review.md)
 
-_Updated: 2026-08-31 — design session, no branch_
+_Updated: 2026-08-31 — /plan-eng-review session; A′ → A″: fresh firmware, no vendoring_
 
-- [x] Requirements + hard rule locked (persona-speaker, creature face, ~1 s, touch ×4, no Chinese-authored code in data path)
-- [x] Approach A′ approved: vendored migratorywhale/stackchan-mcp firmware + voice module in skill-village-server (WebRTC VAD, whisper.cpp, OpenAI TTS/Piper); xiaozhi stack dead
-- [x] Design Section 1 (architecture) approved
-- [ ] Section 2 (loop + latency) — presented, awaiting verdict (in progress)
-- [ ] Sections 3–5 → spec `docs/superpowers/specs/2026-08-31-robot-aprime-embodiment-design.md` → writing-plans (fresh branch off main)
-- [ ] Firmware audit before any flash (strip cloud bridge, camera, recording_store)
-- [ ] User homework pre-arrival (2026-09-01): router per-device internet block; robot Wi-Fi choice
-- [ ] Day one: unbox → sanity WITHOUT Wi-Fi on factory firmware → flash → router block → echo test → traffic capture
+- [x] Requirements + hard rule locked (persona-speaker, creature face, ~1 s, touch ×4)
+- [x] Rule redrawn as three tiers (D6.2): our code + M5Unified data-path drivers read line-by-line (~6k lines); Espressif layer contained (router blocks ALL egress incl. DNS except PC:8262)
+- [x] Section 2 verdict IN (D5): v1 = proven one-shot runner, first word 3.5–5 s; warm runner + streaming mic + chunker + VAD = v1.1
+- [x] Firmware strategy (D7): write ~1–2k lines fresh over pinned M5Unified; stackchan-mcp fork = read-only reference, never vendored, never run; faces-from-file designed in
+- [x] Outside-voice adoptions (D8, all 7): v1 memory in prompt · whole-reply TTS · tap+silence endpoint · voice endpoints env-gated OFF (droplet safety) · secret on every mutating LAN route · hardware track starts pre-arrival · 10 s brain timeout + models outside OneDrive tree
+- [x] Eng review: 4 sections + outside voice, 30 findings, 0 critical gaps, 0 unresolved
+- [ ] Sections 3–5 design → spec `docs/superpowers/specs/2026-08-31-robot-aprime-embodiment-design.md` (supersede §2/§9/§10; carry the review doc's diagram + requirements 1–15 + test bill) → writing-plans (fresh branch off main)
+- [ ] Track H pre-arrival TODAY: PlatformIO toolchain + fresh-firmware smoke build (T1); three-tier audit (T2)
+- [ ] User homework pre-arrival: router ALL-egress block incl. DNS; AP-isolation check; 2.4 GHz network; Windows inbound 8262 rule (T3)
+- [ ] Day one re-ordered: unbox → factory sanity WITHOUT Wi-Fi → flash OUR smoke build → router verify → echo test → traffic capture (T11)
