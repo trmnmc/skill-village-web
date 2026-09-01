@@ -616,6 +616,13 @@ static bool validateHeader(const String& line, String& session, String& error) {
         error = "ERR PROTOCOL\n";
         return false;
     }
+    // Same shared secret as HTTP: an unauthenticated stream never reaches
+    // the speaker, and the placeholder token authorizes nobody.
+    if (strcmp(ROBOT_API_TOKEN, "CHANGE-ME") == 0 ||
+        headerValue(line, "token") != ROBOT_API_TOKEN) {
+        error = "ERR AUTH\n";
+        return false;
+    }
     session = headerValue(line, "session");
     if (session.length() == 0 || session.length() > 64) {
         error = "ERR SESSION\n";

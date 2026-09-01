@@ -4,6 +4,7 @@
 void initPlayback();                 // setup()で呼ぶ
 void updatePlayback();
 bool isPlaybackActive();
+void stopPlaybackNow();              // タップ割り込み：即時停止＋キュー破棄
 bool shouldResumeMic();
 void clearMicResumeRequest();
 void requestMicResume();

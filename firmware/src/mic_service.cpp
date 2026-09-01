@@ -40,6 +40,7 @@ static size_t recorded_samples = 0;
 static MicState mic_state = MIC_IDLE;
 static uint32_t trigger_start_ms = 0;
 static uint32_t silence_start_ms = 0;
+static volatile bool s_mic_armed = false;
 
 // プリトリガーリングバッファ
 static int16_t pre_trigger_buf[PRE_TRIGGER_BUFFER_SAMPLES];
@@ -56,6 +57,29 @@ static inline float calcRmsNorm(const int16_t* data, size_t n) {
 }
 
 static bool storeRecordingForMcp(int16_t* audio_data, size_t sample_count);
+
+bool microphoneArmed() {
+    return s_mic_armed;
+}
+
+void armMicrophone(bool on) {
+    if (on == s_mic_armed) return;
+    s_mic_armed = on;
+    if (on) {
+        // A fresh arm hears only what follows it: stale ring samples from
+        // before the owner's intent are wiped.
+        memset(pre_trigger_buf, 0, sizeof(pre_trigger_buf));
+        pre_buf_write = 0;
+        pre_buf_full  = false;
+        mic_state = MIC_IDLE;
+        setFaceExpression(FACE_LISTENING);
+        Serial.println("[MIC] Armed");
+    } else {
+        mic_state = MIC_IDLE;
+        setFaceExpression(FACE_IDLE);
+        Serial.println("[MIC] Disarmed");
+    }
+}
 
 const char* getMicStateName() {
     switch (mic_state) {
@@ -161,6 +185,9 @@ void updateMicrophone() {
     if (!M5.Mic.isEnabled()) return;
     if (!record_buffer) return;
     if (isPlaybackActive()) return;
+    // Disarmed = deaf: no frame is ever read off the DMA, so nothing the
+    // room says touches our RAM until someone opens the ear on purpose.
+    if (!s_mic_armed) return;
 
     static int16_t frame[MIC_FRAME_SAMPLES];
     if (!audioGateEnter("mic-record", 0)) return;
@@ -245,6 +272,10 @@ void updateMicrophone() {
                 bool ok = storeRecordingForMcp(record_buffer, recorded_samples);
                 Serial.printf("[MIC] Store recording result=%s\n", ok ? "OK" : "NG");
                 if (!ok) setFaceExpression(FACE_IDLE);
+                // One utterance per arm, and the raw samples don't linger.
+                memset(record_buffer, 0, recorded_samples * sizeof(int16_t));
+                recorded_samples = 0;
+                s_mic_armed = false;
                 mic_state = MIC_IDLE;
             }
             break;

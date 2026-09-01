@@ -13,6 +13,10 @@
 #define WIFI_SSID_1     "your-hotspot-ssid"      
 #define WIFI_PASSWORD_1 "your_hotspot_pass" 
 
+// 共有シークレット（PCのVILLAGE_ROBOT_TOKENと同じ値にする）
+// Generate one: PowerShell  -join ((48..57)+(97..102) | Get-Random -Count 32 | % {[char]$_})
+#define ROBOT_API_TOKEN "CHANGE-ME"
+
 // スピーカー設定
 #define SPEAKER_VOLUME  200
 

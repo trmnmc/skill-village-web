@@ -479,6 +479,17 @@ bool isPlaybackActive() {
     return s_isPlaying;
 }
 
+void stopPlaybackNow() {
+    if (!s_isPlaying) return;
+    Serial.println("[PLAY] Tap interrupt -> stop");
+    if (audioGateEnter("tap-stop", 200)) {
+        M5.Speaker.stop();
+        audioGateLeave("tap-stop");
+    }
+    clearQueuedPcmPlayback();
+    notifyPlaybackFinished();
+}
+
 bool shouldResumeMic() {
     return s_micResumeRequested && !s_isPlaying && !hasPendingPlaybackWork();
 }

@@ -53,6 +53,18 @@ void setup() {
 }
 void loop() {
     M5StackChan.update();
+
+    // Tap = intent: while he speaks it means "stop talking"; while idle it
+    // toggles the ear. (M5StackChan.update() pumps M5.update() for touch.)
+    auto touch = M5.Touch.getDetail();
+    if (touch.wasClicked()) {
+        if (isPlaybackActive()) {
+            stopPlaybackNow();
+        } else {
+            armMicrophone(!microphoneArmed());
+        }
+    }
+
     handleHttpServer();
     serviceWiFi();
     updateServoGesture();

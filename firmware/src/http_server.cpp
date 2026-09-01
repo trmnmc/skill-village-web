@@ -3,6 +3,7 @@
 #include <uri/UriBraces.h>
 #include <ArduinoJson.h>
 #include "http_server.h"
+#include "config_loader.h"
 #include "types.h"
 #include "servo_service.h"
 #include "face_service.h"
@@ -23,6 +24,18 @@ static const char* PCM_HEADER_SESSION = "X-Stackchan-Pcm-Session";
 static const char* PCM_HEADER_SEQ = "X-Stackchan-Pcm-Seq";
 static const char* PCM_HEADER_FINAL = "X-Stackchan-Pcm-Final";
 static const char* PCM_HEADER_MODE = "X-Stackchan-Pcm-Mode";
+static const char* AUTH_HEADER = "X-Robot-Token";
+
+// Every route starts here. The placeholder token authorizes nobody: a
+// robot flashed without a real secret in config.h answers only 401s.
+static bool authorized() {
+    if (strcmp(ROBOT_API_TOKEN, "CHANGE-ME") != 0 &&
+        server.header(AUTH_HEADER) == ROBOT_API_TOKEN) {
+        return true;
+    }
+    server.send(401, "application/json", "{\"success\":false,\"error\":\"unauthorized\"}");
+    return false;
+}
 
 // POST /play (caller-supplied voice_url) is gone by design: the device
 // must never fetch a URL. All playback arrives as pushed PCM.
@@ -40,6 +53,7 @@ static String headerOrArg(const char* headerName, const char* argName) {
 // body: raw 24kHz mono s16le PCM
 // ────────────────────────────────────────────
 static void handlePlayPcm() {
+    if (!authorized()) { clearPcmUpload(); return; }
     const char* uploadError = consumePcmUploadError();
     if (uploadError) {
         String body = "{\"success\":false,\"error\":\"";
@@ -157,6 +171,7 @@ static void handlePlayPcmRaw() {
 // → Recording is always MCP pull mode; this endpoint clears stale recordings.
 // ────────────────────────────────────────────
 static void handleMode() {
+    if (!authorized()) return;
     if (!server.hasArg("plain")) {
         server.send(400, "application/json", "{\"success\":false,\"error\":\"no body\"}");
         return;
@@ -183,10 +198,33 @@ static void handleMode() {
 // → {"ready": true/false, "mode": "mcp"}
 // ────────────────────────────────────────────
 static void handleAudioStatus() {
+    if (!authorized()) return;
+    const bool ready = hasLastRecording();
+    const bool playing = isPlaybackActive() || isPcmStreamActive();
     String body = "{\"ready\":";
-    body += hasLastRecording() ? "true" : "false";
+    body += ready ? "true" : "false";
+    body += ",\"recording_ready\":";
+    body += ready ? "true" : "false";
+    body += ",\"mic_armed\":";
+    body += microphoneArmed() ? "true" : "false";
+    body += ",\"playing\":";
+    body += playing ? "true" : "false";
     body += ",\"mode\":\"mcp\"}";
     server.send(200, "application/json", body);
+}
+
+// POST /mic/arm · /mic/disarm — the PC (or a tap on the face) is the only
+// thing that opens the ear; boot state is disarmed.
+static void handleMicArm() {
+    if (!authorized()) return;
+    armMicrophone(true);
+    server.send(200, "application/json", "{\"success\":true,\"armed\":true}");
+}
+
+static void handleMicDisarm() {
+    if (!authorized()) return;
+    armMicrophone(false);
+    server.send(200, "application/json", "{\"success\":true,\"armed\":false}");
 }
 
 // ────────────────────────────────────────────
@@ -194,6 +232,7 @@ static void handleAudioStatus() {
 // → 録音済みWAVをそのまま返す（1回読んだらクリア）
 // ────────────────────────────────────────────
 static void handleAudio() {
+    if (!authorized()) return;
     RecordingSnapshot recording = getLastRecording();
     if (!recording.data || recording.size == 0) {
         server.send(404, "application/json", "{\"success\":false,\"error\":\"no audio\"}");
@@ -213,6 +252,7 @@ static void handleAudio() {
 // → Servo move head (degrees)
 // ────────────────────────────────────────────
 static void handleMove() {
+    if (!authorized()) return;
     if (!server.hasArg("plain")) {
         server.send(400, "application/json", "{\"success\":false,\"error\":\"no body\"}");
         return;
@@ -243,6 +283,7 @@ static void handleMove() {
 // → Return head to center position
 // ────────────────────────────────────────────
 static void handleHome() {
+    if (!authorized()) return;
     if (!isServoReady()) {
         server.send(503, "application/json", "{\"success\":false,\"error\":\"servo not ready\"}");
         return;
@@ -257,6 +298,7 @@ static void handleHome() {
 // → Nod "yes" gesture
 // ────────────────────────────────────────────
 static void handleNod() {
+    if (!authorized()) return;
     if (!isServoReady()) {
         server.send(503, "application/json", "{\"success\":false,\"error\":\"servo not ready\"}");
         return;
@@ -271,6 +313,7 @@ static void handleNod() {
 // → Shake "no" gesture
 // ────────────────────────────────────────────
 static void handleShake() {
+    if (!authorized()) return;
     if (!isServoReady()) {
         server.send(503, "application/json", "{\"success\":false,\"error\":\"servo not ready\"}");
         return;
@@ -296,6 +339,7 @@ static void addFeedback(JsonObject obj, const ServoFeedback& fb) {
 // → Servo communication and feedback diagnostics
 // ────────────────────────────────────────────
 static void handleServoStatus() {
+    if (!authorized()) return;
     ServoStatus status = getServoStatus();
     JsonDocument doc;
     doc["ready"] = status.ready;
@@ -323,6 +367,7 @@ static void handleServoStatus() {
 // → Combined runtime diagnostics for playback, microphone, queues, and memory
 // ────────────────────────────────────────────
 static void handlePlaybackStatus() {
+    if (!authorized()) return;
     PlaybackStatus playback = getPlaybackStatus();
     PcmStreamStatus stream = getPcmStreamStatus();
     ServoStatus servo = getServoStatus();
@@ -411,6 +456,7 @@ static bool validateAudioSessionBody() {
 }
 
 static void handleAudioSessionStart() {
+    if (!authorized()) return;
     if (!validateAudioSessionBody()) {
         return;
     }
@@ -442,6 +488,7 @@ static void handleAudioSessionStart() {
 }
 
 static void handleAudioSessionStop() {
+    if (!authorized()) return;
     String prefix = "/audio/session/";
     String uri = server.uri();
     String sessionId = uri.startsWith(prefix) ? uri.substring(prefix.length()) : "";
@@ -458,6 +505,7 @@ static void handleAudioSessionStop() {
 // → Switch whale face expression
 // ────────────────────────────────────────────
 static void handleFace() {
+    if (!authorized()) return;
     if (!server.hasArg("plain")) {
         // GET: return current face
         String body = "{\"face\":\"";
@@ -490,6 +538,7 @@ static void handleFace() {
 
 // GET /env/debug — QMP6988校准字节+原始ADC快照，电脑端验算补偿公式用
 static void handleEnvDebug() {
+    if (!authorized()) return;
     // 先触发一次读取，保证rawP/rawT快照是新鲜的
     float t, h, pr;
     readEnv(t, h, pr);
@@ -501,6 +550,7 @@ static void handleEnvDebug() {
 // → Temperature, humidity, and barometric pressure from onboard sensors
 // ────────────────────────────────────────────
 static void handleEnv() {
+    if (!authorized()) return;
     if (!isEnvAvailable()) {
         server.send(200, "application/json",
                     "{\"success\":false,\"error\":\"no env sensor detected\"}");
@@ -545,12 +595,15 @@ void initHttpServer() {
         PCM_HEADER_SEQ,
         PCM_HEADER_FINAL,
         PCM_HEADER_MODE,
+        AUTH_HEADER,
     };
     server.collectHeaders(headerKeys, sizeof(headerKeys) / sizeof(headerKeys[0]));
     server.on("/play/pcm",     HTTP_POST, handlePlayPcm, handlePlayPcmRaw);
     server.on("/audio/session", HTTP_POST, handleAudioSessionStart);
     server.on(UriBraces("/audio/session/{}"), HTTP_DELETE, handleAudioSessionStop);
     server.on("/mode",         HTTP_POST, handleMode);
+    server.on("/mic/arm",      HTTP_POST, handleMicArm);
+    server.on("/mic/disarm",   HTTP_POST, handleMicDisarm);
     server.on("/audio/status", HTTP_GET,  handleAudioStatus);
     server.on("/audio",        HTTP_GET,  handleAudio);
     server.on("/move",         HTTP_POST, handleMove);

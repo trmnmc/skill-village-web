@@ -25,6 +25,14 @@
 #define SPEAKER_VOLUME 200
 #endif
 
+// Shared secret: the PC must send this in X-Robot-Token on every HTTP
+// request and in the TCP PCM handshake. The placeholder default makes a
+// fresh flash reject everything until the owner sets a real value in
+// config.h — an unauthenticated robot is a bug, never a mode.
+#ifndef ROBOT_API_TOKEN
+#define ROBOT_API_TOKEN "CHANGE-ME"
+#endif
+
 #ifndef MIC_SAMPLE_RATE
 #define MIC_SAMPLE_RATE 16000
 #endif

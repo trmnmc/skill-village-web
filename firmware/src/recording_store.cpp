@@ -7,6 +7,8 @@ static bool s_wavReady = false;
 
 void clearLastRecording() {
     if (s_wavBuf) {
+        // Zero before free: mic audio never lingers in RAM (privacy rule).
+        memset(s_wavBuf, 0, s_wavSize);
         free(s_wavBuf);
     }
     s_wavBuf = nullptr;
@@ -43,5 +45,7 @@ RecordingSnapshot getLastRecording() {
 }
 
 void markLastRecordingConsumed() {
-    s_wavReady = false;
+    // The PC has the bytes now; the copy here is zeroed and freed rather
+    // than parked until the next utterance overwrites it.
+    clearLastRecording();
 }
