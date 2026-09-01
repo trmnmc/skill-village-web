@@ -1,0 +1,1145 @@
+<title>The Village Wakes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: #171310;
+    color: #C8BCA8;
+    font-family: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  #stagebox { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
+  canvas { display: block; cursor: pointer; }
+  #bar {
+    height: 48px; flex: none;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 16px;
+    background: #201B17; border-top: 1px solid #3A3129;
+    user-select: none;
+  }
+  #play {
+    width: 30px; height: 30px; flex: none;
+    background: #2A241F; color: #E8E0D0;
+    border: 1px solid #3A3129; border-radius: 6px;
+    font: 500 12px 'IBM Plex Mono', monospace;
+    cursor: pointer; line-height: 1;
+  }
+  #play:hover { background: #352E27; }
+  #play:focus-visible { outline: 2px solid #D97757; outline-offset: 1px; }
+  #scene { font-size: 13px; color: #A89878; white-space: nowrap; min-width: 15ch; }
+  #track {
+    flex: 1; height: 18px; position: relative; cursor: pointer;
+  }
+  #track .rail {
+    position: absolute; left: 0; right: 0; top: 6px; height: 6px;
+    background: #3A3129; border-radius: 3px; overflow: hidden;
+  }
+  #track .fill {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+    background: #D97757; border-radius: 3px;
+  }
+  #track .tick {
+    position: absolute; top: 4px; width: 2px; height: 10px;
+    background: #F2E5C4; opacity: 0.4; pointer-events: none;
+  }
+  #time { font-size: 12px; font-variant-numeric: tabular-nums; color: #8A7E70; white-space: nowrap; }
+</style>
+
+<div id="stagebox"><canvas id="stage" aria-label="Skill Village animated trailer"></canvas></div>
+<div id="bar">
+  <button id="play" aria-label="Play or pause">&#9654;</button>
+  <div id="scene">the terminal</div>
+  <div id="track"><div class="rail"><div class="fill" id="fill"></div></div></div>
+  <div id="time">0:00 / 0:48</div>
+</div>
+
+<script>
+'use strict';
+/* ============================================================
+   The Village Wakes — an animated tour of the Skill Village
+   game experience. Visual bible: reference/animation-trailer/
+   and packages/web (palette 1a, motion constants, staging).
+   ============================================================ */
+
+const W = 1920, H = 1080, U = 12;
+const DUR = 48;
+
+/* ---- scene cues ---- */
+const CB = 4.2;   // bloom
+const CV = 7.5;   // village day
+const CW = 14;    // the work signal
+const CM = 20;    // a project moves in
+const CR = 28;    // weather
+const CN = 34;    // nightfall
+const CT = 42;    // title
+const SCENES = [
+  { at: 0,  name: 'the terminal' },
+  { at: CB, name: 'the bloom' },
+  { at: CV, name: 'village day' },
+  { at: CW, name: 'the work signal' },
+  { at: CM, name: 'a project moves in' },
+  { at: CR, name: 'weather' },
+  { at: CN, name: 'nightfall' },
+  { at: CT, name: 'title' },
+];
+
+/* ---- palette 1a: Meadow Blue (packages/web/src/theme/palettes.ts) ---- */
+const PAL = {
+  ink: '#3A2E22', cream: '#F2E5C4', bubble: '#FFFDF4', wood: '#8A6B4A', accent: '#D97757',
+  foliage: '#7FA85F', foliageLite: '#8FB86B', ground: '#A8C68D', groundDark: '#8FB075',
+  path: '#E4CFA0',
+  skies: {
+    dawn:  ['#F4D9C0', '#F8E4CC', '#FBEEDD'],
+    day:   ['#C4E4F4', '#CFE9F5', '#DFF0EC'],
+    dusk:  ['#E9A87C', '#F0C08A', '#EDCFA2'],
+    night: ['#1C2130', '#232A3C', '#2C3446'],
+  },
+};
+const INK = { eyeWhite: '#FFF9EE', pupil: '#33241C', mouth: '#33241C' };
+const SHADOW = 'rgba(90,70,40,0.18)';
+
+/* ---- easing ---- */
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const easeInOutCubic = (p) => p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+const easeOutQuad = (p) => 1 - (1 - p) * (1 - p);
+const easeOutCubic = (p) => 1 - Math.pow(1 - p, 3);
+const easeOutBack = (p) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); };
+const glide = (T, a, b) => easeInOutCubic(clamp((T - a) / Math.max(0.001, b - a), 0, 1));
+const fade  = (T, a, b) => easeOutQuad(clamp((T - a) / Math.max(0.001, b - a), 0, 1));
+const pop   = (T, at, dur) => T <= at ? 0 : easeOutBack(clamp((T - at) / (dur || 0.55), 0, 1));
+const lerp  = (a, b, k) => a + (b - a) * k;
+
+/* channelwise hex mix — the palette module's own mix() */
+function mix(a, b, k) {
+  const hx = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+  const A = hx(a), B = hx(b);
+  const h2 = (v) => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0');
+  return '#' + h2(A[0] + (B[0] - A[0]) * k) + h2(A[1] + (B[1] - A[1]) * k) + h2(A[2] + (B[2] - A[2]) * k);
+}
+
+/* deterministic randomness — the piece must draw the same at the same T */
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* ---- creature grids (packages/core/src/appearance/grids.ts, trailer variants) ---- */
+const GRIDS = {
+  bean: {
+    rows: ['.X...X.', '.XXXXX.', 'XXXXXXX', 'XWWXWWX', 'XWWXWWX', 'XXXKXXX', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '.DD.DD.'],
+    eyes: [{ c: 1, r: 3 }, { c: 4, r: 3 }], w: 7, h: 10,
+  },
+  mound: {
+    rows: ['...XXXXXX...', '.XXXXXXXXXX.', 'XXWWXXXXWWXX', 'XXWWXXXXWWXX', 'XXXXXKKXXXXX', 'XXXXXXXXXXXX', '.DD......DD.'],
+    eyes: [{ c: 2, r: 2 }, { c: 8, r: 2 }], w: 12, h: 7,
+  },
+  boxy: {
+    rows: ['.XXXXXX.', 'XXXXXXXX', 'XWWXXWWX', 'XWWXXWWX', 'XXXKKXXX', 'XXXXXXXX', '.DD..DD.'],
+    eyes: [{ c: 1, r: 2 }, { c: 5, r: 2 }], w: 8, h: 7,
+  },
+};
+const WING = ['XXX.', 'XXXX', '.XX.'];
+
+/* ---- the cast ---- */
+const CAST = [
+  { id: 'sparky',  nick: 'Sparky',  file: 'brainstorming/',  arch: 'bean',  hue: '#E58C68', dark: '#C06B4B', lite: '#F2B294', x: 280,  y: 962, ph: 0.0 },
+  { id: 'quill',   nick: 'Quill',   file: 'docs-writer/',    arch: 'bean',  hue: '#B79FD6', dark: '#957EB6', lite: '#D3C3E8', x: 552,  y: 928, ph: 1.3, umbrella: true },
+  { id: 'nit',     nick: 'Nit',     file: 'code-review/',    arch: 'mound', hue: '#9DBA77', dark: '#7C9A58', lite: '#C0D6A0', x: 822,  y: 988, ph: 2.1 },
+  { id: 'twig',    nick: 'Twig',    file: 'git-worktrees/',  arch: 'bean',  hue: '#7FBF8A', dark: '#61A06E', lite: '#A8D8B0', x: 1092, y: 948, ph: 0.7, hopper: true },
+  { id: 'checka',  nick: 'Checka',  file: 'test-writer/',    arch: 'mound', hue: '#E2B45E', dark: '#C29140', lite: '#F0CE8C', x: 1272, y: 992, ph: 2.8, umbrella: true },
+  { id: 'deckard', nick: 'Deckard', file: 'deck-maker/',     arch: 'mound', hue: '#E0A3B2', dark: '#C07E92', lite: '#F0C2CD', x: 1800, y: 934, ph: 1.8, asleep: true },
+  { id: 'scout',   nick: 'Scout',   file: 'web-research.md', arch: 'boxy', hue: '#7FB6D9', dark: '#5D93B8', lite: '#A9D2EA', ph: 0.4, fly: 'roam' },
+  { id: 'gus',     nick: 'Gus',     file: 'debugger.md',     arch: 'boxy', hue: '#6FBCAD', dark: '#519D8E', lite: '#9AD6C9', x: 1180, y: 590, ph: 3.4, fly: 'hover', umbrella: true },
+];
+/* the M5 newcomer — a project villager, popped in during the move-in scene */
+const VILLY = { id: 'villy', nick: 'Villy', file: 'skill-village/', arch: 'mound',
+  hue: '#B5729F', dark: '#935C82', lite: '#D4A3C6', x: 1650, y: 998, ph: 2.4 };
+
+const SITE = { x: 1470, y: 908, w: 168 };   // where the project's house lands
+const HOUSES = [
+  { x: 230,  y: 866, body: '#EAD9B4', roof: '#C96F4A', door: '#7A5A3E' },
+  { x: 952,  y: 848, body: '#E3CBAF', roof: '#D9985A', door: '#6A4E36' },
+];
+const TREES = [ [90, 880], [648, 872], [1418, 868], [1868, 892] ];
+const TUFTS = [[140, 1042], [420, 1010], [700, 1055], [980, 1018], [1240, 1050], [1520, 1044], [1790, 1048], [340, 880], [890, 862], [1250, 876]];
+
+/* ---- seeded particle fields ---- */
+const rnd = mulberry32(20260831);
+const STARS = Array.from({ length: 90 }, () => ({
+  x: rnd() * W, y: rnd() * 680, s: 1.5 + rnd() * 1.8, ph: rnd() * Math.PI * 2, tw: 1.2 + rnd() * 1.6,
+}));
+const FIREFLIES = Array.from({ length: 12 }, () => ({
+  x: 120 + rnd() * 1680, y: 830 + rnd() * 170, ax: 24 + rnd() * 40, ay: 12 + rnd() * 22,
+  f1: 0.24 + rnd() * 0.3, f2: 0.3 + rnd() * 0.36, ph: rnd() * Math.PI * 2, blink: 0.5 + rnd() * 0.8,
+}));
+const RAIN = Array.from({ length: 120 }, () => ({
+  x: rnd() * (W + 120) - 60, len: 12 + rnd() * 8, sp: 900 + rnd() * 320, ph: rnd() * 1180,
+}));
+const CONF_HUES = CAST.map((c) => c.hue);
+const CONFETTI = Array.from({ length: 46 }, (_, i) => ({
+  a: rnd() * Math.PI * 2, v: 220 + rnd() * 300, s: 6 + rnd() * 5,
+  hue: CONF_HUES[i % CONF_HUES.length], spin: (rnd() - 0.5) * 9, up: 260 + rnd() * 240,
+}));
+
+/* ---- motion (constants from the trailer bible) ---- */
+function hopState(T, t0) {
+  if (T < t0) return { dy: 0, sy: 1, land: -1 };
+  const cyc = 2.6, p = (T - t0) % cyc, k = Math.floor((T - t0) / cyc);
+  let dy = 0, sy = 1;
+  if (p < 0.18) sy = 1 - (p / 0.18) * 0.16;
+  else if (p < 0.72) { const q = (p - 0.18) / 0.54; dy = -Math.sin(q * Math.PI) * 64; sy = 1.07; }
+  else if (p < 0.95) { const q = (p - 0.72) / 0.23; sy = 0.86 + q * 0.14; }
+  return { dy, sy, land: t0 + k * cyc + 0.72 };
+}
+
+const rainRamp = (T) => glide(T, 28.4, 29.6) * (1 - glide(T, 33.0, 34.6));
+const nightK   = (T) => glide(T, 31.5, 36.0);
+
+function skyAt(T) {
+  const S = PAL.skies;
+  const blend = (a, b, k) => [mix(a[0], b[0], k), mix(a[1], b[1], k), mix(a[2], b[2], k)];
+  if (T < CB) return S.dawn;
+  if (T < 8.5) return blend(S.dawn, S.day, glide(T, CB, 8.5));
+  if (T < 27) return S.day;
+  if (T < 31.5) return blend(S.day, S.dusk, glide(T, 27, 31));
+  if (T < 36) return blend(S.dusk, S.night, glide(T, 31.5, 36));
+  return S.night;
+}
+
+/* flyer positions */
+const roamPos = (T) => ({
+  x: 960 + Math.sin(T * 0.33 + 1.2) * 860,
+  y: 474 + Math.sin(T * 0.9) * 34,
+  flip: Math.cos(T * 0.33 + 1.2) < 0,
+});
+function scoutState(T) {
+  const groundSpot = { x: 930, y: 1008 };
+  if (T < 28.6) return { ...roamPos(T), grounded: false };
+  if (T < 29.8) { const k = glide(T, 28.6, 29.8), p = roamPos(28.6);
+    return { x: lerp(p.x, groundSpot.x, k), y: lerp(p.y, groundSpot.y, k), flip: false, grounded: k > 0.92, landT: 29.7 }; }
+  if (T < 33.8) return { ...groundSpot, flip: false, grounded: true };
+  if (T < 34.8) { const k = glide(T, 33.8, 34.8), p = roamPos(34.8);
+    return { x: lerp(groundSpot.x, p.x, k), y: lerp(groundSpot.y, p.y, k), flip: p.flip, grounded: false }; }
+  return { ...roamPos(T), grounded: false };
+}
+function gusState(T) {
+  const hover = { x: 1180 + Math.sin(T * 0.5 + 2) * 26, y: 590 + Math.sin(T * 2.2 + 1) * 16 };
+  const groundSpot = { x: 1185, y: 1002 };
+  if (T < 28.8) return { ...hover, flip: false, grounded: false };
+  if (T < 30.0) { const k = glide(T, 28.8, 30.0);
+    return { x: lerp(hover.x, groundSpot.x, k), y: lerp(hover.y, groundSpot.y, k), flip: false, grounded: k > 0.92, landT: 29.9 }; }
+  return { ...groundSpot, flip: false, grounded: true };   // stays down, dozes at night
+}
+
+/* the bloom: filename seeds fly from terminal lines to village spots */
+const TERM = { x: 500, y: 205, w: 920, h: 650 };
+const SEEDS = CAST.map((c, i) => ({ c, i, start: CB + 0.25 + i * 0.16, end: CB + 1.25 + i * 0.16 }));
+
+function seedTarget(c, T) {
+  if (c.fly) { const p = c.id === 'scout' ? roamPos(T) : gusState(T); return { x: p.x, y: p.y - 40 }; }
+  return { x: Math.min(c.x + signDx(c), W - 78), y: c.y - 100 };
+}
+const signDx = (c) => (c.arch === 'mound' ? 150 : 120);
+
+/* speech bubbles */
+const BUBBLES = [
+  { at: 9.3,  until: 12.0, who: 'nit',    text: 'looks tidy in here!' },
+  { at: 16.6, until: 19.4, who: 'sparky', text: 'back to work!' },
+  { at: 25.4, until: 27.6, who: 'villy',  text: 'home sweet home.' },
+  { at: 31.2, until: 33.2, who: 'gus',    text: 'cozy under here.' },
+];
+
+/* per-creature sleep time at nightfall (Deckard naps from the start) */
+const sleepAt = (c, i) => (c.asleep ? -1 : CN + 0.5 + i * 0.35);
+
+/* ============================================================
+   canvas plumbing
+   ============================================================ */
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const stagebox = document.getElementById('stagebox');
+let viewScale = 1;
+
+function resize() {
+  const bw = stagebox.clientWidth, bh = stagebox.clientHeight;
+  const scale = Math.min(bw / W, bh / H);
+  const cw = Math.floor(W * scale), ch = Math.floor(H * scale);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.style.width = cw + 'px'; canvas.style.height = ch + 'px';
+  canvas.width = Math.floor(cw * dpr); canvas.height = Math.floor(ch * dpr);
+  viewScale = (cw * dpr) / W;
+}
+window.addEventListener('resize', () => { resize(); if (!playing) draw(T); });
+resize();
+
+/* ---- draw helpers ---- */
+function rrect(x, y, w, h, r) {
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, w, h, r);
+  else { ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+}
+function drawGrid(rows, map, u, ox, oy) {
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    for (let c = 0; c < row.length; c++) {
+      const col = map[row[c]];
+      if (col) { ctx.fillStyle = col; ctx.fillRect(ox + c * u, oy + r * u, u + 0.4, u + 0.4); }
+    }
+  }
+}
+const monoFont  = (size, weight) => `${weight || 500} ${size}px "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace`;
+const pixelFont = (size, weight) => `${weight || 400} ${size}px "Pixelify Sans", "IBM Plex Mono", monospace`;
+
+/* ============================================================
+   scene pieces
+   ============================================================ */
+function drawSky(T) {
+  const [top, mid, low] = skyAt(T);
+  ctx.fillStyle = top; ctx.fillRect(0, 0, W, 380);
+  ctx.fillStyle = mid; ctx.fillRect(0, 380, W, 260);
+  ctx.fillStyle = low; ctx.fillRect(0, 640, W, 200);
+}
+
+function drawSunMoon(T) {
+  const nk = nightK(T);
+  const sunA = (1 - glide(T, 27, 31)) * fade(T, CB, CB + 0.9);
+  if (sunA > 0.01) {
+    ctx.globalAlpha = sunA;
+    const s = 1 + Math.sin(T * 1.1) * 0.02;
+    const cx = 1548 + 48, cy = 108 + 48;
+    ctx.save(); ctx.translate(cx, cy); ctx.scale(s, s);
+    ctx.fillStyle = '#F7D274'; ctx.fillRect(-48, -48, 96, 96);
+    ctx.fillStyle = '#FBE49E'; ctx.fillRect(-32, -32, 64, 64);
+    ctx.restore(); ctx.globalAlpha = 1;
+  }
+  if (nk > 0.01) {
+    ctx.globalAlpha = nk;
+    const g = ctx.createRadialGradient(368, 198, 20, 368, 198, 130);
+    g.addColorStop(0, 'rgba(246,242,230,0.35)'); g.addColorStop(1, 'rgba(246,242,230,0)');
+    ctx.fillStyle = g; ctx.fillRect(238, 68, 260, 260);
+    ctx.fillStyle = '#E8E4D8'; ctx.fillRect(320, 150, 96, 96);
+    ctx.fillStyle = '#F6F2E6'; ctx.fillRect(336, 166, 64, 64);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawStars(T) {
+  const nk = nightK(T);
+  if (nk < 0.02) return;
+  ctx.fillStyle = '#F2E5C4';
+  for (const s of STARS) {
+    const a = nk * (0.25 + 0.75 * Math.pow(Math.sin(T * s.tw + s.ph), 2));
+    ctx.globalAlpha = a * 0.9;
+    ctx.fillRect(s.x, s.y, s.s, s.s);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* clouds drift left; during rain they merge into one darker mass that swells */
+function drawClouds(T) {
+  const rk = rainRamp(T);
+  const col = mix('#FFF8E8', '#B9BDC9', rk);
+  const nk = nightK(T);
+  ctx.globalAlpha = lerp(1, 0.5, nk);
+  const bases = [[220, 150], [780, 92], [1330, 196]];
+  bases.forEach((b, i) => {
+    const x = ((b[0] - T * 7 - i * 12) % (W + 400) + (W + 400)) % (W + 400) - 200;
+    const y = b[1];
+    /* one mass: a single path of overlapping lobes, one fill — no seams */
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    const swell = 1 + rk * 0.5;
+    const lobe = (dx, dy, r) => { ctx.moveTo(x + dx + r * swell, y + dy); ctx.arc(x + dx, y + dy, r * swell, 0, Math.PI * 2); };
+    lobe(40, 16, 34); lobe(92, 4, 42); lobe(148, 14, 36); lobe(112, 30, 38); lobe(60, 32, 32);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawGround(T) {
+  const rise = (1 - glide(T, CB + 0.1, CB + 1.1)) * 300;
+  const gy = 780 + rise;
+  ctx.fillStyle = PAL.ground; ctx.fillRect(-10, gy, W + 20, H - gy + 20);
+  ctx.fillStyle = PAL.groundDark; ctx.fillRect(-10, gy, W + 20, 14);
+  /* the path blends, it does not announce */
+  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = PAL.path;
+  rrect(360, gy + 116, 1400, 58, 29); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#86A85C';
+  for (const t of TUFTS) {
+    const ty = t[1] + rise;
+    ctx.fillRect(t[0], ty, 8, 16);
+    ctx.fillRect(t[0] + 10, ty + 5, 7, 11);
+  }
+}
+
+function drawTree(x, y) {
+  ctx.fillStyle = PAL.wood; ctx.fillRect(x - 10, y - 44, 20, 46);
+  ctx.fillStyle = SHADOW; ctx.beginPath(); ctx.ellipse(x, y + 4, 44, 8, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = PAL.foliage;  ctx.fillRect(x - 55, y - 82, 110, 40);
+  ctx.fillStyle = PAL.foliageLite; ctx.fillRect(x - 38, y - 116, 76, 36);
+  ctx.fillStyle = PAL.foliage;  ctx.fillRect(x - 22, y - 144, 44, 30);
+}
+
+function drawHouse(h, T) {
+  const nk = nightK(T);
+  const x = h.x - 85, y = h.y - 160;
+  ctx.fillStyle = SHADOW; ctx.beginPath(); ctx.ellipse(h.x, h.y + 3, 96, 9, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = h.roof;
+  ctx.fillRect(x - 8, y, 186, 20);
+  ctx.fillRect(x + 14, y - 18, 142, 20);
+  ctx.fillRect(x + 42, y - 34, 86, 18);
+  ctx.fillStyle = h.body; ctx.fillRect(x, y + 20, 170, 140);
+  ctx.strokeStyle = 'rgba(120,90,60,0.35)'; ctx.lineWidth = 3; ctx.strokeRect(x + 1.5, y + 21.5, 167, 137);
+  ctx.fillStyle = h.door; ctx.fillRect(x + 26, y + 84, 36, 76);
+  /* the window: lamp-lit after dark, drawn again above the night tint */
+  ctx.fillStyle = '#FFF3D2'; ctx.fillRect(x + 104, y + 56, 32, 32);
+  ctx.strokeStyle = PAL.wood; ctx.lineWidth = 4; ctx.strokeRect(x + 102, y + 54, 36, 36);
+  h._win = { x: x + 104, y: y + 56 };
+}
+
+/* the project's house — smaller, pops in with overshoot during move-in */
+function drawSiteHouse(T) {
+  const s = pop(T, 23.4, 0.6);
+  if (s <= 0.01) return;
+  const x = SITE.x, y = SITE.y + 68;
+  ctx.save();
+  ctx.translate(x + 70, y);
+  ctx.scale(s, s);
+  ctx.translate(-70, 0);
+  ctx.fillStyle = SHADOW; ctx.beginPath(); ctx.ellipse(70, 2, 80, 8, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = PAL.accent;
+  ctx.fillRect(-8, -128, 156, 18);
+  ctx.fillRect(12, -144, 116, 18);
+  ctx.fillRect(40, -158, 60, 16);
+  ctx.fillStyle = PAL.cream; ctx.fillRect(0, -110, 140, 110);
+  ctx.strokeStyle = 'rgba(120,90,60,0.35)'; ctx.lineWidth = 3; ctx.strokeRect(1.5, -108.5, 137, 107);
+  ctx.fillStyle = '#7A5A3E'; ctx.fillRect(20, -62, 32, 62);
+  ctx.fillStyle = '#FFF3D2'; ctx.fillRect(86, -60, 28, 28);
+  ctx.strokeStyle = PAL.wood; ctx.lineWidth = 4; ctx.strokeRect(84, -62, 32, 32);
+  /* the newcomer's nameplate stamps onto the house — its sign lives here */
+  const ps = pop(T, 25.0, 0.45);
+  if (ps > 0.01) {
+    ctx.save();
+    ctx.translate(70, -81); ctx.scale(ps, ps); ctx.translate(-70, 81);
+    ctx.font = monoFont(12);
+    const pw = ctx.measureText(VILLY.file).width + 18;
+    ctx.fillStyle = PAL.bubble; rrect(70 - pw / 2, -100, pw, 38, 4); ctx.fill();
+    ctx.strokeStyle = PAL.wood; ctx.lineWidth = 2.5; rrect(70 - pw / 2, -100, pw, 38, 4); ctx.stroke();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#3A2A1E'; ctx.font = pixelFont(17, 400);
+    ctx.fillText(VILLY.nick, 70, -84);
+    ctx.fillStyle = PAL.wood; ctx.font = monoFont(11);
+    ctx.fillText(VILLY.file, 70, -69);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+/* scaffold + striped barrier + sign (scene/construction.ts staging) */
+function drawConstruction(T) {
+  const inK = pop(T, 20.6, 0.5);
+  const outK = 1 - glide(T, 23.1, 23.5);
+  const a = inK * outK;
+  if (a <= 0.01) return;
+  ctx.save();
+  ctx.globalAlpha = a;
+  const x = SITE.x, base = SITE.y + 70, wCon = SITE.w;
+  const top = base - 104;
+  ctx.fillStyle = PAL.wood;
+  ctx.fillRect(x, top, 8, 104);
+  ctx.fillRect(x + wCon - 8, top, 8, 104);
+  ctx.fillRect(x, top + 22, wCon, 6);
+  ctx.fillRect(x, top + 60, wCon, 6);
+  /* stripes tick in one at a time */
+  const n = Math.floor(wCon / 12);
+  const shown = Math.floor(clamp((T - 21.0) / 1.6, 0, 1) * n);
+  for (let i = 0; i < shown; i++) {
+    ctx.fillStyle = i % 2 === 0 ? PAL.wood : PAL.cream;
+    ctx.fillRect(x + i * 12, base - 12, 12, 12);
+  }
+  ctx.font = monoFont(15, 600);
+  const label = 'UNDER CONSTRUCTION';
+  const tw = ctx.measureText(label).width;
+  const px = x + wCon / 2;
+  ctx.fillStyle = PAL.cream;
+  rrect(px - tw / 2 - 8, top + 28, tw + 16, 26, 3); ctx.fill();
+  ctx.strokeStyle = PAL.ink; ctx.lineWidth = 2; rrect(px - tw / 2 - 8, top + 28, tw + 16, 26, 3); ctx.stroke();
+  ctx.fillStyle = PAL.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, px, top + 42);
+  ctx.restore();
+}
+
+function drawConfetti(T) {
+  const t0 = 23.4, life = 1.6;
+  const p = (T - t0) / life;
+  if (p <= 0 || p >= 1) return;
+  const cx = SITE.x + 70, cy = SITE.y - 40;
+  for (const c of CONFETTI) {
+    const t = p * life;
+    const x = cx + Math.cos(c.a) * c.v * t * 0.5;
+    const y = cy - c.up * t + 290 * t * t + Math.sin(c.a) * 30 * t;
+    ctx.save();
+    ctx.globalAlpha = (1 - p) * 0.95;
+    ctx.translate(x, y); ctx.rotate(c.spin * t);
+    ctx.fillStyle = c.hue; ctx.fillRect(-c.s / 2, -c.s / 2, c.s, c.s);
+    ctx.restore();
+  }
+}
+
+function drawPuff(T, t0, x, y) {
+  const p = (T - t0) / 0.55;
+  if (p <= 0 || p >= 1) return;
+  const e = easeOutCubic(p);
+  ctx.fillStyle = PAL.cream;
+  ctx.globalAlpha = (1 - p) * 0.9;
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 + 0.6;
+    const d = 14 + e * 44, s = 11 * (1 - e * 0.65);
+    ctx.fillRect(x + Math.cos(a) * d - s / 2, y - 8 + Math.sin(a) * d * 0.55 - s / 2, s, s);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawSign(c, T, at, x, y) {
+  const o = fade(T, at, at + 0.35);
+  if (o <= 0.01) return;
+  ctx.save();
+  ctx.globalAlpha = o;
+  ctx.font = pixelFont(24, 400);
+  const nickW = ctx.measureText(c.nick).width;
+  ctx.font = monoFont(13.5);
+  const fileW = ctx.measureText(c.file).width;
+  const wSign = Math.max(nickW, fileW) + 28;      // the box hugs the text
+  x = Math.min(x, W - wSign / 2 - 8);             // never off the right edge
+  ctx.fillStyle = PAL.wood; ctx.fillRect(x - 5.5, y + 66, 11, 48);
+  ctx.fillStyle = PAL.cream; rrect(x - wSign / 2, y, wSign, 68, 5); ctx.fill();
+  ctx.strokeStyle = PAL.wood; ctx.lineWidth = 3; rrect(x - wSign / 2, y, wSign, 68, 5); ctx.stroke();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#3A2A1E'; ctx.font = pixelFont(24, 400);
+  ctx.fillText(c.nick, x, y + 30);
+  ctx.fillStyle = PAL.wood; ctx.font = monoFont(13.5);
+  ctx.fillText(c.file, x, y + 52);
+  ctx.restore();
+}
+
+function drawUmbrella(T, c, px, py, bodyH, i) {
+  const rk = rainRamp(T);
+  const s = pop(T, 29.0 + i * 0.15, 0.5) * (1 - glide(T, 33.6, 34.3));
+  if (s <= 0.01 || rk <= 0.02) return;
+  const SC = 3;   // reference umbrella authored at U=4, drawn here at U=12
+  const yB = py - bodyH - 8 * SC;
+  ctx.save();
+  ctx.translate(px, yB);
+  ctx.scale(s, s);
+  ctx.translate(-px, -yB);
+  ctx.fillStyle = PAL.wood;
+  ctx.fillRect(px + 6 * SC, yB, 4 * SC, 20 * SC);
+  ctx.fillStyle = mix(PAL.accent, c.hue, 0.35);
+  ctx.fillRect(px - 10 * SC, yB - 4 * SC, 36 * SC, 5 * SC);
+  ctx.fillRect(px - 5 * SC,  yB - 9 * SC, 26 * SC, 5 * SC);
+  ctx.fillRect(px + 1 * SC,  yB - 13 * SC, 14 * SC, 4 * SC);
+  ctx.fillRect(px + 6 * SC,  yB - 17 * SC, 4 * SC, 4 * SC);
+  ctx.restore();
+}
+
+function drawZzz(T, x, y, dir) {
+  const d = dir || 1;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  for (let i = 0; i < 3; i++) {
+    const p = ((T * 0.42 + i * 0.34) % 1);
+    ctx.globalAlpha = Math.sin(p * Math.PI) * 0.8;
+    ctx.font = pixelFont(18 + p * 16, 400);
+    ctx.fillStyle = '#7A6A55';
+    ctx.save();
+    ctx.translate(x + d * (56 + p * 36), y - 20 - p * 66);
+    ctx.rotate(0.16 * d);
+    ctx.fillText('z', 0, 0);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawBubble(T, b, px, py, bodyH) {
+  let s = pop(T, b.at, 0.38);
+  if (T > b.until) s *= clamp(1 - (T - b.until) / 0.28, 0, 1);
+  if (s <= 0.02) return;
+  ctx.font = monoFont(21);
+  const tw = ctx.measureText(b.text).width;
+  const bw = tw + 32, bh = 44;
+  const ax = px, ay = py - bodyH - 26;   // tail tip
+  ctx.save();
+  ctx.translate(ax, ay); ctx.scale(s, s); ctx.translate(-ax, -ay);
+  ctx.fillStyle = PAL.bubble;
+  rrect(ax - bw / 2, ay - bh - 12, bw, bh, 8); ctx.fill();
+  ctx.strokeStyle = PAL.ink; ctx.lineWidth = 3;
+  rrect(ax - bw / 2, ay - bh - 12, bw, bh, 8); ctx.stroke();
+  /* tail */
+  ctx.beginPath();
+  ctx.moveTo(ax - 9, ay - 13); ctx.lineTo(ax + 9, ay - 13); ctx.lineTo(ax, ay);
+  ctx.closePath();
+  ctx.fillStyle = PAL.bubble; ctx.fill();
+  ctx.strokeStyle = PAL.ink; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(ax - 9, ay - 13); ctx.lineTo(ax, ay); ctx.lineTo(ax + 9, ay - 13); ctx.stroke();
+  ctx.fillStyle = PAL.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = monoFont(21);
+  ctx.fillText(b.text, ax, ay - bh / 2 - 11);
+  ctx.restore();
+}
+
+/* ============================================================
+   creatures
+   ============================================================ */
+function creatureState(c, T) {
+  if (c.id === 'scout') return scoutState(T);
+  if (c.id === 'gus') return gusState(T);
+  return { x: c.x, y: c.y, flip: false, grounded: true };
+}
+
+function popTimeFor(c) {
+  if (c.id === 'villy') return 24.4;
+  const s = SEEDS.find((sd) => sd.c.id === c.id);
+  return s ? s.end : CB + 1;
+}
+
+function isAsleep(c, i, T) {
+  if (c.asleep) return true;
+  const sa = sleepAt(c, i);
+  return sa > 0 && T >= sa;
+}
+
+function drawCreature(c, i, T, lookAtX) {
+  const g = GRIDS[c.arch];
+  const bw0 = g.w * U, bh0 = g.h * U;
+  const st = creatureState(c, T);
+  const popAt = popTimeFor(c);
+  const scale0 = pop(T, popAt, 0.55);
+  if (scale0 <= 0.01) return;
+
+  /* presence: the worked-today genie stands tall (Sparky, from the work beat) */
+  const P = c.id === 'sparky' ? 1 + 0.32 * pop(T, 15.0, 0.6) : 1;
+
+  const flyingNow = !!c.fly && !st.grounded;
+  const asleep = isAsleep(c, i, T);
+  const hopOn = c.hopper && T >= CV + 0.6 && !asleep;
+  const hop = hopOn ? hopState(T, CV + 0.6) : null;
+
+  const breatheHz = asleep ? 1.1 : 2.0;
+  const sy = flyingNow ? 1 + Math.sin(T * 3.1 + c.ph * 5) * 0.02
+           : hop ? hop.sy
+           : 1 + Math.sin(T * breatheHz + c.ph * 5) * (asleep ? 0.02 : 0.028);
+  const sx = 1 - (sy - 1) * 0.7;
+
+  const hover = flyingNow ? 0 : 0;   // flyer bob already lives in its path
+  const dy = hop ? hop.dy : 0;
+  const px = st.x, py = st.y + dy + hover;
+
+  const blink = !asleep && (((T * 1000 + c.ph * 1700) % 3400) < 130);
+  let look = 0;
+  if (!asleep) {
+    if (lookAtX != null && Math.abs(lookAtX - px) > 40) look = lookAtX > px ? 1 : -1;
+    else { const lk = Math.sin(T * 0.62 + c.ph * 2.3); look = lk > 0.55 ? 1 : lk < -0.55 ? -1 : 0; }
+  }
+
+  /* aura: the work signal glows behind the tall genie */
+  if (c.id === 'sparky') {
+    const auraA = fade(T, 15.0, 15.6) * (1 - glide(T, 19.6, 20.6));
+    if (auraA > 0.01) {
+      const pulse = 0.6 + 0.4 * Math.sin(T * 2.4);
+      const ggl = ctx.createRadialGradient(px, py - bh0 * P * 0.45, 10, px, py - bh0 * P * 0.45, 150 * P);
+      ggl.addColorStop(0, `rgba(217,119,87,${0.34 * auraA * pulse})`);
+      ggl.addColorStop(1, 'rgba(217,119,87,0)');
+      ctx.fillStyle = ggl;
+      ctx.fillRect(px - 150 * P, py - bh0 * P - 90, 300 * P, bh0 * P + 130);
+    }
+  }
+
+  /* contact shadow */
+  if (!flyingNow) {
+    const shSq = hop ? clamp(1 + hop.dy / 130, 0.55, 1) : 1;
+    const sw = bw0 * 0.78 * P * shSq;
+    ctx.fillStyle = SHADOW;
+    ctx.beginPath(); ctx.ellipse(px, st.y + 2, sw / 2, 7, 0, 0, Math.PI * 2); ctx.fill();
+  }
+
+  ctx.save();
+  ctx.translate(px, py);
+  const s = scale0 * P;
+  ctx.scale((st.flip ? -1 : 1) * s * sx, s * sy);
+
+  /* wings behind the body */
+  if (c.fly) {
+    const flap = st.grounded ? -6 : Math.sin(T * 16 + c.ph * 3) * 26 - 8;
+    for (let side = 0; side < 2; side++) {
+      ctx.save();
+      const hingeX = side === 0 ? -bw0 / 2 : bw0 / 2;
+      ctx.translate(hingeX, -bh0 + 12 + 18);
+      ctx.rotate(((side === 0 ? -flap : flap)) * Math.PI / 180);
+      ctx.scale(side === 0 ? -1 : 1, 1);
+      drawGrid(WING, { X: c.lite }, U, 0, -18);
+      ctx.restore();
+    }
+  }
+
+  /* body grid, feet at origin */
+  const map = { X: c.hue, D: c.dark, W: INK.eyeWhite, K: INK.mouth, A: c.lite };
+  drawGrid(g.rows, map, U, -bw0 / 2, -bh0);
+
+  /* eyes */
+  for (const e of g.eyes) {
+    const ex = -bw0 / 2 + e.c * U, ey = -bh0 + e.r * U;
+    if (asleep || blink) {
+      ctx.fillStyle = c.hue; ctx.fillRect(ex - 1, ey - 1, 2 * U + 2, 2 * U + 2);
+      ctx.fillStyle = INK.pupil; ctx.fillRect(ex + 1, ey + U - 2, 2 * U - 2, 3.5);
+    } else {
+      ctx.fillStyle = INK.pupil;
+      ctx.fillRect(ex + U * 0.45 + look * 3.5, ey + U * 0.55, U * 0.95, U * 1.15);
+    }
+  }
+  ctx.restore();
+
+  /* umbrella (unscaled by squash — it is held, not worn) */
+  if (c.umbrella) drawUmbrella(T, c, px, py - dy, bh0 * P, i);
+
+  /* hop landing puffs */
+  if (hop && hop.land > 0 && hop.land <= T) drawPuff(T, hop.land, st.x, st.y);
+  /* flyer touch-down puffs */
+  if (st.landT) drawPuff(T, st.landT, st.x, st.y);
+
+  /* sleep glyphs — Deckard's drift left, away from his edge-clamped sign */
+  if (asleep && scale0 > 0.9) {
+    const showZ = c.asleep || ['nit', 'gus'].includes(c.id);
+    if (showZ) drawZzz(T, px, py - bh0 * P + 40, c.id === 'deckard' ? -1 : 1);
+  }
+}
+
+/* ============================================================
+   rain, tint, lights
+   ============================================================ */
+function drawRain(T) {
+  const rk = rainRamp(T);
+  if (rk <= 0.02) return;
+  ctx.strokeStyle = `rgba(120,142,180,${0.68 * rk})`;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  for (const d of RAIN) {
+    const y = ((T * d.sp + d.ph) % 1180) - 60;
+    const x = d.x - y * 0.06;
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - d.len * 0.06, y + d.len);
+  }
+  ctx.stroke();
+}
+
+function drawNightTint(T) {
+  const nk = nightK(T);
+  if (nk <= 0.01) return;
+  ctx.fillStyle = `rgba(20,25,48,${0.42 * nk})`;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawLights(T, houseList) {
+  const nk = nightK(T);
+  if (nk <= 0.02) return;
+  /* windows re-lit above the tint, with a soft halo */
+  for (const h of houseList) {
+    if (!h._win) continue;
+    const wx = h._win.x + 16, wy = h._win.y + 16;
+    const g = ctx.createRadialGradient(wx, wy, 4, wx, wy, 70);
+    g.addColorStop(0, `rgba(255,233,168,${0.5 * nk})`);
+    g.addColorStop(1, 'rgba(255,233,168,0)');
+    ctx.fillStyle = g; ctx.fillRect(wx - 70, wy - 70, 140, 140);
+    ctx.globalAlpha = nk;
+    ctx.fillStyle = '#FFE9A8'; ctx.fillRect(h._win.x, h._win.y, 32, 32);
+    ctx.globalAlpha = 1;
+  }
+  /* the new house's lamp comes on with the others */
+  if (T > 24.2) {
+    const wx = SITE.x + 100, wy = SITE.y + 68 - 46;
+    const g2 = ctx.createRadialGradient(wx, wy, 4, wx, wy, 60);
+    g2.addColorStop(0, `rgba(255,233,168,${0.5 * nk})`);
+    g2.addColorStop(1, 'rgba(255,233,168,0)');
+    ctx.fillStyle = g2; ctx.fillRect(wx - 60, wy - 60, 120, 120);
+    ctx.globalAlpha = nk;
+    ctx.fillStyle = '#FFE9A8'; ctx.fillRect(SITE.x + 86, SITE.y + 68 - 60, 28, 28);
+    ctx.globalAlpha = 1;
+  }
+  /* fireflies */
+  for (const f of FIREFLIES) {
+    const x = f.x + Math.sin(T * f.f1 + f.ph) * f.ax;
+    const y = f.y + Math.sin(T * f.f2 + f.ph * 2) * f.ay;
+    const a = nk * (0.35 + 0.65 * Math.pow(Math.sin(T * f.blink + f.ph), 2));
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#FFE9A8';
+    ctx.fillRect(x, y, 4, 4);
+    ctx.globalAlpha = a * 0.35;
+    ctx.fillRect(x - 3, y - 3, 10, 10);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ============================================================
+   terminal + seeds
+   ============================================================ */
+const charsAt = (T, t0, cps) => Math.max(0, Math.floor((T - t0) * cps));
+
+function drawTerminal(T) {
+  if (T > CB + 1.4) return;
+  const termScale = 1 + 1.4 * glide(T, CB, CB + 1.3);
+  const termOp = 1 - fade(T, CB + 0.15, CB + 1.05);
+  if (termOp <= 0.01) return;
+  const cx = TERM.x + TERM.w / 2, cy = TERM.y + TERM.h / 2;
+  ctx.save();
+  ctx.globalAlpha = termOp;
+  ctx.translate(cx, cy); ctx.scale(termScale, termScale); ctx.translate(-cx, -cy);
+
+  ctx.fillStyle = 'rgba(15,8,0,0.4)';
+  rrect(TERM.x + 8, TERM.y + 22, TERM.w, TERM.h, 14); ctx.fill();
+  ctx.fillStyle = '#201B17'; rrect(TERM.x, TERM.y, TERM.w, TERM.h, 14); ctx.fill();
+  ctx.strokeStyle = '#3A3129'; ctx.lineWidth = 3; rrect(TERM.x, TERM.y, TERM.w, TERM.h, 14); ctx.stroke();
+  ctx.fillStyle = '#2A241F';
+  rrect(TERM.x, TERM.y, TERM.w, 46, 11); ctx.fill();
+  ctx.fillRect(TERM.x, TERM.y + 24, TERM.w, 22);
+  const dots = ['#D97757', '#E2B45E', '#9DBA77'];
+  dots.forEach((d, i) => { ctx.fillStyle = d; ctx.beginPath(); ctx.arc(TERM.x + 26 + i * 22, TERM.y + 23, 6.5, 0, Math.PI * 2); ctx.fill(); });
+  ctx.fillStyle = '#8A7E70'; ctx.font = monoFont(16); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('~/.claude', TERM.x + 96, TERM.y + 24);
+
+  const cmd1 = 'ls skills/ projects/', cmd2 = 'npx skill-village';
+  const t1 = Math.min(charsAt(T, 0.25, 22), cmd1.length);
+  const t2 = Math.min(charsAt(T, 2.05, 22), cmd2.length);
+  const cursorOn = ((T * 2) % 1) < 0.55;
+  const lx = TERM.x + 46;
+  ctx.font = monoFont(23); ctx.textBaseline = 'alphabetic';
+
+  ctx.fillStyle = '#D97757'; ctx.fillText('$ ', lx, TERM.y + 92);
+  ctx.fillStyle = '#E8E0D0'; ctx.fillText(cmd1.slice(0, t1), lx + 28, TERM.y + 92);
+  if (T < 2.05 && cursorOn) ctx.fillRect(lx + 28 + ctx.measureText(cmd1.slice(0, t1)).width + 4, TERM.y + 72, 12, 24);
+
+  CAST.forEach((c, i) => {
+    if (T > 1.25 + i * 0.09) {
+      ctx.fillStyle = c.fly ? '#E8E0D0' : '#8FB8D9';
+      ctx.fillText(c.file, lx, TERM.y + 156 + i * 38);
+    }
+  });
+  if (T >= 2.05) {
+    ctx.fillStyle = '#D97757'; ctx.fillText('$ ', lx, TERM.y + 496);
+    ctx.fillStyle = '#E8E0D0'; ctx.fillText(cmd2.slice(0, t2), lx + 28, TERM.y + 496);
+    if (T < 3.05 && cursorOn) ctx.fillRect(lx + 28 + ctx.measureText(cmd2.slice(0, t2)).width + 4, TERM.y + 476, 12, 24);
+  }
+  if (T >= 3.05) { ctx.fillStyle = '#9DBA77'; ctx.fillText('waking the village…', lx, TERM.y + 540); }
+  ctx.restore();
+}
+
+function drawSeeds(T) {
+  if (T < CB || T > CV + 0.5) return;
+  const termScale = 1 + 1.4 * glide(T, CB, CB + 1.3);
+  const cx = TERM.x + TERM.w / 2, cy = TERM.y + TERM.h / 2;
+  ctx.font = monoFont(23); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  for (const sd of SEEDS) {
+    const p = glide(T, sd.start, sd.end);
+    if (p <= 0 || p >= 1) continue;
+    const ly = TERM.y + 156 + sd.i * 38 - 8;
+    const from = { x: cx + (TERM.x + 46 - cx) * termScale, y: cy + (ly - cy) * termScale };
+    const to = seedTarget(sd.c, sd.end);
+    const x = from.x + (to.x - from.x) * p;
+    const y = from.y + (to.y - from.y) * p - Math.sin(p * Math.PI) * 90;
+    const op = p < 0.78 ? 1 : 1 - (p - 0.78) / 0.22;
+    ctx.globalAlpha = op;
+    ctx.fillStyle = p < 0.4 ? '#8FB8D9' : '#5A4632';
+    ctx.save(); ctx.translate(x, y); ctx.scale(1 - p * 0.25, 1 - p * 0.25);
+    ctx.fillText(sd.c.file, 0, 0);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ============================================================
+   captions, work chip, title
+   ============================================================ */
+const CAPTIONS = [
+  { at: CB + 0.8, until: CV + 0.3, text: 'your skills folder…' },
+  { at: CV + 0.9, until: CV + 3.6, text: '…is alive.' },
+  { at: CW + 0.6, until: CM - 0.6, text: 'work a skill — its genie stands tall.' },
+  { at: CM + 0.8, until: CR - 0.6, text: 'ship a project — it moves in.' },
+  { at: CR + 0.8, until: 33.4,     text: 'real weather rolls through.' },
+  { at: CN + 1.0, until: CT - 1.0, text: 'at night it sleeps. see you tomorrow.' },
+];
+
+function drawCaptions(T) {
+  const nk = nightK(T);
+  for (const c of CAPTIONS) {
+    const a = fade(T, c.at, c.at + 0.45) * (1 - fade(T, c.until, c.until + 0.4));
+    if (a <= 0.01) continue;
+    ctx.globalAlpha = a;
+    ctx.font = monoFont(34);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    if (nk > 0.5) {
+      ctx.fillStyle = 'rgba(10,10,18,0.5)'; ctx.fillText(c.text, W / 2, 112 + 2);
+      ctx.fillStyle = PAL.cream; ctx.fillText(c.text, W / 2, 112);
+    } else {
+      ctx.fillStyle = 'rgba(255,248,232,0.85)'; ctx.fillText(c.text, W / 2, 112 + 2);
+      ctx.fillStyle = '#4A3826'; ctx.fillText(c.text, W / 2, 112);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawWorkChip(T) {
+  const inK = glide(T, 14.3, 14.9);
+  const outK = glide(T, 19.3, 19.9);
+  const k = inK * (1 - outK);
+  if (k <= 0.01) return;
+  const text = '● claude — editing skills/brainstorming/SKILL.md';
+  ctx.font = monoFont(19);
+  const tw = ctx.measureText(text).width;
+  const x = -420 + (56 + 420) * inK - 480 * outK;
+  const y = H - 96;
+  ctx.globalAlpha = k;
+  ctx.fillStyle = 'rgba(32,27,23,0.92)';
+  rrect(x, y, tw + 40, 48, 9); ctx.fill();
+  ctx.strokeStyle = '#3A3129'; ctx.lineWidth = 2; rrect(x, y, tw + 40, 48, 9); ctx.stroke();
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  const dotPulse = 0.55 + 0.45 * Math.sin(T * 5);
+  ctx.fillStyle = `rgba(217,119,87,${dotPulse})`;
+  ctx.fillText('●', x + 20, y + 25);
+  ctx.fillStyle = '#E8E0D0';
+  ctx.fillText(text.slice(1), x + 20 + ctx.measureText('●').width, y + 25);
+  ctx.globalAlpha = 1;
+}
+
+function drawTitle(T) {
+  const wm = pop(T, CT + 0.35, 0.7);
+  if (wm <= 0.01) return;
+  const subO = fade(T, CT + 1.1, CT + 1.6);
+  const urlO = fade(T, CT + 1.7, CT + 2.2);
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, wm * 2);
+  ctx.translate(0, (1 - wm) * -90);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.font = pixelFont(118, 700);
+  ctx.fillStyle = 'rgba(217,119,87,0.85)';
+  ctx.fillText('SKILL VILLAGE', W / 2 + 7, 320 + 7);
+  ctx.fillStyle = PAL.cream;
+  ctx.fillText('SKILL VILLAGE', W / 2, 320);
+  ctx.globalAlpha = subO;
+  ctx.font = monoFont(28);
+  ctx.fillStyle = '#D8CBB0';
+  ctx.fillText('your skills folder is alive', W / 2, 388);
+  ctx.globalAlpha = urlO;
+  ctx.font = monoFont(21);
+  ctx.fillStyle = '#A89878';
+  ctx.fillText('village.fenley.ai', W / 2, 434);
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+/* ============================================================
+   the frame
+   ============================================================ */
+function draw(T) {
+  ctx.setTransform(viewScale, 0, 0, viewScale, 0, 0);
+  ctx.fillStyle = '#171310';
+  ctx.fillRect(0, 0, W, H);
+
+  const villageOp = fade(T, CB, CB + 0.9);
+
+  if (villageOp > 0.01) {
+    ctx.globalAlpha = villageOp;
+
+    drawSky(T);
+    drawSunMoon(T);
+    drawClouds(T);
+    drawGround(T);
+
+    /* far scenery, staggered in during the bloom */
+    const sceneryO = (d) => fade(T, CB + 0.3 + d, CB + 0.9 + d);
+    const sets = [
+      { o: sceneryO(0),    fn: () => { drawHouse(HOUSES[0], T); drawTree(TREES[0][0], TREES[0][1]); } },
+      { o: sceneryO(0.18), fn: () => { drawHouse(HOUSES[1], T); drawTree(TREES[1][0], TREES[1][1]); } },
+      { o: sceneryO(0.36), fn: () => { drawTree(TREES[2][0], TREES[2][1]); drawTree(TREES[3][0], TREES[3][1]); } },
+    ];
+    for (const s of sets) {
+      if (s.o <= 0.01) continue;
+      ctx.save();
+      ctx.globalAlpha = villageOp * s.o;
+      ctx.translate(0, (1 - s.o) * 36);
+      s.fn();
+      ctx.restore();
+      ctx.globalAlpha = villageOp;
+    }
+
+    /* move-in staging behind the crowd */
+    drawConstruction(T);
+    drawSiteHouse(T);
+
+    /* who is speaking, for gaze */
+    const activeB = BUBBLES.find((b) => T >= b.at && T <= b.until + 0.3) || null;
+    const allCast = [...CAST, VILLY];
+    const speaker = activeB ? allCast.find((c) => c.id === activeB.who) : null;
+    const speakerPos = speaker ? creatureState(speaker, T) : null;
+
+    /* signs */
+    for (const sd of SEEDS) {
+      if (sd.c.fly) continue;
+      drawSign(sd.c, T, sd.end - 0.1, sd.c.x + signDx(sd.c), sd.c.y - 168);
+    }
+    /* Villy's nameplate stamps onto the new house — see drawSiteHouse */
+
+    /* creatures, painters-ordered by baseline */
+    const order = allCast
+      .map((c, i) => ({ c, i, y: creatureState(c, T).y }))
+      .sort((a, b) => a.y - b.y);
+    for (const o of order) {
+      let lookAtX = null;
+      if (speaker && speaker.id !== o.c.id && speakerPos && !o.c.fly) {
+        const myX = creatureState(o.c, T).x;
+        if (Math.abs(speakerPos.x - myX) < 560) lookAtX = speakerPos.x;
+      }
+      /* the whole village turns to watch the newcomer's house go up */
+      if (!lookAtX && T > 23.3 && T < 26.5 && !o.c.fly && o.c.id !== 'villy') lookAtX = SITE.x + 70;
+      drawCreature(o.c, o.i, T, lookAtX);
+    }
+
+    /* bloom landing puffs */
+    for (const sd of SEEDS) {
+      const to = seedTarget(sd.c, sd.end);
+      drawPuff(T, sd.end, to.x - (sd.c.fly ? 0 : signDx(sd.c)), sd.c.fly ? to.y + 40 : sd.c.y);
+    }
+    drawPuff(T, 15.0, CAST[0].x, CAST[0].y);       // Sparky's swell
+    drawPuff(T, 24.4, VILLY.x, VILLY.y);           // the newcomer lands
+    drawConfetti(T);
+
+    drawRain(T);
+    drawNightTint(T);
+    drawLights(T, [...HOUSES, {}]);
+    drawStars(T);
+
+    /* speech */
+    if (activeB && speaker && speakerPos) {
+      const bodyH = GRIDS[speaker.arch].h * U * (speaker.id === 'sparky' ? 1.32 : 1) + (speaker.fly && !speakerPos.grounded ? 30 : 0);
+      drawBubble(T, activeB, speakerPos.x, speakerPos.y, bodyH);
+    }
+
+    ctx.globalAlpha = 1;
+  }
+
+  drawTerminal(T);
+  drawSeeds(T);
+  drawCaptions(T);
+  drawWorkChip(T);
+  drawTitle(T);
+
+  /* loop crossfade */
+  const outA = glide(T, 46.9, 47.9);
+  const inA = 1 - glide(T, 0, 0.35);
+  const black = Math.max(outA, inA);
+  if (black > 0.01) {
+    ctx.fillStyle = `rgba(23,19,16,${black})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+/* ============================================================
+   playback
+   ============================================================ */
+let T = 0;
+let playing = false;
+let lastNow = null;
+let raf = null;
+
+const playBtn = document.getElementById('play');
+const fill = document.getElementById('fill');
+const sceneEl = document.getElementById('scene');
+const timeEl = document.getElementById('time');
+const track = document.getElementById('track');
+
+/* scene tick marks */
+for (const s of SCENES) {
+  if (s.at === 0) continue;
+  const t = document.createElement('div');
+  t.className = 'tick';
+  t.style.left = (s.at / DUR * 100) + '%';
+  track.appendChild(t);
+}
+
+const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+function syncBar() {
+  fill.style.width = (T / DUR * 100) + '%';
+  timeEl.textContent = `${fmt(T)} / ${fmt(DUR)}`;
+  let name = SCENES[0].name;
+  for (const s of SCENES) if (T >= s.at) name = s.name;
+  sceneEl.textContent = name;
+  playBtn.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
+}
+
+function frame(now) {
+  raf = null;
+  if (lastNow !== null) {
+    T += Math.min((now - lastNow) / 1000, 0.1);
+    if (T >= DUR) T -= DUR;
+  }
+  lastNow = now;
+  draw(T);
+  syncBar();
+  if (playing) raf = requestAnimationFrame(frame);
+}
+
+function play() {
+  if (playing) return;
+  playing = true; lastNow = null;
+  raf = requestAnimationFrame(frame);
+  syncBar();
+}
+function pause() {
+  playing = false;
+  if (raf) { cancelAnimationFrame(raf); raf = null; }
+  lastNow = null;
+  syncBar();
+}
+function seek(t) {
+  T = clamp(t, 0, DUR - 0.001);
+  lastNow = null;
+  draw(T); syncBar();
+}
+
+playBtn.addEventListener('click', () => (playing ? pause() : play()));
+canvas.addEventListener('click', () => (playing ? pause() : play()));
+track.addEventListener('click', (e) => {
+  const r = track.getBoundingClientRect();
+  seek((e.clientX - r.left) / r.width * DUR);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); }
+  if (e.code === 'ArrowRight') seek((T + 2) % DUR);
+  if (e.code === 'ArrowLeft') seek((T - 2 + DUR) % DUR);
+});
+
+/* handy for QA */
+window.trailer = { seek, play, pause, get t() { return T; } };
+
+/* start once the faces are in — 2.5s cap so a slow font never blanks the show */
+const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const fontsReady = Promise.race([
+  Promise.all([
+    document.fonts.load('700 118px "Pixelify Sans"'),
+    document.fonts.load('400 24px "Pixelify Sans"'),
+    document.fonts.load('500 23px "IBM Plex Mono"'),
+    document.fonts.load('600 15px "IBM Plex Mono"'),
+  ]),
+  new Promise((res) => setTimeout(res, 2500)),
+]);
+fontsReady.then(() => {
+  if (reduced) { seek(10.5); }   // a still of the living village; play is one tap away
+  else play();
+});
+draw(0); syncBar();
+</script>
