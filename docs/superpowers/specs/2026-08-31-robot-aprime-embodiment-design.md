@@ -1,7 +1,7 @@
 # Robot Embodiment A′ — Design (supersedes the R-track gateway architecture)
 
 **Date:** 2026-08-31
-**Status:** draft for user review (Sections 1–2 presented in chat; 1 approved, 2 pending verdict; 3–5 authored here from approved requirements)
+**Status:** approved by user 2026-08-31 ("approved continue" — covers Sections 1–5, the corrected v1 latency estimate, and the HAL ceiling acceptance in §6)
 **Supersedes:** `2026-08-23-robot-embodiment-design.md` §2 (architecture), §9 (latency), §10 (stages). **Strengthens** §3 (privacy). §1 (concept), §4 (robot-house), §5's resident semantics, §7 (state) and the merged R1/R2 web code all stand.
 **Why superseded:** two new requirements from the 2026-08-31 brainstorm — (a) **no Chinese-authored code in the data path** (hard rule), which eliminates the xiaozhi firmware, the xiaozhi-esp32-server gateway, and FunASR/SenseVoice; (b) the creature's own pixel face animating on the robot's screen is **core**, not R3-stretch. Latency moves from "accepted 3–5 s" to a **~1 s first-word target**, staged.
 
@@ -61,7 +61,7 @@ Levers, in order: (1) `--output-format stream-json --include-partial-messages` �
 - **Camera code excluded from the build** (`camera_service`, `/snapshot`). Windows Firewall: inbound 8262/PCM ports from the robot's IP, private profile only.
 - **Test fixtures use scripted phrases only** — never real conversations. OpenAI key lives in local config, never the repo.
 - Component origins on record: whisper.cpp (MIT), WebRTC VAD (Google/BSD), Piper (MIT/US), openWakeWord (Apache/US), OpenAI TTS (US, reply text only), Anthropic (US, conversation text), vendored firmware (MIT, mixed Japanese/Chinese-commented source, **line-audited before first flash** — see `docs/robot/AUDIT.md`).
-- **OPEN — awaiting the user's call (audit finding, 2026-08-31):** the CoreS3's mic/speaker/display HALs and Wi-Fi stack are Chinese-authored open source (M5Stack/Espressif) — irreducible on this hardware, like the silicon itself. They are pinned, widely vetted, audited to initiate zero egress, and containment-locked regardless. If accepted, the no-Chinese-code rule binds the application layer and egress (both fully hold), with the HAL layer covered by audit + containment. The only alternative is different hardware, which this product category does not offer.
+- **Accepted ceiling (user decision, 2026-08-31):** the CoreS3's mic/speaker/display HALs and Wi-Fi stack are Chinese-authored open source (M5Stack/Espressif) — irreducible on this hardware, like the silicon itself. They are pinned, widely vetted, audited to initiate zero egress, and containment-locked regardless. The no-Chinese-code rule binds the application layer and egress (both fully hold); the HAL layer is covered by audit + containment, per the user's acceptance.
 
 ## 7. Never-mute and error handling
 
