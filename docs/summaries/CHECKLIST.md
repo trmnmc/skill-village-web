@@ -21,8 +21,10 @@ _Updated: 2026-08-31 — design session, no branch_
 - [x] Requirements + hard rule locked (persona-speaker, creature face, ~1 s, touch ×4, no Chinese-authored code in data path)
 - [x] Approach A′ approved: vendored migratorywhale/stackchan-mcp firmware + voice module in skill-village-server (WebRTC VAD, whisper.cpp, OpenAI TTS/Piper); xiaozhi stack dead
 - [x] Design Section 1 (architecture) approved
-- [ ] Section 2 (loop + latency) — presented, awaiting verdict (in progress)
-- [ ] Sections 3–5 → spec `docs/superpowers/specs/2026-08-31-robot-aprime-embodiment-design.md` → writing-plans (fresh branch off main)
-- [ ] Firmware audit before any flash (strip cloud bridge, camera, recording_store)
+- [x] Sections 3–5 authored + spec WRITTEN: `docs/superpowers/specs/2026-08-31-robot-aprime-embodiment-design.md` (self-reviewed; v1 latency honest-corrected to ~2.5–4 s)
+- [x] Firmware pre-audit (clone in scratchpad): ZERO external hosts in firmware; cloud calls live in discarded Python side; face seam = `gif.openFLASH(ptr,len)` + SPIFFS mounted + 8MB PSRAM (runtime packs feasible); on-device mic endpointing exists; UDP-audio token exists; HTTP API has `/audio/session`+`/play/pcm` chunked push, `/face`, `/snapshot` (strip); source comments Japanese
+- [ ] USER: Section 2 verdict (loop + latency) — presented in chat, spec §4–5 carries it
+- [ ] USER: review the spec → then writing-plans (fresh branch off main; V1 fully, V2/V3 sketched)
+- [ ] Complete line-by-line firmware audit before any flash → `docs/robot/AUDIT.md` (pre-audit done, full read pending)
 - [ ] User homework pre-arrival (2026-09-01): router per-device internet block; robot Wi-Fi choice
 - [ ] Day one: unbox → sanity WITHOUT Wi-Fi on factory firmware → flash → router block → echo test → traffic capture
