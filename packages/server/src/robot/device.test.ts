@@ -41,6 +41,10 @@ describe('createDeviceClient', () => {
     await dev.playPcm(chunks());
     const pcmCalls = seen.filter((s) => s.startsWith('POST /play/pcm'));
     expect(pcmCalls[0]).toContain('seq=0'); expect(pcmCalls.at(-1)).toContain('final=1');
+    // The session id is minted client-side: POST /audio/session starts the
+    // firmware's UDP transport and would wedge the HTTP chunk path as busy.
+    expect(seen.some((s) => s.startsWith('POST /audio/session'))).toBe(false);
+    expect(pcmCalls[0]).toMatch(/session=pc-/);
   });
 
   it('rejects on 401', async () => {

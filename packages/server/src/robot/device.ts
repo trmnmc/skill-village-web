@@ -25,6 +25,8 @@ export interface RobotDevice {
 
 const OFFLINE: DeviceStatus = { reachable: false, micArmed: false, recordingReady: false, playing: false };
 
+let nextSessionSerial = 0;
+
 export function createDeviceClient(opts: { baseUrl: string; token: string; fetchImpl?: typeof fetch }): RobotDevice {
   const base = opts.baseUrl.replace(/\/+$/, '');
   const doFetch = opts.fetchImpl ?? fetch;
@@ -56,7 +58,9 @@ export function createDeviceClient(opts: { baseUrl: string; token: string; fetch
         return {
           reachable: true,
           micArmed: raw.mic_armed === true,
-          recordingReady: raw.recording_ready === true,
+          // Hardened firmware sends recording_ready; the stock field is
+          // `ready` — accept either so a half-upgraded robot still reads.
+          recordingReady: raw.recording_ready === true || raw.ready === true,
           playing: raw.playing === true,
         };
       } catch {
@@ -73,8 +77,11 @@ export function createDeviceClient(opts: { baseUrl: string; token: string; fetch
     },
 
     async playPcm(chunks) {
-      const res = await requestOk('POST', '/audio/session');
-      const { session } = (await res.json()) as { session: string };
+      // The session id is minted HERE, not via POST /audio/session — that
+      // endpoint starts a UDP transport session on the firmware, which makes
+      // the HTTP chunk path report itself busy. /play/pcm only needs a
+      // stable string to sequence chunks against.
+      const session = `pc-${Date.now().toString(36)}-${nextSessionSerial++}`;
       const post = (seq: number, chunk: Buffer, final: boolean) =>
         requestOk(
           'POST',
@@ -97,7 +104,8 @@ export function createDeviceClient(opts: { baseUrl: string; token: string; fetch
     },
 
     async setFace(name) {
-      await requestOk('POST', '/face', JSON.stringify({ name }), 'application/json');
+      // The firmware's JSON key is `face` (calm/thinking/happy/sleepy/...).
+      await requestOk('POST', '/face', JSON.stringify({ face: name }), 'application/json');
     },
 
     async arm() {
