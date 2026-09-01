@@ -7,18 +7,13 @@ import { remaining, type LlmConfig } from '../llm/ledger.js';
 import { readEvents } from '../state/events.js';
 import type { Village } from '../village.js';
 import { parseChatRequest, lastUserMessage, chatCompletionJson, sseFrames } from '../robot/openai.js';
+import { EMPTY_HOUSE_LINE, MOVED_AWAY_LINE } from '../robot/lines.js';
 
 const ALL_CARE_VERBS: CareVerb[] = ['pet', 'play', 'chat', 'train'];
 
 function isCareVerb(value: unknown): value is CareVerb {
   return typeof value === 'string' && (ALL_CARE_VERBS as string[]).includes(value);
 }
-
-/** Spec §5: the house is never mute, even with nobody home. */
-const EMPTY_HOUSE_LINE =
-  'Nobody lives in me yet. Open the village and drag a villager onto my little house, and I will be them.';
-const MOVED_AWAY_LINE =
-  'The villager who lived in me seems to have moved away. Drag someone new onto my house in the village.';
 
 export interface AppOptions {
   /**
