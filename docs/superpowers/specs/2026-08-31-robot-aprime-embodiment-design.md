@@ -60,7 +60,8 @@ Levers, in order: (1) `--output-format stream-json --include-partial-messages` �
 - **Mic state is always visible** on the face. **No audio persists anywhere** (device recording path is RAM-only — re-verify in audit; PC transcribes in memory and drops the PCM).
 - **Camera code excluded from the build** (`camera_service`, `/snapshot`). Windows Firewall: inbound 8262/PCM ports from the robot's IP, private profile only.
 - **Test fixtures use scripted phrases only** — never real conversations. OpenAI key lives in local config, never the repo.
-- Component origins on record: whisper.cpp (MIT), WebRTC VAD (Google/BSD), Piper (MIT/US), openWakeWord (Apache/US), OpenAI TTS (US, reply text only), Anthropic (US, conversation text), vendored firmware (MIT, Japanese-commented source, **line-audited before first flash**).
+- Component origins on record: whisper.cpp (MIT), WebRTC VAD (Google/BSD), Piper (MIT/US), openWakeWord (Apache/US), OpenAI TTS (US, reply text only), Anthropic (US, conversation text), vendored firmware (MIT, mixed Japanese/Chinese-commented source, **line-audited before first flash** — see `docs/robot/AUDIT.md`).
+- **OPEN — awaiting the user's call (audit finding, 2026-08-31):** the CoreS3's mic/speaker/display HALs and Wi-Fi stack are Chinese-authored open source (M5Stack/Espressif) — irreducible on this hardware, like the silicon itself. They are pinned, widely vetted, audited to initiate zero egress, and containment-locked regardless. If accepted, the no-Chinese-code rule binds the application layer and egress (both fully hold), with the HAL layer covered by audit + containment. The only alternative is different hardware, which this product category does not offer.
 
 ## 7. Never-mute and error handling
 

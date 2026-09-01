@@ -25,6 +25,8 @@ _Updated: 2026-08-31 — design session, no branch_
 - [x] Firmware pre-audit (clone in scratchpad): ZERO external hosts in firmware; cloud calls live in discarded Python side; face seam = `gif.openFLASH(ptr,len)` + SPIFFS mounted + 8MB PSRAM (runtime packs feasible); on-device mic endpointing exists; UDP-audio token exists; HTTP API has `/audio/session`+`/play/pcm` chunked push, `/face`, `/snapshot` (strip); source comments Japanese
 - [ ] USER: Section 2 verdict (loop + latency) — presented in chat, spec §4–5 carries it
 - [ ] USER: review the spec → then writing-plans (fresh branch off main; V1 fully, V2/V3 sketched)
-- [ ] Complete line-by-line firmware audit before any flash → `docs/robot/AUDIT.md` (pre-audit done, full read pending)
+- [x] Full firmware audit DONE → `docs/robot/AUDIT.md` @ upstream `e8258a85`: no backdoors/egress/persistence; verdict SAFE-AFTER-STRIPPING; 10 mandatory fork changes listed (auth everywhere, mic disarmed-by-default, strip /play+camera+SCServo, owner-scope M5GFX, face-buffer handshake, zero buffers)
+- [ ] USER: the HAL ceiling call (spec §6 OPEN item) — M5Stack/Espressif HALs are Chinese-authored and irreducible on CoreS3; accept audit+containment, or different hardware (none exists in category)
+- [ ] Build tooling install (tomorrow): `pip install platformio` (Python 3.12 + Node 24 present; whisper.cpp prebuilt binaries avoid cmake)
 - [ ] User homework pre-arrival (2026-09-01): router per-device internet block; robot Wi-Fi choice
 - [ ] Day one: unbox → sanity WITHOUT Wi-Fi on factory firmware → flash → router block → echo test → traffic capture
