@@ -8,7 +8,53 @@ import { DEFAULT_PORT, resolvePaths } from './config/paths.js';
 import { createWatcher } from './bridge/watcher.js';
 import { clearInstance, isVillageServing, readInstance, writeInstance } from './instance.js';
 import { createLlmService } from './llm/service.js';
-import { createVillage } from './village.js';
+import { createVillage, type Village } from './village.js';
+import { createDeviceClient } from './robot/device.js';
+import { createWhisperTranscriber } from './robot/asr.js';
+import { createOpenAiSpeaker, createPiperSpeaker, withFallback, type Speaker } from './robot/tts.js';
+import { startRobotLoop, type RobotLoopHandle } from './robot/loop.js';
+
+/**
+ * The robot voice loop, when the env asks for one. Pull-model: this process
+ * calls the robot; the robot never calls us, so the server can stay
+ * loopback-bound. No token, no loop — an unauthenticated robot is a bug.
+ */
+function maybeStartRobotLoop(village: Village): RobotLoopHandle | null {
+  const host = process.env.VILLAGE_ROBOT_HOST;
+  if (!host) return null;
+  const token = process.env.VILLAGE_ROBOT_TOKEN;
+  if (!token) {
+    console.error('VILLAGE_ROBOT_HOST is set but VILLAGE_ROBOT_TOKEN is not; refusing to talk to the robot unauthenticated.');
+    return null;
+  }
+
+  let speaker: Speaker | null = null;
+  const openai = process.env.OPENAI_API_KEY
+    ? createOpenAiSpeaker({ apiKey: process.env.OPENAI_API_KEY })
+    : null;
+  const piper = process.env.VILLAGE_PIPER_EXE && process.env.VILLAGE_PIPER_MODEL
+    ? createPiperSpeaker({ exePath: process.env.VILLAGE_PIPER_EXE, modelPath: process.env.VILLAGE_PIPER_MODEL })
+    : null;
+  if (openai && piper) {
+    speaker = withFallback(openai, piper, (err) => console.error('OpenAI TTS failed; Piper took over:', err));
+  } else {
+    speaker = openai ?? piper;
+  }
+  if (!speaker) {
+    console.error('Robot loop needs a voice: set OPENAI_API_KEY and/or VILLAGE_PIPER_EXE + VILLAGE_PIPER_MODEL.');
+    return null;
+  }
+
+  const loop = startRobotLoop({
+    device: createDeviceClient({ baseUrl: `http://${host}`, token }),
+    asr: createWhisperTranscriber({ serverUrl: process.env.VILLAGE_WHISPER_URL ?? 'http://127.0.0.1:8178' }),
+    tts: speaker,
+    village,
+    log: (line) => console.error(line),
+  });
+  console.log(`Robot voice loop is up, talking to http://${host} (${openai ? 'OpenAI TTS' : 'Piper'}${openai && piper ? ' + Piper fallback' : ''}).`);
+  return loop;
+}
 
 /** Faster while someone is watching, slower when the village is on its own. */
 const TICK_MS_WITH_CLIENT = 2_000;
@@ -61,15 +107,18 @@ async function main(): Promise<void> {
   });
   if (village.startupNote) console.log(village.startupNote);
 
+  const robotLoop = maybeStartRobotLoop(village);
+
   // The LLM guard stays off (0) for local play; the droplet's systemd unit
   // arms it, because deployed /v1 spends real API budget for anyone.
   const app = await createApp(village, {
     llmRatePerMinute: Number(process.env.VILLAGE_LLM_RPM ?? 0),
     llmBurst: Number(process.env.VILLAGE_LLM_BURST ?? 3),
+    ...(robotLoop ? { robotLoopSnapshot: () => robotLoop.snapshot() } : {}),
   });
-  // 127.0.0.1 unless the player opts the server onto the LAN. The Docker-run
-  // voice gateway reaches the host via host.docker.internal, which needs a
-  // non-loopback bind on some setups; docs/robot/SETUP.md says when to set it.
+  // 127.0.0.1 unless the player opts the server onto the LAN. The robot
+  // loop is pull-model (this process calls the robot), so it needs no
+  // non-loopback bind; VILLAGE_HOST remains for other setups.
   const host = process.env.VILLAGE_HOST || '127.0.0.1';
   await app.listen({ port, host });
   await writeInstance(paths, { pid: process.pid, port });
@@ -119,6 +168,7 @@ async function main(): Promise<void> {
   console.log(`Skill Village is awake at http://localhost:${port} with ${count} villagers.`);
 
   const shutdown = async () => {
+    robotLoop?.stop();
     clearInterval(timer);
     clearInterval(scanTimer);
     await watcher?.close();

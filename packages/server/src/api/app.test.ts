@@ -19,11 +19,11 @@ afterEach(async () => {
   sandbox = null;
 });
 
-async function boot(skills: string[] = []) {
+async function boot(skills: string[] = [], opts?: Parameters<typeof createApp>[1]) {
   sandbox = await makeSandbox();
   for (const name of skills) await sandbox.writeSkill(name, skillFixture(name));
   village = await createVillage({ paths: sandbox.paths, now: () => 1_000 });
-  return createApp(village);
+  return createApp(village, opts);
 }
 
 /** Boots a village with a real (fake-CLI-backed) llm service, already probed. */
@@ -362,7 +362,7 @@ describe('the robot api', () => {
   it('round-trips the resident', async () => {
     const app = await boot(['code-review']);
     const empty = await app.inject({ method: 'GET', url: '/api/robot' });
-    expect(empty.json()).toEqual({ residentId: null, resident: null, lastTurnAt: null });
+    expect(empty.json()).toEqual({ residentId: null, resident: null, lastTurnAt: null, deviceReachable: false });
 
     const set = await app.inject({
       method: 'PUT', url: '/api/robot/resident', payload: { creatureId: 'skill:code-review' },
@@ -373,6 +373,14 @@ describe('the robot api', () => {
 
     const evict = await app.inject({ method: 'PUT', url: '/api/robot/resident', payload: { creatureId: null } });
     expect(evict.json().residentId).toBe(null);
+  });
+
+  it('reports the voice loop\'s device reachability when a loop is wired in', async () => {
+    const app = await boot([], {
+      robotLoopSnapshot: () => ({ deviceReachable: true, lastTurnAt: 42 }),
+    });
+    const res = await app.inject({ method: 'GET', url: '/api/robot' });
+    expect(res.json().deviceReachable).toBe(true);
   });
 
   it('404s an unknown creature and 400s a malformed body', async () => {

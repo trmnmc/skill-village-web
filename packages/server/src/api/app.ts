@@ -27,6 +27,12 @@ export interface AppOptions {
   llmBurst?: number;
   /** Clock for the refill maths; tests pin it. */
   now?: () => number;
+  /**
+   * Live view into the robot voice loop, when main.ts started one. The
+   * house's presence is only as honest as this: absent means no loop is
+   * running and the robot reads as unreachable.
+   */
+  robotLoopSnapshot?: () => { deviceReachable: boolean; lastTurnAt: number | null };
 }
 
 /**
@@ -240,6 +246,7 @@ export async function createApp(village: Village, opts: AppOptions = {}): Promis
       residentId,
       resident: residentId ? s.creatures[residentId] ?? null : null,
       lastTurnAt: village.robotActivityAt(),
+      deviceReachable: opts.robotLoopSnapshot?.().deviceReachable ?? false,
     };
   };
 
