@@ -1,6 +1,6 @@
 # Checklist
 
-_Updated: 2026-08-31 — main_
+_Updated: 2026-09-02 — claude/plan-ceo-review-5a272a (merged, not overwritten: the village, robot and foundation sections are all live; see pause-2026-09-02-foundation-sprint-review.md)_
 
 - [x] Isolation wiring committed + pushed (`a9c4e69`)
 - [x] M5 visual verdict given (2026-08-30/31)
