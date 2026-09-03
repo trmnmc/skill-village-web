@@ -2,78 +2,91 @@
 
 **Your skills folder… is alive.**
 
-A Tamagotchi-style game where every [Claude Code](https://claude.com/claude-code) skill and agent on
-your machine is a living pixel creature in a shared village. Caring for creatures is fun on its own,
-but the game is also a real builder: playing it yields genuine, installable Claude Code skills
-(`SKILL.md` folders) and agents (frontmatter `.md` files).
+Skill Village is a Tamagotchi-style game for [Claude Code](https://claude.com/claude-code).
+Every skill, agent, and project on your machine becomes a pixel creature in a shared village.
+You can watch them, talk to them, arrange them by hand, and put one inside a small robot that
+speaks out loud.
 
-![The village, from the animation trailer](reference/animation-trailer/preview.webp)
+**Live demo:** [village.fenley.ai](https://village.fenley.ai) — a public copy of the author's
+village. No login, nothing to install. It runs a frozen snapshot, so it can lag behind `main`.
 
-## What works today (M3)
+![The village](reference/animation-trailer/preview.webp)
 
-Run it and your real skills and agents appear as villagers — one unique creature per file, generated
-deterministically from its name. They breathe, blink, look around, and fly, each on its own phase
-offset so the village never moves in lockstep. Drag to pan across four zones: the Hatchery, Homes,
-the Adoption Center, and the Notice Board.
+## What you get
 
-- **Creatures are pixel grids, not image assets.** Six hand-authored bodies × five crowns, with
-  flight undersides for agents and three dangling postures for the stilt-legged `lanky` body. No
-  downloads, no licensing, no art pipeline — a creature is ~10 strings and two hex colours.
-- **Deterministic DNA.** `SHA-256(kind + name)` seeds body, crown, and palette. The same skill looks
-  the same on any machine, and the village has a stable geography across reloads.
-- **Read-only where it matters.** The server reads `~/.claude` and never writes to it; all game
-  state lives in `~/.skill-village`. Your real config cannot be corrupted by a game.
-
-## The sky
-
-The ambient sky animates across six palettes: a Kelvin-honest progression from dawn through dusk,
-with weekdays woven from Meadow Blue and Golden Hour, rotating weekend palettes, and seeded surprise
-days. Palettes blend continuously, and the UI dims after sunset. Four weather modes control the sky:
-**Off** (clear skies, the default — the clock still drives time and palette), **Pick** (choose a
-weather kind that stays), **Journey** (a ~45-minute curated tour of palette·time·weather), or
-**Real** (opt-in geolocation, live local weather + true sunrise/sunset via Open-Meteo). The gear menu
-also pins the two things the schedule would otherwise pick for you: the **palette** (auto, or any of
-the six by name) and the **time of day** (auto, or one of seven presets) — so you can hold the
-village in Meadow Blue at noon on a day the calendar wanted to paint Marigold. Override any sky with the dev
-cheat-sheet: `?at=HH:MM&day=sat&weather=storm&palette=1e` sets time, day of week, weather mode, and
-palette directly. The moon is a real lunar phase, calculated from
-[`github.com/trmnmc/moon`](https://github.com/trmnmc/moon) — a port of Jean Meeus's *Astronomical Algorithms*.
+- **Your files become villagers.** The game reads `~/.claude` and turns every skill and agent
+  into a creature. Your projects move in too: each folder under `~/.claude/projects` is a villager
+  whose health follows how recently you worked on it, and the skills and agents it uses appear
+  beside it.
+- **Every creature is unique and stable.** Its body, crown, and colours come from a hash of its
+  name. The same skill looks the same on every machine and in every reload. Creatures are pixel
+  grids, not image files, so there is no art to download or license.
+- **They talk.** Click a villager to chat. Replies come from your own `claude` login on this
+  machine, so there are no API keys. A ledger caps what a session can spend.
+- **They make sounds.** Voices, footsteps, birds, wind, and music are all synthesized live in the
+  browser. Chat babble runs in sync with the spoken reply. There are no audio files.
+- **The sky keeps real time.** Six palettes blend from dawn to dusk. Weather is off, picked,
+  on a 45-minute journey, or real (your local forecast and sunrise via Open-Meteo). The moon shows
+  the true lunar phase.
+- **You arrange the village.** Drag a villager anywhere and it stays. The arrangement is saved
+  on the server, so it survives reloads and shows on every device.
+- **A robot house.** Drag a villager into the house and it speaks through an M5StackChan robot on
+  your desk. The `robot-v1` branch adds the audited firmware and a local voice loop (speech to
+  text on your PC, text to speech in the cloud).
+- **Safe by design.** The server only reads `~/.claude`. It never writes there. All game state
+  lives in `~/.skill-village`.
 
 ## Run it
 
-Requires Node 20+.
+Requires Node 20+. For chat, the `claude` CLI must be on your PATH.
 
 ```bash
 npm install
 npm run dev
 ```
 
-Then open http://localhost:5173. The server finds your skills in `~/.claude/skills` and
-`~/.claude/agents`; if you have none, the village is an empty field waiting for M5's adoption
-center.
+Open http://localhost:5173. If you have no skills or agents yet, the village is an empty field.
 
-## How it's built
+Handy URL parameters for testing the sky: `?at=HH:MM&day=sat&weather=storm&palette=1e` sets
+the time, day of week, weather mode, and palette directly.
+
+## How it is built
 
 | Package | Role |
 |---|---|
-| `packages/core` | The shared brain: types, DNA→appearance, sim rules, file-format parsers and validators. Pure functions, no I/O. |
-| `packages/server` | One process, game server and daemon: state store, file bridge, simulation tick, REST + WebSocket API. |
-| `packages/web` | The KAPLAY browser game: sprite compositor, motion system, the village scene. Holds no game truth. |
+| `packages/core` | The shared brain: types, name to appearance, simulation rules, file parsers. Pure functions, no I/O. |
+| `packages/server` | One process: state store, file bridge, simulation tick, chat runner, robot shim, REST and WebSocket API. |
+| `packages/web` | The [KAPLAY](https://github.com/kaplayjs/kaplay) browser game: sprite compositor, motion, sky, sound, the village scene. Holds no game truth. |
 
-The architecture rule throughout: **everything that decides is a pure function; only the last inch
-draws.** Grid composition, motion math, behaviour flags, layout, and protocol parsing are all
-DOM-free and tested (449 tests); the KAPLAY glue is deliberately thin.
+The rule throughout: **everything that decides is a pure function; only the last inch draws.**
+Grid composition, motion math, layout, sound direction, and protocol parsing are DOM-free and
+covered by the test suite (`npm test`). The KAPLAY glue is thin on purpose.
 
-## Roadmap
+## Where things stand
 
-M4 gives creatures their voices (chat via your existing Claude Code login — no API keys). M5 seeds
-the Adoption Center from open-source skill collections. M6–M7 add hatching new skills through an
-in-character interview, breeding, and training. M8–M9 wire live reactions to your real coding
-sessions and autonomous village life. The full design is in
-[`docs/superpowers/specs/`](docs/superpowers/specs/), and the complete execution record — including
-every review finding and ruling — in [`docs/superpowers/records/`](docs/superpowers/records/).
+Shipped on `main`: the village and its creatures, chat, the sky and weather, the sound engine,
+pinning, projects as villagers, the robot house, and a public read-only spectator build.
+
+In flight: the robot voice loop (`robot-v1` branch, waiting on hardware bring-up) and project
+care (feeding, releasing, and re-adopting projects).
+
+Next: hatching new skills through an in-character interview, adopting from open-source catalogs,
+and training a skill by editing its file with your approval.
+
+## Deploy
+
+- [docs/village-deploy.md](docs/village-deploy.md) — the interactive game on a droplet.
+- [docs/showroom-deploy.md](docs/showroom-deploy.md) — the read-only spectator build.
+
+## Design history
+
+The design and execution record lives under [`docs/`](docs/). Start with the
+[roadmap](docs/superpowers/specs/2026-08-22-roadmap-reconciliation-design.md). The rest is
+reference material: specs, task plans, review records, and session handoffs. You do not need
+any of it to run or change the game.
 
 ## Credits
 
 Built with [Claude Code](https://claude.com/claude-code), rendered with
-[KAPLAY](https://github.com/kaplayjs/kaplay) (MIT). Type is Pixelify Sans and IBM Plex Mono.
+[KAPLAY](https://github.com/kaplayjs/kaplay) (MIT). Moon phases from
+[`trmnmc/moon`](https://github.com/trmnmc/moon). Type is Pixelify Sans and IBM Plex Mono.
