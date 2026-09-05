@@ -1,0 +1,425 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Skill Village — the lane (Section 1)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; background: #111; }
+  canvas { display: block; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+<canvas id="c" width="2560" height="720"></canvas>
+<script>
+// ---------------------------------------------------------------------------
+// Section 1 of the village redesign: the lane and the house.
+//   ?t=day | night      time of day (night shows lit windows, lanterns, moon)
+// Structure B2 as approved: project = house, resident at the door, hand-pixeled,
+// all helpers fly, one lane in stable order, the Green at the end.
+// Palette 1a Meadow Blue — verbatim from packages/web/src/theme/palettes.ts
+// ---------------------------------------------------------------------------
+const PAL = {
+  ink: '#3A2E22', cream: '#F2E5C4', bubble: '#FFFDF4', wood: '#8A6B4A', accent: '#D97757',
+  foliage: '#7FA85F', foliageLite: '#8FB86B', ground: '#A8C68D', groundDark: '#8FB075',
+  houseA: ['#F2E5C4', '#D97757'], houseB: ['#E8D3EE', '#B39DDB'],
+  skies: { day: ['#C4E4F4', '#CFE9F5', '#DFF0EC'], night: ['#1C2130', '#232A3C', '#2C3446'] },
+};
+const INK = { eyeWhite: '#FFF9EE', pupil: '#33241C', mouth: '#33241C' };
+const HUES = { coral: '#e58c68', lilac: '#b79fd6', sage: '#9dba77', mint: '#7fbf8a', gold: '#e2b45e', rose: '#e0a3b2', sky: '#7fb6d9', teal: '#6fbcad' };
+
+function mix(a, b, k) {
+  const hx = c => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+  const h2 = v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+  const A = hx(a), B = hx(b);
+  return '#' + h2(A[0] + (B[0] - A[0]) * k) + h2(A[1] + (B[1] - A[1]) * k) + h2(A[2] + (B[2] - A[2]) * k);
+}
+function hexToHsl(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2;
+  if (max === min) return [0, 0, l * 100];
+  const d = max - min, s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h; if (max === r) h = (g - b) / d + (g < b ? 6 : 0); else if (max === g) h = (b - r) / d + 2; else h = (r - g) / d + 4;
+  return [(h / 6) * 360, s * 100, l * 100];
+}
+function hslToHex(h, s, l) {
+  h = (((h % 360) + 360) % 360) / 360; s = Math.min(100, Math.max(0, s)) / 100; l = Math.min(100, Math.max(0, l)) / 100;
+  let r, g, b;
+  if (s === 0) r = g = b = l; else {
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+    const f = t => { if (t < 0) t += 1; if (t > 1) t -= 1; if (t < 1 / 6) return p + (q - p) * 6 * t; if (t < 1 / 2) return q; if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6; return p; };
+    r = f(h + 1 / 3); g = f(h); b = f(h - 1 / 3);
+  }
+  const x = v => Math.round(v * 255).toString(16).padStart(2, '0');
+  return '#' + x(r) + x(g) + x(b);
+}
+function derivePalette(hue) { const [h, s, l] = hexToHsl(hue); return { hue, lite: hslToHex(h, Math.max(0, s - 6), l + 14), dark: hslToHex(h, s, l - 14) }; }
+function hashStr(s) { let h = 2166136261; for (const ch of s) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+const BODIES = {
+  pip:   { rows: ['..XXX..', '.XXXXX.', 'XWWXWWX', 'XWWXWWX', 'XXXKXXX', '.XXXXX.', '..DDD..'], eyes: [[1, 2], [4, 2]] },
+  round: { rows: ['.XXXXXXX.', 'XXXXXXXXX', 'XXWWXWWXX', 'XXWWXWWXX', 'XXXXKXXXX', 'XXXXXXXXX', '.XXXXXXX.', '..DD.DD..'], eyes: [[2, 2], [5, 2]] },
+  lanky: { rows: ['.XXXXX.', 'XXXXXXX', 'XWWXWWX', 'XWWXWWX', 'XXXKXXX', 'XXXXXXX', '.XXXXX.', '..XXX..', '..X.X..', '..X.X..', '..X.X..', '.DD.DD.'], eyes: [[1, 2], [4, 2]] },
+  bean:  { rows: ['.XXXXX.', 'XXXXXXX', 'XWWXWWX', 'XWWXWWX', 'XXXKXXX', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '.DD.DD.'], eyes: [[1, 2], [4, 2]] },
+  mound: { rows: ['...XXXXXX...', '.XXXXXXXXXX.', 'XXWWXXXXWWXX', 'XXWWXXXXWWXX', 'XXXXXKKXXXXX', 'XXXXXXXXXXXX', '.DD......DD.'], eyes: [[2, 2], [8, 2]] },
+  boxy:  { rows: ['.XXXXXX.', 'XXXXXXXX', 'XWWXXWWX', 'XWWXXWWX', 'XXXKKXXX', 'XXXXXXXX', '.DD..DD.'], eyes: [[1, 2], [5, 2]] },
+};
+const FLIGHT_UNDERSIDE = { pip: ['..XXX..'], round: ['..XXXXX..'], lanky: ['..X.X..', '.X...X.'], bean: ['..XXX..'], mound: ['..XXXXXXXX..'], boxy: ['.XXXXXX.'] };
+const CROWNS = {
+  none: w => [],
+  ears: w => { const L = 1, R = w - 2; return [[L, -3], [R, -3], [L, -2], [R, -2], [L, -1], [L + 1, -1], [R - 1, -1], [R, -1]]; },
+  crest: w => { const c = Math.floor((w - 1) / 2); return [[c, -3], [c - 1, -2], [c, -2], [c + 1, -2], [c - 2, -1], [c - 1, -1], [c, -1], [c + 1, -1], [c + 2, -1]]; },
+  tuft: w => { const c = Math.floor((w - 1) / 2); return [[c - 1, -1], [c + 1, -1]]; },
+  horns: w => { const L = 1, R = w - 2; return [[L, -2], [R, -2], [L, -1], [L + 1, -1], [R - 1, -1], [R, -1]]; },
+};
+const WING = ['XXX.', 'XXXX', '.XX.'];
+
+const U = 6;
+const W = 2560, H = 720;
+const HORIZON = 430;
+const GROUND_Y = 540;                 // the lane's baseline: every house stands here
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const params = new URLSearchParams(location.search);
+const NIGHT = (params.get('t') || 'day') === 'night';
+// Frame tint, as theme/store.ts applies it: scenery pulled 0.55 toward the night sky, creatures 0.28.
+const TINT = NIGHT ? PAL.skies.night[0] : null;
+const sc = c => (TINT ? mix(c, TINT, 0.55) : c);   // scenery colour
+const cc = c => (TINT ? mix(c, TINT, 0.28) : c);   // creature colour
+const P = {
+  ink: sc(PAL.ink), cream: sc(PAL.cream), bubble: PAL.bubble, wood: sc(PAL.wood), accent: sc(PAL.accent),
+  foliage: sc(PAL.foliage), foliageLite: sc(PAL.foliageLite), ground: sc(PAL.ground), groundDark: sc(PAL.groundDark),
+  sky: NIGHT ? PAL.skies.night : PAL.skies.day,
+};
+const LAMP = mix('#F6D77A', PAL.cream, 0.35);      // window glow, untinted on purpose: it is the light source
+
+const R = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); };
+const MONO = '"IBM Plex Mono", Consolas, monospace';
+
+// ---------------------------------------------------------------- creatures
+// feet at (fx, fy). flying: wings, underside, hover. asleep: closed eyes and a z.
+function creature(c, fx, fy, o = {}) {
+  const scale = o.scale || 1, u = U * scale;
+  const body = BODIES[c.body];
+  let rows = body.rows.slice();
+  const flying = !!o.flying;
+  if (flying) { const footRow = rows.findIndex(r => r.includes('D')); rows = rows.slice(0, footRow).concat(FLIGHT_UNDERSIDE[c.body]); }
+  const w = rows[0].length, h = rows.length;
+  const pal = derivePalette(HUES[c.hue]);
+  const hover = flying ? (o.hover ?? 5 * u) : 0;
+  const x0 = Math.round(fx - (w * u) / 2), y0 = Math.round(fy - h * u - hover);
+  const shW = flying ? Math.max(2, w - 4) : w - 2;
+  R(fx - (shW * u) / 2, fy - u * 0.5, shW * u, u, mix(P.groundDark, P.ink, flying ? 0.12 : 0.22));
+  if (flying) {
+    const wy = y0 + 2 * u;
+    WING.forEach((row, r) => [...row].forEach((ch, i) => {
+      if (ch !== 'X') return;
+      R(x0 - (i + 1) * u, wy + r * u, u, u, cc(pal.lite));
+      R(x0 + (w + WING[0].length - 1 - i) * u, wy + r * u, u, u, cc(pal.lite));
+    }));
+  }
+  for (const [cx, cy] of CROWNS[c.crown](w)) R(x0 + cx * u, y0 + cy * u, u, u, cc(pal.hue));
+  rows.forEach((row, r) => [...row].forEach((ch, i) => {
+    const col = ch === 'X' || ch === 'D' ? cc(pal.hue) : ch === 'A' ? cc(pal.lite) : ch === 'W' ? INK.eyeWhite : ch === 'K' ? INK.mouth : null;
+    if (col) R(x0 + i * u, y0 + r * u, u, u, col);
+  }));
+  if (o.asleep) {
+    for (const [ec, er] of body.eyes) { R(x0 + ec * u, y0 + er * u, 2 * u, u, cc(pal.hue)); R(x0 + ec * u, y0 + (er + 1) * u, 2 * u, u, INK.pupil); }
+    ctx.fillStyle = PAL.ink; ctx.textAlign = 'left';
+    ctx.font = `600 10px ${MONO}`; ctx.fillText('z', x0 + w * u + 2, y0 + 4);
+    ctx.font = `600 13px ${MONO}`; ctx.fillText('z', x0 + w * u + 10, y0 - 8);
+  } else {
+    for (const [ec, er] of body.eyes) R(x0 + (ec + 1) * u, y0 + (er + 1) * u, u, u, INK.pupil);
+  }
+  return { x: x0, y: y0, w: w * u, h: h * u };
+}
+
+function plate(text, sub, cx, top) {
+  ctx.font = `600 11px ${MONO}`;
+  const tw = ctx.measureText(text).width;
+  ctx.font = `400 9px ${MONO}`;
+  const sw = sub ? ctx.measureText(sub).width : 0;
+  const pw = Math.ceil(Math.max(tw, sw)) + 10, ph = sub ? 26 : 16;
+  const x = Math.round(cx - pw / 2), y = Math.round(top);
+  R(x, y, pw, ph, PAL.cream);
+  R(x, y + ph, pw, 1, mix(PAL.cream, PAL.ink, 0.35));
+  ctx.fillStyle = PAL.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.font = `600 11px ${MONO}`; ctx.fillText(text, cx, y + 12);
+  if (sub) { ctx.font = `400 9px ${MONO}`; ctx.fillStyle = mix(PAL.ink, PAL.cream, 0.35); ctx.fillText(sub, cx, y + 22); }
+}
+
+// ------------------------------------------------------------------- scenery
+function sky() {
+  const g = ctx.createLinearGradient(0, 0, 0, HORIZON);
+  g.addColorStop(0, P.sky[0]); g.addColorStop(0.6, P.sky[1]); g.addColorStop(1, P.sky[2]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, HORIZON);
+  if (!NIGHT) {
+    const sun = mix('#F6D77A', P.sky[1], 0.15);
+    R(2310, 60, 40, 40, sun); R(2304, 66, 52, 28, sun); R(2316, 54, 28, 52, sun);
+  } else {
+    const moon = mix(PAL.cream, P.sky[1], 0.1);
+    R(2310, 60, 40, 40, moon); R(2304, 66, 52, 28, moon); R(2316, 54, 28, 52, moon);
+    R(2328, 66, 16, 28, mix(moon, P.sky[0], 0.85)); // a waning bite
+    const seed = hashStr('stars'); let s = seed;
+    for (let i = 0; i < 70; i++) { s = (Math.imul(s, 1103515245) + 12345) >>> 0; const x = (s % 2560); s = (Math.imul(s, 1103515245) + 12345) >>> 0; const y = 10 + (s % 300); R(x, y, 2, 2, mix(PAL.cream, P.sky[0], i % 3 ? 0.55 : 0.25)); }
+  }
+  const c = NIGHT ? mix(PAL.bubble, P.sky[1], 0.7) : mix(PAL.bubble, P.sky[1], 0.25);
+  const cloud = (x, y, s) => {
+    const rows = ['...XXXX.......', '..XXXXXX.XXX..', '.XXXXXXXXXXXX.', 'XXXXXXXXXXXXXX', 'XXXXXXXXXXXXXX', '.XXXXXXXXXXXX.'];
+    rows.forEach((r, j) => [...r].forEach((ch, i) => { if (ch === 'X') R(x + i * 7 * s, y + j * 5 * s, 7 * s, 5 * s, c); }));
+    R(x + 14 * s, y + 24 * s, 56 * s, 4 * s, mix(c, P.sky[0], 0.35));
+  };
+  cloud(150, 70, 1.1); cloud(760, 40, 0.8); cloud(1480, 110, 0.9); cloud(2050, 60, 1.0);
+  const far = mix(P.ground, P.sky[2], 0.55), near = mix(P.ground, P.sky[2], 0.3);
+  for (let x = 0; x < W; x += 4) {
+    const h1 = 26 + Math.sin(x / 210 + 1) * 12 + Math.sin(x / 70) * 3;
+    const h2 = 12 + Math.sin(x / 150 + 4) * 7;
+    R(x, HORIZON - h1, 4, h1, far); R(x, HORIZON - h2, 4, h2, near);
+  }
+  for (let x = 30; x < W; x += 46) { const h1 = 26 + Math.sin(x / 210 + 1) * 12 + Math.sin(x / 70) * 3; R(x, HORIZON - h1 - 4, 4, 5, mix(far, P.foliage, 0.5)); R(x + 1, HORIZON - h1 - 7, 2, 3, mix(far, P.foliage, 0.5)); }
+}
+
+function ground() {
+  R(0, HORIZON, W, H - HORIZON, P.ground);
+  R(0, HORIZON, W, 10, P.groundDark);
+  for (let x = 0; x < W; x += 4) R(x + ((x / 4) % 2) * 2, HORIZON + 10, 2, 2, P.groundDark);
+  for (let x = 0; x < W; x += 8) R(x + 4, HORIZON + 14, 2, 2, P.groundDark);
+  const path = mix(P.ground, P.wood, 0.30), edge = mix(P.ground, P.wood, 0.15);
+  for (let x = 0; x < W; x += 4) {
+    const cy = 668 + Math.sin(x / 260) * 12 + Math.sin(x / 90) * 4;
+    const wd = 34 + Math.sin(x / 150) * 6;
+    R(x, cy - wd / 2 - 4, 4, wd + 8, edge); R(x, cy - wd / 2, 4, wd, path);
+  }
+  const peb = mix(P.groundDark, P.ink, 0.3), pebL = mix(P.groundDark, P.ink, 0.15), tuft = mix(P.groundDark, P.foliage, 0.55);
+  let s = hashStr('ground');
+  for (let i = 0; i < 26; i++) { s = (Math.imul(s, 1103515245) + 12345) >>> 0; const x = s % W; s = (Math.imul(s, 1103515245) + 12345) >>> 0; const y = 620 + (s % 50); R(x, y, 4, 3, i % 2 ? peb : pebL); }
+  for (let i = 0; i < 30; i++) { s = (Math.imul(s, 1103515245) + 12345) >>> 0; const x = s % W; s = (Math.imul(s, 1103515245) + 12345) >>> 0; const y = 450 + (s % 40) + (i % 3 === 0 ? 230 : 0); R(x, y, 2, 6, tuft); R(x + 4, y - 3, 2, 9, tuft); R(x + 8, y + 1, 2, 5, tuft); }
+}
+
+function tree(x, y) {
+  const trunk = P.wood, fol = P.foliage, lite = P.foliageLite, dark = mix(P.foliage, P.ink, 0.25);
+  R(x + 8, y - 2, 40, 4, mix(P.groundDark, P.ink, 0.2));
+  R(x + 20, y - 50, 14, 50, trunk);
+  R(x + 22, y - 44, 2, 30, mix(trunk, P.ink, 0.3)); R(x + 29, y - 36, 2, 20, mix(trunk, P.ink, 0.3));
+  R(x + 8, y - 110, 38, 62, fol); R(x, y - 96, 54, 40, fol); R(x + 14, y - 124, 26, 16, fol);
+  R(x + 4, y - 60, 46, 8, dark); R(x + 12, y - 52, 30, 4, dark);
+  R(x + 18, y - 120, 14, 8, lite); R(x + 10, y - 104, 10, 6, lite); R(x + 30, y - 98, 8, 6, lite);
+  [[x + 6, y - 78], [x + 42, y - 84], [x + 24, y - 70]].forEach(([fx, fy]) => R(fx, fy, 3, 3, P.accent));
+}
+function bush(x, y) {
+  R(x + 4, y - 2, 30, 3, mix(P.groundDark, P.ink, 0.2));
+  R(x + 4, y - 26, 30, 26, P.foliage); R(x, y - 18, 38, 14, P.foliage); R(x + 10, y - 30, 16, 6, P.foliageLite);
+  R(x + 6, y - 6, 26, 4, mix(P.foliage, P.ink, 0.25));
+}
+
+function zoneSign(x, y, label) {
+  ctx.font = `600 13px ${MONO}`;
+  const tw = Math.ceil(ctx.measureText(label).width) + 16;
+  R(x + tw / 2 - 5, y - 36, 10, 36, P.wood);
+  R(x + tw / 2 - 12, y - 2, 24, 3, mix(P.groundDark, P.ink, 0.2));
+  R(x, y - 64, tw, 28, P.cream); R(x, y - 36, tw, 2, mix(P.cream, P.ink, 0.35));
+  R(x + 3, y - 61, 2, 2, P.wood); R(x + tw - 5, y - 61, 2, 2, P.wood);
+  ctx.fillStyle = PAL.ink; ctx.textAlign = 'center'; ctx.fillText(label, x + tw / 2, y - 45);
+}
+function bench(x, y) {
+  R(x + 2, y - 2, 60, 4, mix(P.groundDark, P.ink, 0.2));
+  R(x + 4, y - 16, 8, 16, P.wood); R(x + 52, y - 16, 8, 16, P.wood);
+  R(x, y - 24, 64, 8, mix(P.wood, P.cream, 0.15));
+  R(x, y - 22, 64, 1, mix(P.wood, P.ink, 0.25)); R(x + 30, y - 24, 2, 8, mix(P.wood, P.ink, 0.25));
+}
+
+// The robot house, as in packages/web/src/scene/robotHouse.ts, at the lane's head.
+function robotHouse(x, y, label) {
+  const b = (bx, by, w, h, c) => R(bx, by, w, h, c);
+  b(x - 6, y - 2, 110, 6, mix(P.groundDark, P.ink, 0.22));
+  b(x, y - 78, 98, 78, P.cream); b(x + 42, y - 92, 14, 14, P.ink); b(x + 8, y, 26, 8, P.ink); b(x + 64, y, 26, 8, P.ink);
+  b(x + 12, y - 66, 74, 44, P.ink); b(x + 16, y - 62, 66, 36, sc(PAL.skies.day[1]));
+  b(x + 32, y - 52, 8, 12, P.ink); b(x + 58, y - 52, 8, 12, P.ink);
+  ctx.font = `600 11px ${MONO}`; const tw = Math.ceil(ctx.measureText(label).width) + 10;
+  b(x + 49 - tw / 2, y + 10, tw, 16, PAL.cream); ctx.fillStyle = PAL.ink; ctx.textAlign = 'center'; ctx.fillText(label, x + 49, y + 22);
+}
+
+// ---------------------------------------------------------------------- house
+// x = left wall, y = ground line. Variation hashed from the project name, like DNA.
+// state: 'today' | 'week' | 'old'  (the work signal)
+const HS = 1.5, HW = 96, WH = 66;
+function houseLook(name) {
+  const h = hashStr(name);
+  return {
+    pair: (h & 1) ? PAL.houseB : PAL.houseA,
+    doorLeft: !!(h & 2),           // door at left third, else centre
+    chimneyLeft: !!(h & 4),
+    twoWindows: !!(h & 8),
+    flowerBox: !!(h & 16),         // else a lantern
+    hipped: !!(h & 32),            // two wide roof steps, else three
+  };
+}
+function house(x, y, name, state) {
+  const S = HS, L = houseLook(name);
+  const wall = sc(L.pair[0]), roof = sc(L.pair[1]);
+  const wallDark = mix(wall, P.ink, 0.12), roofDark = mix(roof, P.ink, 0.18), roofLite = mix(roof, P.cream, 0.2);
+  const frame = mix(P.wood, P.ink, 0.3);
+  const r = (ox, oy, w, h, c) => R(x + ox * S, y + oy * S, w * S, h * S, c);
+  const doorX = L.doorLeft ? 14 : 36;
+  const winXs = L.twoWindows ? (L.doorLeft ? [48, 72] : [10, 70]) : (L.doorLeft ? [62] : [12]);
+  const chimX = L.chimneyLeft ? 14 : 66;
+  const windowsLit = NIGHT && state !== 'old';
+
+  r(-10, -2, HW + 20, 6, mix(P.groundDark, P.ink, 0.22));
+  r(-6, -4, HW + 12, 4, P.groundDark);
+  r(0, -WH, HW, WH, wall);
+  for (let py = -WH + 10; py < -12; py += 12) r(0, py, HW, 1, wallDark);
+  r(0, -12, HW, 12, wallDark);
+  for (let bx = 4; bx < HW - 4; bx += 10) r(bx, -8, 6, 4, mix(wallDark, P.ink, 0.15));
+  // door with frame, knob, step
+  r(doorX - 2, -42, 28, 42, frame); r(doorX, -40, 24, 40, P.wood);
+  r(doorX + 2, -36, 20, 1, frame); r(doorX + 12, -38, 1, 36, frame);
+  r(doorX + 18, -22, 3, 3, P.accent);
+  r(doorX - 6, -4, 36, 4, mix(wall, P.ink, 0.25));
+  // windows: cross panes, sill; lit after dusk when the house is alive
+  for (const wx of winXs) {
+    r(wx - 2, -56, 20, 18, mix(P.wood, P.ink, 0.2));
+    r(wx, -54, 16, 14, windowsLit ? LAMP : sc(PAL.skies.day[1]));
+    r(wx + 7, -54, 2, 14, mix(P.wood, P.ink, 0.2)); r(wx, -48, 16, 2, mix(P.wood, P.ink, 0.2));
+    if (windowsLit) { r(wx - 6, -58, 28, 24, 'rgba(246,215,122,0.10)'); r(wx - 3, -36, 22, 2, mix(LAMP, wall, 0.6)); }
+    if (L.flowerBox) {
+      r(wx - 4, -38, 24, 3, P.wood); r(wx - 3, -35, 22, 5, mix(P.wood, P.ink, 0.15));
+      [[wx - 1, -41], [wx + 5, -42], [wx + 11, -41]].forEach(([fx, fy]) => { r(fx, fy, 3, 3, P.accent); r(fx + 3, fy + 1, 2, 2, mix(P.accent, P.cream, 0.25)); });
+    }
+  }
+  // roof
+  const rows = L.hipped ? [[-10, HW + 20, 16], [10, HW - 20, 16]] : [[-10, HW + 20, 14], [6, HW - 12, 12], [22, HW - 44, 10]];
+  let ry = -WH;
+  for (const [rx, rw, rh] of rows) {
+    ry -= rh; r(rx, ry, rw, rh, roof);
+    for (let sy = ry + 2; sy < ry + rh - 1; sy += 4) { const off = ((sy - ry) / 4) % 2 ? 4 : 0; for (let sx = rx + off; sx < rx + rw - 2; sx += 8) r(sx, sy, 6, 1, roofDark); }
+    r(rx, ry, rw, 1, roofLite);
+  }
+  // chimney: brick, capped; smoke only for a project worked today
+  const ctop = ry - 8;
+  r(chimX, ctop, 12, -ctop - WH + 4, mix(P.wood, P.ink, 0.1));
+  for (let by = ctop + 2; by < -WH; by += 4) for (let bx = chimX + (((by / 4) | 0) % 2 ? 3 : 0); bx < chimX + 10; bx += 6) r(bx, by, 4, 2, mix(P.wood, P.ink, 0.35));
+  r(chimX - 2, ctop - 3, 16, 3, P.ink);
+  if (state === 'today') {
+    const puff = NIGHT ? mix(PAL.cream, P.sky[1], 0.5) : mix(PAL.bubble, PAL.skies.day[1], 0.3);
+    const dir = L.chimneyLeft ? -1 : 1;
+    r(chimX + 3, ctop - 10, 6, 5, puff); r(chimX + 3 + 5 * dir, ctop - 18, 8, 6, puff); r(chimX + 4 + 11 * dir, ctop - 28, 10, 7, puff); r(chimX + 6 + 18 * dir, ctop - 40, 12, 8, mix(puff, P.sky[0], 0.3));
+  }
+  // lantern by the door, lit at night
+  if (!L.flowerBox) {
+    const lx = doorX + 34;
+    r(lx, -34, 2, 30, P.ink); r(lx - 3, -40, 8, 8, NIGHT ? LAMP : P.accent); r(lx - 1, -38, 4, 4, mix(NIGHT ? LAMP : P.accent, P.cream, 0.5));
+    if (NIGHT) r(lx - 7, -44, 16, 16, 'rgba(246,215,122,0.10)');
+  }
+  // hung name sign, mono, hugs its text, trimmed in the middle when long
+  const shown = name.length > 18 ? name.slice(0, 9) + '…' + name.slice(-7) : name;
+  ctx.font = `600 11px ${MONO}`;
+  const tw = Math.ceil(ctx.measureText(shown).width) + 12;
+  const scx = x + (L.doorLeft ? 66 : 30) * S;
+  const sx = Math.round(scx - tw / 2), sy = y - WH * S + 3;
+  R(sx + 4, sy - 5, 2, 7, P.wood); R(sx + tw - 6, sy - 5, 2, 7, P.wood);
+  R(sx, sy + 2, tw, 16, PAL.cream); R(sx, sy + 18, tw, 1, mix(PAL.cream, PAL.ink, 0.35));
+  ctx.fillStyle = PAL.ink; ctx.textAlign = 'center'; ctx.fillText(shown, scx, sy + 14);
+  return { doorCx: x + (doorX + 12) * S, doorStepY: y + 2 };
+}
+
+function fence(x0, x1, y, gateCx) {
+  const pale = mix(P.wood, P.cream, 0.35), rail = mix(P.wood, P.cream, 0.25);
+  R(x0, y - 12, x1 - x0, 2, rail); R(x0, y - 6, x1 - x0, 2, rail);
+  for (let px = x0; px <= x1; px += 12) { R(px, y - 16, 4, 16, pale); R(px + 1, y - 18, 2, 2, pale); }
+  R(x0, y - 1, x1 - x0, 2, mix(P.groundDark, P.ink, 0.15));
+  R(gateCx - 24, y - 20, 48, 22, P.ground);   // the gate gap
+  R(gateCx - 24, y - 16, 3, 16, pale); R(gateCx + 21, y - 16, 3, 16, pale); // gate posts
+}
+
+function crowdBoard(cx, y, n) {
+  const text = `+${n} more`;
+  ctx.font = `600 10px ${MONO}`; const tw = Math.ceil(ctx.measureText(text).width) + 10;
+  R(cx - tw / 2, y - 30, tw, 14, PAL.cream); R(cx - tw / 2, y - 16, tw, 1, mix(PAL.cream, PAL.ink, 0.35));
+  R(cx - 2, y - 16, 4, 16, P.wood);
+  ctx.fillStyle = PAL.ink; ctx.textAlign = 'center'; ctx.fillText(text, cx, y - 19);
+}
+
+// ---------------------------------------------------------------------- cast
+const PLOT_W = 520, PLOT_GAP = 40, LANE_X0 = 300;
+const plots = [
+  { name: 'skill-village-web', state: 'today', genie: { body: 'mound', crown: 'crest', hue: 'mint' }, helpers: [
+      { name: 'Sprig', file: 'brainstorming/', body: 'round', crown: 'ears', hue: 'sage' },
+      { name: 'Quill', file: 'test-writer.md', body: 'bean', crown: 'crest', hue: 'sky', hovered: true },
+      { name: 'Deckard', file: 'code-reviewer.md', body: 'lanky', crown: 'horns', hue: 'lilac' },
+      { name: 'Pixel', file: 'pixel-playtester.md', body: 'boxy', crown: 'tuft', hue: 'coral' },
+      { name: 'Nib', file: 'writing-plans/', body: 'mound', crown: 'none', hue: 'gold' },
+      { name: 'Ferris', file: 'docs-auditor.md', body: 'pip', crown: 'crest', hue: 'rose' },
+    ], hidden: 3 },
+  { name: 'swarm', state: 'week', genie: { body: 'boxy', crown: 'horns', hue: 'gold' }, helpers: [
+      { name: 'Twig', file: 'scrape/', body: 'round', crown: 'tuft', hue: 'teal' },
+      { name: 'Scout', file: 'deploy.md', body: 'pip', crown: 'ears', hue: 'sky' },
+    ], hidden: 0 },
+  { name: 'robot-personality-experiments', state: 'old', genie: { body: 'round', crown: 'tuft', hue: 'lilac' }, helpers: [], hidden: 0 },
+];
+const green = [
+  { name: 'Moss', file: 'catchup/', body: 'bean', crown: 'horns', hue: 'mint', x: 2210, y: 612, hover: 30 },
+  { name: 'Bramble', file: 'commit/', body: 'round', crown: 'ears', hue: 'rose', x: 2320, y: 578, hover: 70 },
+  { name: 'Tock', file: 'transcribe/', body: 'pip', crown: 'crest', hue: 'gold', x: 2410, y: 630, hover: 30 },
+];
+
+// Yard seats: six at most, two tiers, offset sideways so no silhouette coincides.
+// Offsets are from the house centre; the low tier hovers by the fence, the high tier by the eaves.
+// Three flight heights per side: low by the fence, mid beside the wall, high beside the roof.
+const SEATS = [[-120, 610, 26], [128, 610, 26], [-178, 578, 66], [184, 578, 66], [-142, 570, 118], [148, 570, 118]];
+
+// ---------------------------------------------------------------------- draw
+function draw() {
+  sky(); ground();
+  const items = [];
+  // the head of the lane: the robot house on its own plot
+  zoneSign(24, 508, 'Homes');
+  items.push({ y: GROUND_Y, fn: () => robotHouse(120, GROUND_Y, 'for rent') });
+  bush(60, 596);
+
+  plots.forEach((p, i) => {
+    const px = LANE_X0 + i * (PLOT_W + PLOT_GAP);
+    const hx = px + (PLOT_W - HW * HS) / 2, hcx = hx + (HW * HS) / 2;
+    items.push({ y: GROUND_Y, fn: () => {
+      const d = house(hx, GROUND_Y, p.name, p.state);
+      fence(px + 12, px + PLOT_W - 12, GROUND_Y + 82, d.doorCx);
+      p._door = d;
+    } });
+    // the resident, on the step right of the door; asleep when the house is old
+    items.push({ y: GROUND_Y + 3, fn: () => {
+      const rx = p._door.doorCx + 40;
+      creature(p.genie, rx, p._door.doorStepY, { scale: 1.15, asleep: p.state === 'old' });
+    } });
+    p.helpers.slice(0, 6).forEach((hp, k) => {
+      const [ox, fy, hover] = SEATS[k];
+      const fx = hcx + ox;
+      // nameplates show on hover in the game; one hovered helper stands in for that here
+      items.push({ y: fy, fn: () => { creature(hp, fx, fy, { flying: true, hover }); if (hp.hovered) plate(hp.name, hp.file, fx, fy + 4); } });
+    });
+    if (p.hidden > 0) items.push({ y: GROUND_Y + 90, fn: () => crowdBoard(px + PLOT_W - 60, GROUND_Y + 82, p.hidden) });
+    // a tree or bush in the strip between plots, behind the fence line
+    const gx = px + PLOT_W + 2;
+    if (i % 2 === 0) items.push({ y: 500, fn: () => tree(gx - 8, 500) }); else items.push({ y: 505, fn: () => bush(gx, 505) });
+  });
+
+  // the Green
+  const gx0 = LANE_X0 + plots.length * (PLOT_W + PLOT_GAP) + 20;
+  zoneSign(gx0, 520, 'Green');
+  items.push({ y: 500, fn: () => tree(gx0 + 430, 500) });
+  items.push({ y: 604, fn: () => bench(gx0 + 100, 604) });
+  for (const c of green) items.push({ y: c.y, fn: () => { creature(c, c.x, c.y, { flying: true, hover: c.hover }); } });
+
+  items.sort((a, b) => a.y - b.y).forEach(it => it.fn());
+
+  const cap = `Section 1 · the lane · ${NIGHT ? 'night' : 'day'} · worked today = smoke · this week = lit windows after dusk · older = dark, resident asleep · nameplates on hover`;
+  ctx.font = `400 11px ${MONO}`; ctx.textAlign = 'left';
+  const cw = Math.ceil(ctx.measureText(cap).width) + 12;
+  R(12, 12, cw, 18, mix(PAL.ink, '#000000', 0.2)); ctx.fillStyle = PAL.cream; ctx.fillText(cap, 18, 25);
+}
+document.fonts.ready.then(() => document.fonts.load(`600 11px ${MONO}`)).then(draw, draw);
+</script>
+</body>
+</html>
