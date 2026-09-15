@@ -15,12 +15,13 @@ import { join } from 'node:path';
 import { pcm16ToWav, resampleTo24k, wavToPcm16 } from './audio.js';
 import type { Speaker } from './tts.js';
 
-export type CannedKind = 'stuck' | 'didnt_catch';
+export type CannedKind = 'stuck' | 'didnt_catch' | 'lost_thought';
 
 /** Short, in-character-ish, and true whenever they play. */
 export const CANNED_LINES: Record<CannedKind, string> = {
   stuck: 'My voice is stuck. Give me a moment.',
   didnt_catch: "Sorry, I didn't catch that.",
+  lost_thought: 'I lost my train of thought. Ask me again?',
 };
 
 const SAMPLE_RATE = 24_000;

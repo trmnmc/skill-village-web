@@ -6,7 +6,9 @@
  * plays ONLY 24000 Hz mono 16-bit. OpenAI's `response_format: 'pcm'` is
  * already 24 kHz; Piper output gets resampled here.
  *
- * Audio stays in RAM (spec §6): nothing in this module touches disk.
+ * Audio stays in RAM (spec §6): nothing in this module touches disk. Every
+ * sentence has a deadline (delta gap 3): a voice that stalls hands the rest
+ * of the reply to the next rung instead of holding the turn open.
  */
 
 import { spawn } from 'node:child_process';
@@ -16,6 +18,9 @@ import { resampleTo24k } from './audio.js';
 export interface Speaker {
   synthesize(text: string): AsyncIterable<Buffer>;
 }
+
+const DEFAULT_OPENAI_TIMEOUT_MS = 15_000;
+const DEFAULT_PIPER_TIMEOUT_MS = 15_000;
 
 /** A sentence: has an ender (. ! ? …, plus stacked runs) and real content. */
 const SENTENCE_END_RE = /[.!?…]["')\]”’»]*$/;
@@ -59,6 +64,8 @@ export interface OpenAiSpeakerOpts {
   model?: string;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
+  /** Per-sentence deadline; default 15 s. */
+  timeoutMs?: number;
 }
 
 /**
@@ -72,17 +79,27 @@ export function createOpenAiSpeaker(opts: OpenAiSpeakerOpts): Speaker {
   const baseUrl = opts.baseUrl ?? 'https://api.openai.com/v1';
   const model = opts.model ?? 'gpt-4o-mini-tts';
   const voice = opts.voice ?? 'alloy';
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_OPENAI_TIMEOUT_MS;
   return {
     async *synthesize(text: string) {
       for (const sentence of splitSentences(text)) {
-        const res = await fetchImpl(`${baseUrl}/audio/speech`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${opts.apiKey}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({ model, voice, input: sentence, response_format: 'pcm' }),
-        });
+        let res: Response;
+        try {
+          res = await fetchImpl(`${baseUrl}/audio/speech`, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${opts.apiKey}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({ model, voice, input: sentence, response_format: 'pcm' }),
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+        } catch (error) {
+          if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+            throw new Error(`openai tts timed out after ${timeoutMs}ms`);
+          }
+          throw error;
+        }
         if (!res.ok) {
           const body = await res.text().catch(() => '');
           throw new Error(`openai tts failed: ${res.status} ${body.slice(0, 200)}`);
@@ -94,24 +111,53 @@ export function createOpenAiSpeaker(opts: OpenAiSpeakerOpts): Speaker {
   };
 }
 
+/** The slice of a child process Piper needs; tests hand in a fake. */
+export interface PiperChild {
+  stdout: { on(event: 'data', listener: (chunk: Buffer) => void): unknown };
+  stderr: { on(event: 'data', listener: (chunk: Buffer) => void): unknown };
+  stdin: { on(event: 'error', listener: () => void): unknown; end(data: string): unknown };
+  on(event: 'error', listener: (err: Error) => void): unknown;
+  on(event: 'close', listener: (code: number | null) => void): unknown;
+  kill(): unknown;
+}
+
 export interface PiperSpeakerOpts {
   exePath: string;
   modelPath: string;
   /** Piper voices are 22050 Hz unless the model card says otherwise. */
   sampleRate?: number;
+  /** Per-sentence deadline; default 15 s. The child is killed past it. */
+  timeoutMs?: number;
+  /** How to start the process; tests inject a fake child. */
+  spawnImpl?: (command: string, args: string[]) => PiperChild;
 }
+
+const defaultSpawn = (command: string, args: string[]): PiperChild => spawn(command, args) as unknown as PiperChild;
 
 /** One piper run: sentence in on stdin, raw PCM16 out on stdout. */
 function runPiper(opts: PiperSpeakerOpts, sentence: string): Promise<Buffer> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_PIPER_TIMEOUT_MS;
+  const spawnImpl = opts.spawnImpl ?? defaultSpawn;
   return new Promise((resolve, reject) => {
-    const child = spawn(opts.exePath, ['--model', opts.modelPath, '--output-raw']);
+    const child = spawnImpl(opts.exePath, ['--model', opts.modelPath, '--output-raw']);
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
     child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
-    child.on('error', (err) => reject(new Error(`piper spawn failed: ${err.message}`)));
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(new Error(`piper spawn failed: ${err.message}`));
+    });
     child.on('close', (code) => {
-      if (code === 0) {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`piper timed out after ${timeoutMs}ms`));
+      } else if (code === 0) {
         resolve(Buffer.concat(stdout));
       } else {
         const snippet = Buffer.concat(stderr).toString('utf8').slice(0, 200).trim();

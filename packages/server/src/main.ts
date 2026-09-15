@@ -3,6 +3,7 @@
  *
  * Run: npm run dev:server
  */
+import { join } from 'node:path';
 import { createApp } from './api/app.js';
 import { DEFAULT_PORT, resolvePaths } from './config/paths.js';
 import { createWatcher } from './bridge/watcher.js';
@@ -13,13 +14,14 @@ import { createDeviceClient } from './robot/device.js';
 import { createWhisperTranscriber } from './robot/asr.js';
 import { createOpenAiSpeaker, createPiperSpeaker, withFallback, type Speaker } from './robot/tts.js';
 import { startRobotLoop, type RobotLoopHandle } from './robot/loop.js';
+import { createCannedAudio } from './robot/canned.js';
 
 /**
  * The robot voice loop, when the env asks for one. Pull-model: this process
  * calls the robot; the robot never calls us, so the server can stay
  * loopback-bound. No token, no loop — an unauthenticated robot is a bug.
  */
-function maybeStartRobotLoop(village: Village): RobotLoopHandle | null {
+function maybeStartRobotLoop(village: Village, dataDir: string): RobotLoopHandle | null {
   const host = process.env.VILLAGE_ROBOT_HOST;
   if (!host) return null;
   const token = process.env.VILLAGE_ROBOT_TOKEN;
@@ -45,12 +47,22 @@ function maybeStartRobotLoop(village: Village): RobotLoopHandle | null {
     return null;
   }
 
+  const log = (line: string) => console.error(line);
+  // The bottom rung of never-mute: short lines cached under the data dir
+  // (synthetic audio only), rendered in the background while a voice is
+  // up, and a code-made chirp beneath them when nothing else can play.
+  const canned = createCannedAudio({ dir: join(dataDir, 'robot-audio'), log });
+  void canned.warm(speaker).then((rendered) => {
+    if (rendered > 0) console.log(`Robot canned lines rendered to disk: ${rendered}.`);
+  });
+
   const loop = startRobotLoop({
     device: createDeviceClient({ baseUrl: `http://${host}`, token }),
     asr: createWhisperTranscriber({ serverUrl: process.env.VILLAGE_WHISPER_URL ?? 'http://127.0.0.1:8178' }),
     tts: speaker,
+    canned,
     village,
-    log: (line) => console.error(line),
+    log,
   });
   console.log(`Robot voice loop is up, talking to http://${host} (${openai ? 'OpenAI TTS' : 'Piper'}${openai && piper ? ' + Piper fallback' : ''}).`);
   return loop;
@@ -107,7 +119,7 @@ async function main(): Promise<void> {
   });
   if (village.startupNote) console.log(village.startupNote);
 
-  const robotLoop = maybeStartRobotLoop(village);
+  const robotLoop = maybeStartRobotLoop(village, paths.dataDir);
 
   // The LLM guard stays off (0) for local play; the droplet's systemd unit
   // arms it, because deployed /v1 spends real API budget for anyone.

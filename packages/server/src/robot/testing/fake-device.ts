@@ -2,19 +2,23 @@
  * In-memory RobotDevice for tests: no sockets, no timers, no hardware
  * (global constraint — CI needs no robot). Tests observe what the loop did
  * to the device through the extra surface: pushRecording seeds a "tap to
- * talk" capture, playedPcm/faces/armedLog record what the loop sent back.
+ * talk" capture, playedPcm/faces/armedLog record what the loop sent back,
+ * interruptAfterChunks plays the owner tapping the robot mid-reply.
  */
 
-import type { DeviceStatus, RobotDevice } from '../device.js';
+import { PlaybackInterruptedError, type DeviceStatus, type RobotDevice } from '../device.js';
 
 export function createFakeDevice(): RobotDevice & {
   pushRecording(wav: Buffer): void;
+  /** The next playPcm accepts `n` chunks, then refuses the rest like a tapped robot. */
+  interruptAfterChunks(n: number): void;
   playedPcm: Buffer[];
   faces: string[];
   armedLog: boolean[];
 } {
   let recording: Buffer | null = null;
   let micArmed = false;
+  let interruptAfter: number | null = null;
   const playedPcm: Buffer[] = [];
   const faces: string[] = [];
   const armedLog: boolean[] = [];
@@ -26,6 +30,10 @@ export function createFakeDevice(): RobotDevice & {
 
     pushRecording(wav: Buffer) {
       recording = wav;
+    },
+
+    interruptAfterChunks(n: number) {
+      interruptAfter = n;
     },
 
     async status(): Promise<DeviceStatus> {
@@ -41,7 +49,15 @@ export function createFakeDevice(): RobotDevice & {
     },
 
     async playPcm(chunks: AsyncIterable<Buffer>) {
-      for await (const chunk of chunks) playedPcm.push(chunk);
+      let received = 0;
+      for await (const chunk of chunks) {
+        playedPcm.push(chunk);
+        received++;
+        if (interruptAfter !== null && received >= interruptAfter) {
+          interruptAfter = null;
+          throw new PlaybackInterruptedError();
+        }
+      }
     },
 
     async setFace(name: string) {
