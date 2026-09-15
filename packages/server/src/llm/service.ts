@@ -9,6 +9,8 @@ export interface LlmRequest {
   prompt: string;
   /** The voice for this call; replaces the CLI's own preamble entirely. */
   system?: string;
+  /** Per-call cap in ms; the spoken path sets a short one. Falls back to the service default. */
+  timeoutMs?: number;
 }
 
 export type LlmReply =
@@ -98,7 +100,7 @@ export function createLlmService(opts: Options): LlmService {
           prompt: req.prompt,
           system: req.system,
           model: req.kind === 'chatter' ? 'haiku' : undefined,
-          timeoutMs: opts.timeoutMs,
+          timeoutMs: req.timeoutMs ?? opts.timeoutMs,
         });
 
         if (!result.ok) {

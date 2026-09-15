@@ -108,6 +108,13 @@ process.stdin.on('end', () => {
       // running until the caller's timeout kills it, which is the point.
       setInterval(() => {}, 60_000);
       return;
+    case 'probe-ok-else-hang': {
+      // The probe gets its READY so the service comes up 'full'; every
+      // real call then hangs, for tests of per-request timeouts.
+      if (prompt.includes('READY')) return reply('READY');
+      setInterval(() => {}, 60_000);
+      return;
+    }
     case 'exit-2':
       return process.exit(2);
     default:

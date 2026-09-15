@@ -70,6 +70,19 @@ export interface ChatReply {
   source: 'llm' | 'canned';
 }
 
+/** One earlier exchange, for the spoken path's short memory. */
+export interface ChatTurn {
+  player: string;
+  you: string;
+}
+
+export interface ChatOptions {
+  /** Earlier turns of this conversation, oldest first; folded into the prompt ahead of the new line. */
+  history?: ChatTurn[];
+  /** Per-call cap on the model, in ms. The spoken path sets a short one. */
+  timeoutMs?: number;
+}
+
 export interface Village {
   getState(): VillageState;
   /** True when this village must never reconcile against its own disk. */
@@ -90,9 +103,10 @@ export interface Village {
    * Say something to a creature and hear back. Never rejects on a model
    * failure. `style` picks the voice and the closing instruction: `'bubble'`
    * (the default) writes for the on-screen speech bubble; `'spoken'` writes
-   * for the physical robot's speaker and stamps `robotActivityAt()`.
+   * for the physical robot's speaker and stamps `robotActivityAt()`. `opts`
+   * carries the robot's short memory and its per-call cap on the model.
    */
-  chat(creatureId: string, message: string, style?: 'bubble' | 'spoken'): Promise<ChatReply>;
+  chat(creatureId: string, message: string, style?: 'bubble' | 'spoken', opts?: ChatOptions): Promise<ChatReply>;
   /** Move a creature into (or out of, with null) the physical robot. */
   setRobotResident(creatureId: string | null): Promise<void>;
   /** Park a villager at a spot the player chose. Throws for an unknown id. */
@@ -384,7 +398,7 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
       await commit(next, [{ at, type: 'cared-for', creatureId, detail: verb }]);
     },
 
-    async chat(creatureId, message, style = 'bubble') {
+    async chat(creatureId, message, style = 'bubble', opts = {}) {
       const creature = state.creatures[creatureId];
       if (!creature) throw new Error(`Creature not found: ${creatureId}`);
 
@@ -399,7 +413,19 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
       // The card travels as the call's actual system prompt — not prepended
       // to the user turn, where it read as a footnote and the voice went mid.
       const system = style === 'spoken' ? spokenSystemPrompt(fresh) : chatSystemPrompt(fresh);
+      // Earlier turns ride ahead of the new line (robot memory, plan Task
+      // 10.5): the model sees what was said and answers what is asked now.
+      const history = opts.history ?? [];
+      const earlier =
+        history.length === 0
+          ? []
+          : [
+              'Earlier in this conversation:',
+              ...history.flatMap((turn) => [`The player said: "${turn.player}"`, `You said: "${turn.you}"`]),
+              '',
+            ];
       const prompt = [
+        ...earlier,
         `The player says to you: "${message}"`,
         '',
         style === 'spoken'
@@ -413,7 +439,7 @@ export async function createVillage(options: VillageOptions): Promise<Village> {
       // another way of not having one.
       let reply: LlmReply;
       try {
-        reply = await llm.request({ kind: 'chatter', budget: 'interactive', prompt, system });
+        reply = await llm.request({ kind: 'chatter', budget: 'interactive', prompt, system, timeoutMs: opts.timeoutMs });
       } catch {
         reply = { ok: false, why: 'failed' };
       }
