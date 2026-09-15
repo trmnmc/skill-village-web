@@ -1,8 +1,11 @@
 # Pocket God Minigame — Design
 
-**Date:** 2026-08-26
-**Status:** approved by user (approach and all sections, this date)
-**Repo state at design time:** `main` at `f3d3946`
+**Date:** 2026-08-26, revised 2026-09-14
+**Status:** approved by user (approach, all sections, and the 2026-09-14
+re-grounding)
+**Repo state:** designed at `f3d3946`; revised against `d7a7628` after
+the pinning / pick-up feature landed (`6f6678f`, `c2ac7ad`, `304f503`
+and neighbours)
 
 ## 1. What this is
 
@@ -14,7 +17,8 @@ lost.
 
 ## 2. Decisions already made
 
-These were the user's explicit choices during brainstorming:
+These were the user's explicit choices during brainstorming, plus the
+re-grounding approvals of 2026-09-14:
 
 1. **Light consequence.** Small mood/energy dips, floor-clamped. A
    comic death + respawn is a possible future phase. Design so a death
@@ -23,112 +27,139 @@ These were the user's explicit choices during brainstorming:
    previous one's rails. Dunk needs new scenery (a pond), so it is last.
    This spec covers **phase 1 (toss)** in full; phases 2 and 3 appear
    only where a seam must be reserved for them.
-3. **God-mode toggle.** In god mode, a drag on a creature becomes a
-   toss. Normal mode keeps today's behavior exactly — the
-   drag-to-robot-house and evict flows are untouched. The toggle is a
-   standalone lightning-bolt (⚡) HUD button next to the weather gear
-   (⚙), so the mode is visible at a glance.
-4. **Local spectacle, server-recorded cost.** The ragdoll arc and
-   reactions play only in the actor's browser. The only server write is
-   a small stat dip, fire-and-forget. A fully-synced spectacle is a
+3. **God-mode toggle.** In god mode, releasing a carried creature
+   becomes a toss. Normal mode keeps today's behavior exactly. The
+   toggle is a standalone lightning-bolt (⚡) HUD button, so the mode
+   is visible at a glance.
+4. **Local spectacle, server-recorded cost.** The arc and reactions
+   play only in the actor's browser. The only mischief-specific server
+   write is a small stat dip, fire-and-forget. (The landing pin is a
+   normal placement write — see §5.) A fully-synced spectacle is a
    possible future upgrade alongside phase 3.
+5. **Toss rides the pin rails** (2026-09-14). A toss is placement with
+   airtime and a cost: the flight takes over the held body, and the
+   landing resolves and pins through the same path an ordinary drop
+   uses.
+6. **Mode rules** (2026-09-14). In god mode a toss beats the robot
+   house and evict. Aura instances are excluded from toss in phase 1.
+   The robot resident is tossable but never pinned or evicted by it.
 
-## 3. Client architecture: the `god/` module
+## 3. Ground truth this design stands on
+
+Verified at `d7a7628`:
+
+- A drag lifts the real villager: the actor hides (`setHeld`) and a
+  dangling body rides the cursor (`packages/web/src/scene/held.ts`,
+  `motion/dangle.ts`).
+- A drop is placement: `resolveHeldDrop` (`layout/zones.ts` via
+  `scene/placement.ts`) snaps the feet to a legal home, the pin is
+  stored locally and sent with `pinCreature` (`net/client.ts`,
+  `PUT /api/creatures/:id/pin`), and `reseat()` moves actors on the
+  release frame.
+- Cursor positions are zoom-corrected through `screenToWorld`; the
+  scene keeps a world cursor (`lookAt`, `cursorY`) fresh every frame.
+- Render keys and creature ids differ: an aura instance is a second
+  body of a project creature (`keyCreatureId`). Aura drops are set-down
+  no-ops — an aura has no ground of its own.
+- The state schema is at v5 (layout block). Mischief adds no persisted
+  fields, so no version bump.
+
+## 4. Client architecture: the `god/` module
 
 New directory `packages/web/src/god/` with four files. Each has one
-job and no KAPLAY dependency except where named.
+job. Only `toss.ts` may touch KAPLAY objects, and only by taking
+ownership of an existing `HeldCreature`.
 
-### 3.1 `mode.ts` — the toggle store
+### 4.1 `mode.ts` — the toggle store
 
 - `godMode(): boolean`, `toggle(): void`, `subscribe(fn): unsubscribe`.
 - The ⚡ button and village.ts are its only consumers.
 - Off by default on every page load. The mode is not persisted.
 
-### 3.2 `sampler.ts` — pointer velocity
+### 4.2 `sampler.ts` — cursor velocity, in world coordinates
 
-- A ring buffer of `(clientX, clientY, tMs)` samples covering the last
-  ~120 ms.
-- `push(x, y, t)` is called from village.ts's existing
-  `window.mousemove` listener — one added line.
-- `velocity(t): { vx, vy }` in px/s, computed over the buffered window.
-  With fewer than two fresh samples it returns zero velocity, and the
-  toss becomes a gentle drop straight down.
+- A ring buffer of `(worldX, worldY, t)` covering the last ~120 ms.
+- Pushed from the scene's `onUpdate` while a drag is live, using the
+  same zoom-corrected world cursor the held body already follows. (The
+  original design fed client pixels from `mousemove`; that is wrong
+  under zoom and duplicates work the scene already does.)
+- `velocity(t): { vx, vy }` in world px/s. With fewer than two fresh
+  samples it returns zero, and the toss becomes a gentle drop.
+- Why not extend `DragTracker`: its contract is click vs drop by slop
+  distance, and every consumer depends on that staying simple.
 
-Why not extend `DragTracker`: the tracker's contract is click vs drop
-decided by slop distance, and every existing consumer depends on that
-staying simple. Velocity is god mode's private need, so it lives in
-god mode's module.
+### 4.3 `ballistics.ts` — the flight sim
 
-### 3.3 `ballistics.ts` — the flight sim
+- Pure functions in `motion/motion.ts`'s idiom: pure in time, nothing
+  mutated, headless-testable.
+- `launch(x, y, vx, vy, t0): Flight` — world coordinates, launch speed
+  clamped so a fast flick cannot leave the strip.
+- `flightState(t, flight, groundY): { x, y, done, bounceAt }` — gravity
+  from the release point, a bounce or two damping along `groundY`,
+  then `done`. `bounceAt` names the most recent bounce instant so the
+  caller fires exactly one puff/sound per bounce (the `hopState`
+  `landedAt` trick).
+- `groundY` comes from the caller: where `resolveHeldDrop` puts the
+  feet for the arc's current x. The sim never imports layout code —
+  tests pass a plain number or a fake resolver.
 
-- Pure functions in `motion/motion.ts`'s idiom: pure in time, no
-  objects mutated, headless-testable.
-- `launch(originX, originY, vx, vy, t0): Flight` — clamps launch speed
-  to a max so a fast flick cannot throw a creature off the strip.
-- `flightState(t, flight): { dx, dy, done, bounceAt: number | null }`
-  — gravity, a floor bounce or two with damping, then `done`.
-  `bounceAt` names the most recent bounce instant so the caller can
-  fire exactly one puff/sound per bounce (same trick as `hopState`'s
-  `landedAt`).
-- Offsets are relative to the creature's home position, matching how
-  `wanderOffset` composes today.
+### 4.4 `toss.ts` — the power
 
-### 3.4 `toss.ts` — the power
+- `beginToss(...)` takes over the released gesture: the `HeldCreature`
+  visual, the sampled velocity, and the release point (feet, not
+  cursor — `footOffset()` applies, as the drop path already does).
+- Each frame it advances `flightState` and moves the borrowed visual;
+  the actor stays hidden exactly as during the drag.
+- On `done` it reports the landing spot back to the scene, which pins,
+  reseats, releases (firing the landing puff/sound at the new spot),
+  and plays a short dazed reaction.
+- Calls `postMischief(creatureId, 'toss')` fire-and-forget at launch,
+  in `pinCreature`'s style: false means "nothing happened server-side"
+  and the next state frame is the truth.
+- Phase 2 adds `lightning.ts` beside it; phase 3 adds `dunk.ts`. One
+  file per power.
 
-- `beginToss(creatureId, releaseEvent, sampler): Flight` — builds the
-  flight from the release position and sampled velocity.
-- Calls `postMischief(creatureId, 'toss')` fire-and-forget, in
-  `setRobotResident`'s style (`packages/web/src/net/client.ts`): a
-  failed or offline call means nothing happened server-side, and the
-  next state frame is the truth.
-- Phase 2 adds `lightning.ts` beside it; phase 3 adds `dunk.ts`. Each
-  power is one file.
+## 5. The village.ts seam
 
-## 4. The village.ts seam
-
-village.ts grows one thin intercept and one wiring line. **This is the
-named seam between god mode and the robot-house drop logic** — anyone
-editing the gesture block must keep the god-mode branch above the
-robot-house branch.
-
-In the existing `mouseup` handler (currently
-`packages/web/src/scene/village.ts` ~line 550):
+**This is the named seam between god mode and the drop logic.** The
+mouseup handler's drop branch currently orders: robot house → evict →
+aura set-down → pin (`packages/web/src/scene/village.ts`, the
+`window.addEventListener('mouseup', ...)` block). God mode adds one
+gate at the top of that branch:
 
 ```
-if gesture.type === 'drop' and godMode():
-    hand to toss.ts, add the Flight to the scene's flight map, return
-// existing robot-house / evict logic runs only in normal mode
+if drop and godMode():
+    aura instance (draggedId !== gesture.targetId) → set down, as today
+    otherwise → hand the HeldCreature to toss.ts, return
+// normal-mode branches run only when god mode is off
 ```
+
+Rules the gate encodes (approved 2026-09-14):
+
+- **Toss beats the robot house and evict.** Managing residency means
+  leaving god mode. Modes do one thing each.
+- **Auras are set down, not tossed, no cost.** An aura has no ground of
+  its own; a landing would teleport it back to its fan spot.
+- **The resident is tossable but never pinned or evicted.** Its flight
+  plays, the dazed beat lands, then it reseats home to the porch.
+
+On touchdown for everyone else: `resolveHeldDrop` at the landing x/y →
+`pins.set` → `reseat()` → hand the actor back (landing puff/sound at
+the new spot) → dazed reaction → `pinCreature(id, x, y)`. The same
+five steps an ordinary drop takes today, plus the reaction.
+
+The scene keeps `flights: Map<renderKey, TossFlight>` — you can grab a
+second villager while the first is still airborne. A state frame that
+removes a flying creature drops its flight and visual with it.
 
 Clicks in god mode pass through unchanged in phase 1 (the creature
-panel still opens). Phase 2 claims the click branch for lightning the
-same way.
-
-The drag ghost: while god mode is on, the drag ghost still rides the
-cursor (the creature is being carried). No change to the ghost code.
-
-## 5. The flung state in the scene
-
-`motion/` stays pure — there is no authority enum to join (the handoff
-that guessed one was wrong; verified against `motion/motion.ts` and
-`behaviour.ts`).
-
-- The scene keeps `flights: Map<creatureId, Flight>`.
-- Where a creature actor's draw position is computed, one branch: a
-  live flight replaces the wander offset with
-  `flightState(t, flight)`'s `dx/dy`.
-- When `done`: remove the flight, play a short **dazed** reaction
-  (stars or a wobble, reusing the existing reaction/bubble machinery).
-  The future comic-death reaction bolts on at this exact point as one
-  more reaction choice.
-- A creature mid-flight ignores hover and drag (it cannot be re-grabbed
-  until it lands). If a state frame removes the creature mid-flight,
-  the flight is dropped with it.
+panel still opens). Phase 2 claims the click branch for lightning at
+this same gate.
 
 ## 6. Server: the mischief endpoint
 
-Mirrors the care pattern end to end — verified against
-`packages/server/src/api/app.ts` and `packages/server/src/village.ts`.
+Mirrors the care pattern end to end — re-verified at `d7a7628`
+(`/api/creatures/:id/care`, `/api/creatures/:id/pin` both per-creature).
 
 ### 6.1 Core rule (`packages/core/src/sim/stats.ts`)
 
@@ -158,7 +189,8 @@ as scruffy.
 `mischief(creatureId, kind)` beside `care()`: look up the creature
 (throw "not found"), apply `applyMischief`, set `lastSeenAt`, commit
 with one event `{ at, type: 'mischief', creatureId, detail: kind }`.
-No LLM involvement; mischief is an offline verb.
+No LLM involvement; mischief is an offline verb. No schema change, no
+STATE_VERSION bump.
 
 ### 6.3 Endpoint (`packages/server/src/api/app.ts`)
 
@@ -175,14 +207,15 @@ as care does today.
 ### 6.4 Client call (`packages/web/src/net/client.ts`)
 
 `postMischief(creatureId, kind): Promise<boolean>` — a sibling of
-`setRobotResident`: true on ok, false on refusal or network failure,
-caller ignores the result.
+`pinCreature`: true on ok, false on refusal or network failure, caller
+ignores the result.
 
 ## 7. The ⚡ toggle button
 
-- A standalone HUD button next to the ⚙ weather button, styled the
-  same way (`packages/web/src/ui/weather-menu.ts` shows the pattern:
-  a plain DOM button mounted into the HUD container).
+- A standalone HUD button beside the existing ⚙ weather button and the
+  layout-reset button (`packages/web/src/ui/layout-button.ts` is the
+  freshest pattern to copy: a plain DOM button mounted into the HUD
+  container).
 - Active state is visible: the button lights up while god mode is on.
 - New file `packages/web/src/ui/god-button.ts` — mounts the button,
   talks only to `god/mode.ts`.
@@ -191,22 +224,28 @@ caller ignores the result.
 
 - **Server away / refusal:** `postMischief` returns false and is
   ignored. The spectacle already played locally; the next state frame
-  is the truth. This matches the robot-resident posture.
-- **Creature disappears mid-flight:** flight dropped with the actor.
+  is the truth. Same posture as `pinCreature`.
+- **Creature disappears mid-flight:** flight and borrowed visual are
+  dropped with the actor.
 - **Degenerate gestures:** near-zero velocity → gentle drop; huge
   velocity → clamped at launch. Both are ballistics.ts's job, tested.
-- **God mode + robot resident:** a toss in god mode never evicts — the
-  god-mode branch returns before the evict check. Evicting requires
-  leaving god mode. This is deliberate: modes do one thing each.
+- **Sprites still baking:** `createHeld` can return null; with nothing
+  in hand there is nothing to toss — the release falls through to the
+  normal drop path (which still pins at the drop point), no cost.
+- **Resident and auras:** covered by the §5 rules — no pin, no evict,
+  no aura cost.
 
 ## 9. Testing
 
 - `god/ballistics.test.ts` — arc shape, bounce damping and count,
   termination, launch-speed clamp, one `bounceAt` per bounce,
   determinism. Pure-function tests like `motion.test.ts`.
-- `god/sampler.test.ts` — velocity from synthetic samples, stale-sample
-  expiry, empty/one-sample safety.
+- `god/sampler.test.ts` — velocity from synthetic world-coordinate
+  samples, stale-sample expiry, empty/one-sample safety.
 - `god/mode.test.ts` — toggle and subscribe.
+- Seam rules — unit tests for the gate's routing where it is testable
+  headless (aura exclusion, resident no-pin), mirroring how
+  `placement.test.ts` pins down drop resolution.
 - `core` `stats.test.ts` — `applyMischief`: effect values, floor clamp,
   no dip at floor, bond/xp untouched.
 - `server` `app.test.ts` — endpoint 400/404/200 shapes, event written,
@@ -217,21 +256,28 @@ caller ignores the result.
 ## 10. Out of scope (phases 2–3, noted for seams only)
 
 - **Lightning (phase 2):** god-mode click → `lightning.ts`, a strike
-  effect, `kind: 'lightning'`. The click branch in the village.ts seam
-  is reserved for it.
+  effect, `kind: 'lightning'`. The click branch at §5's gate is
+  reserved for it.
 - **Dunk (phase 3):** pond scenery, `dunk.ts`, `kind: 'dunk'`.
-- **Comic death + respawn:** one more landing reaction at §5's seam.
+- **Comic death + respawn:** one more landing reaction at §5's
+  touchdown step.
+- **Aura tosses:** revisit if auras ever get ground of their own.
 - **Fully-synced spectacle:** would replace the local-only flight with
   server-relayed launches; revisit at phase 3.
 
 ## 11. Risks
 
-- **The village.ts gesture block drifts.** Someone edits the
-  mouseup handler without knowing god mode wraps it. Mitigation: the
-  intercept is three lines with a comment naming this spec, and the
-  seam is documented in §4.
+- **The village.ts gesture block drifts.** Someone edits the mouseup
+  handler without knowing god mode gates it. Mitigation: the gate is a
+  few lines with a comment naming this spec, placed at the top of the
+  drop branch, and §5 names the ordering rule.
+- **The pin rails move again.** This design leans on `resolveHeldDrop`,
+  `reseat`, `setHeld`, and `footOffset` staying shaped as they are at
+  `d7a7628`. The 2026-08-26 → 2026-09-14 revision was exactly this
+  risk landing once already; re-verify the seam before implementation
+  if main moves far again.
 - **Two diverged repos.** This repo (OneDrive) and
-  `C:\Users\truman\Projects\skill-village-web` are not reconciled.
-  **Resolve which repo is canonical before implementation starts**;
-  this spec is grounded in the OneDrive repo at `f3d3946` and must be
-  re-verified if implementation happens elsewhere.
+  `C:\Users\truman\Projects\skill-village-web` were still unreconciled
+  at revision time, but all recent work (M5, pinning, robot v1 docs)
+  has landed here and is pushed. Implementation proceeds here unless
+  the user says otherwise.
