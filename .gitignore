@@ -7,3 +7,10 @@ dist-spectator/
 contact-sheet.html
 .claude/
 packages/server/src/llm/testing/.broken-once*
+
+# Robot bench audio never enters git (delta R3): the owner's voice stays on the PC.
+# Replay tests use synthetic or TTS-made audio only.
+packages/server/src/robot/fixtures/*.wav
+packages/server/src/robot/fixtures/*.pcm
+packages/server/src/robot/fixtures/*.mp3
+packages/server/src/robot/fixtures/*.ogg

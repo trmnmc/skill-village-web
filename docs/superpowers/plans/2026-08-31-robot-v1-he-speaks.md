@@ -422,6 +422,42 @@ export function startRobotLoop(deps: RobotLoopDeps): { stop(): void; snapshot():
 
 ---
 
+### Task 10.5: Absorb the reconciliation delta — BEFORE FLASH (R1–R5 + the seven code-verified gaps)
+
+**Source:** `docs/superpowers/plans/2026-08-31-robot-v1-reconciliation-delta.md` (CEO review of 2026-08-31, user decisions D1–D7 and E1–E6) plus the 2026-09-02 CHECKLIST note listing seven code-verified gaps on `robot-v1`. Absorbed into this plan 2026-09-14. **Nothing is flashed until every box below is checked**, the device-env compile is SUCCESS, and the suite is green.
+
+**Decisions recorded here, so the delta file can be archived:**
+
+- **R4 = option (b).** `trimSilence` stays; a no-speech guard sits in front of the brain: minimum voiced duration (300 ms above the energy floor) and a transcript sanity filter for whisper's silence ghosts (`[BLANK_AUDIO]`, "Thank you.", "you", and friends). WebRTC VAD remains the v1.1 open-mic component (eng review D8.3 made the same call).
+- **Speak only on intent.** A no-speech capture after a **tap** arm gets the in-character "didn't catch that" line and the `shy` face. A no-speech capture inside the **follow-up window** stays silent — ambient noise is not a deliberate act — and the window keeps its deadline. The brain is never called for either.
+- **The listening mark is device-owned.** Whenever the mic is armed, the firmware draws an ear mark in the screen margin beside the face, independent of which GIF the PC asked for, and clears it on disarm. Listening GIF = `calm` (+ mark); thinking = `thinking`; talking = `happy` (lip sync). Listening no longer equals thinking. The device also disarms itself after `MIC_ARM_TIMEOUT_MS` (default 25 s) with nothing heard — a backstop for a tap-and-walk-away and for a PC that died mid-window.
+- **Interrupt protocol.** A tap while the robot speaks stops playback at once (already true) AND marks that PCM session interrupted on the device; every further chunk of that session is refused with `409 {"error":"interrupted"}`. The PC's device client raises `PlaybackInterruptedError`; the loop stops pulling sentences from the TTS iterable, logs `robot interrupted by tap`, shows `calm`, and re-arms for the follow-up window (tap = interrupt / talk-now). Server-side cancel of an in-flight **brain** call is deferred to the R6 week (outside-voice note), not flash-gating.
+- **Timeouts on every hop.** Device: status 2 s, pull 5 s, face/arm/disarm 3 s, one PCM chunk 10 s. whisper: 20 s. OpenAI TTS: 15 s per sentence. Piper: 15 s per sentence, child killed. Brain: 15 s on the spoken path — a per-request `timeoutMs` threads `village.chat(…, { timeoutMs })` → `LlmRequest.timeoutMs` → `runCli`; the service's 30 s stays the default for bubble chat. Every timeout lands in the existing never-mute ladder.
+- **Conversation memory (v1).** The loop keeps the last 6 turns of the current resident within a 10-minute window and passes them as `village.chat(…, { history })`; the village folds them into the prompt as an "Earlier in this conversation" block ahead of the new line. A resident swap or the window expiring clears it. No persistence.
+- **Never-mute bottom rung.** `packages/server/src/robot/canned.ts`: a code-synthesized two-tone chirp (no file, no network, no process) plus a disk cache of TTS-rendered canned lines under `<dataDir>/robot-audio/` (synthetic audio only — never mic audio), warmed in the background whenever a voice is available. When the whole TTS chain throws, the loop plays the cached line or, failing that, the chirp; the `pouty` face stays as the visual apology.
+- **Persona warmed at move-in.** The loop calls `village.ensurePersona(residentId)` when it starts and whenever the resident changes, so the first spoken turn pays for one model call, not two.
+- **Firmware change #11** (appended to `docs/robot/AUDIT.md`'s mandatory list): delete the TCP :9090 / UDP :9091 PCM listeners (`pcm_stream_service.*`) and the `/audio/session` routes. The authenticated HTTP chunk path (`POST /play/pcm`) is the only way audio reaches the speaker. Deletion-shaped.
+- **Deferred to the R6 week** (not flash-gating): brain cancel on tap; a persistent Piper process instead of one per sentence.
+
+**Files:**
+- Delete: `firmware/src/pcm_stream_service.cpp`, `firmware/src/pcm_stream_service.h`
+- Modify (firmware): `main.cpp`, `playback_service.cpp` (+`.h`), `http_server.cpp`, `mic_service.cpp`, `face_service.cpp` (+`.h`), `config_defaults.h`, `config.h.example`
+- Create (server): `robot/speech-guard.ts` (+test), `robot/canned.ts` (+test)
+- Modify (server): `robot/device.ts`, `robot/asr.ts`, `robot/tts.ts`, `robot/loop.ts` (+tests), `robot/testing/fake-device.ts`, `village.ts` (+test), `llm/service.ts`, `main.ts`
+- Modify (repo): `.gitignore` (R3), `docs/robot/AUDIT.md` (#11)
+
+- [ ] **Step 1 (R3): bench audio never enters git.** `.gitignore` gains `packages/server/src/robot/fixtures/*.wav` (+ `.pcm`, `.mp3`, `.ogg`). Task 12 Step 9 is reworded below.
+- [ ] **Step 2 (R5, firmware): close the raw ports.** `git rm` `pcm_stream_service.*`; drop its include and `initPcmStreamService()` from `main.cpp`; drop `isPcmStreamActive()` from the busy checks in `playback_service.cpp`; in `http_server.cpp` delete the `/audio/session` handlers, routes and body validator, the `UriBraces` include, and the stream/UDP fields of `/playback/status`. Verify: `grep -rn "9090\|9091\|PcmStream\|UdpPcm" firmware/src` finds nothing; `python -m platformio run -e m5stack-cores3` SUCCESS.
+- [ ] **Step 3 (R2 + gap 1, firmware): listening is visible, an interrupt ends the reply.** `face_service`: `setListeningIndicator(bool)` draws/clears the ear mark from the face task (redrawn after every GIF switch, which clears the screen); `FACE_LISTENING` maps to `calm`. `mic_service`: arm sets the mark and an arm deadline (`MIC_ARM_TIMEOUT_MS`, `config_defaults.h` + `config.h.example`); `updateMicrophone()` disarms when the deadline passes with no recording in progress. `playback_service`: `stopPlaybackNow()` remembers the interrupted session; `wasSessionInterrupted(id)`; `/play/pcm` answers 409 `interrupted` for it and forgets it when a new session starts. Verify: compile SUCCESS.
+- [ ] **Step 4 (R4, server): speech guard.** `robot/speech-guard.ts` with `hasVoicedSpeech(pcm, sampleRate, opts)` and `looksLikeSpeech(transcript)`; tests first (silence, a 100 ms click, a sustained tone, `[BLANK_AUDIO]`, "Thank you.", "you", real sentences).
+- [ ] **Step 5 (R1, server): canned audio.** `robot/canned.ts` with `chirpPcm24k()`, `createCannedAudio({ dir, log })` → `play(kind)` (cached WAV → chirp, never throws) and `warm(speaker)` (renders missing lines to the cache, best effort). Tests first (chirp shape and length, cache hit, cache miss → chirp, warm writes files, warm failure is quiet).
+- [ ] **Step 6 (gaps 1, 3, 7 + R1/R4 wiring, server):** `device.ts` timeouts + `PlaybackInterruptedError`; `asr.ts` and `tts.ts` timeouts; `fake-device.ts` gains `interruptAfterChunks(n)`; `loop.ts`: guard before the brain, tap-vs-window rule, canned fallback, interrupt handling, persona warm on resident change, brain `timeoutMs`. Tests first for every branch.
+- [ ] **Step 7 (gap 5, server): memory.** `LlmRequest.timeoutMs` → `runCli`; `village.chat(id, text, style, { history?, timeoutMs? })` folds history into the prompt; loop keeps the ring (6 turns / 10 min / cleared on swap). Tests at both levels (the `inspect` fake CLI shows the prompt).
+- [ ] **Step 8: wiring + gates.** `main.ts`: canned cache dir under the data dir, `warm()` on start, guard/timeouts on by default. Full suite green, typecheck clean, device compile SUCCESS. Commit per step; push after each commit.
+- [ ] **Step 9: records.** Append change #11 to `docs/robot/AUDIT.md`; reword Task 12 Step 9 (below); CHECKLIST robot section updated; delta file stays in git as the decision record.
+
+---
+
 ### Task 11: [HUMAN] Runtime pieces — whisper, piper, key
 
 All downloads need the user's approval; record exact versions in `docs/robot/SETUP.md` as you go (that doc is Task 12's deliverable — start it here with a "Runtime pieces" section).
@@ -435,7 +471,7 @@ All downloads need the user's approval; record exact versions in `docs/robot/SET
 
 ### Task 12: [HUMAN] Bring-up — flash, contain, first conversation
 
-Interactive with the user at the desk. **Order is load-bearing** (privacy: factory firmware never gets Wi-Fi).
+Interactive with the user at the desk. **Order is load-bearing** (privacy: factory firmware never gets Wi-Fi). **Flash gate:** Task 10.5 fully checked (the delta is absorbed), device-env compile SUCCESS, suite green, and the factory firmware backed up with M5Burner before the first flash.
 
 - [ ] **Step 1 [HUMAN]: Unbox + offline sanity** — power on, confirm screen/servos/speaker demo WITHOUT joining any network, no app install, no account.
 - [ ] **Step 2 [HUMAN]: Local config** — `firmware/src/config.h`: real `WIFI_SSID_0/PASSWORD_0`, a generated `ROBOT_API_TOKEN` (`openssl rand -hex 16` or PowerShell `-join ((48..57)+(97..102) | Get-Random -Count 32 | % {[char]$_})`). Confirm `git status` shows it untracked.
@@ -445,7 +481,7 @@ Interactive with the user at the desk. **Order is load-bearing** (privacy: facto
 - [ ] **Step 6 [HUMAN]: First conversation** — set a resident (drag in the browser at `http://localhost:5173` or `curl -X PUT localhost:8262/api/robot/resident -H "content-type: application/json" -d "{\"creatureId\":\"<id>\"}"`), tap, ask who he is. Expected: the reply is in the resident's personality, the timing log line appears, `robotLastTurnAt` moves.
 - [ ] **Step 7 [HUMAN]: Traffic capture** — `pktmon` or Wireshark filtered to the robot's IP for a full conversation: every packet terminates at the PC. Save the one-line conclusion (not the capture) to SETUP.md.
 - [ ] **Step 8: Latency baseline** — copy three turns' timing lines into SETUP.md; compare against spec §5 v1 (~2.5–4 s).
-- [ ] **Step 9: Scripted fixtures** — with the user speaking three SCRIPTED phrases, save the WAVs via a temporary `SKILL_VILLAGE_ROBOT_WAV_FIXTURES` hook or by copying the pull in the loop under a debug flag; commit under `packages/server/src/robot/fixtures/` for replay tests. (Text-only fixtures acceptable if WAV plumbing drags — note which landed.)
+- [ ] **Step 9: Scripted fixtures, local only (delta R3)** — with the user speaking three SCRIPTED phrases, save the WAVs under `packages/server/src/robot/fixtures/` (gitignored: the owner's voice never enters git) for hand replay on this PC only. Replay tests that ship in git use synthetic sine WAVs or TTS-made speech. (Text-only fixtures acceptable if WAV plumbing drags — note which landed.)
 - [ ] **Step 10: Finish `docs/robot/SETUP.md`** (what-talks-to-what, prerequisites, runtime pieces, flash, containment, rollback) and commit: `chore(robot): v1 bring-up notes, latency baseline, scripted fixtures`.
 
 ---
@@ -455,3 +491,10 @@ Interactive with the user at the desk. **Order is load-bearing** (privacy: facto
 - **V2 "he is them":** face-pack generator (creature DNA → GIF expression set; golden tests), firmware runtime face loading (AUDIT §11: free-after-acknowledge handshake or double-buffer + mutex — the audited hazard), move-in delivery + swap, petting→care touch gestures, canned-audio WAV cache, on-device resident menu, presence truthfulness polish.
 - **V3 "he keeps up":** `--output-format stream-json --include-partial-messages` streaming brain (probe the installed CLI first, M4-style), spawn-ahead warm runner, streaming mic off the device, WebRTC VAD on the PC stream, openWakeWord hands-free, barge-in-by-voice. Gate: measured V1 baselines.
 - Cleanup queued behind V1: retire or keep the dormant `/v1` OpenAI-compat shim; delete `.superpowers/sdd/2026-08-23-r1-r2-robot-embodiment/`.
+
+**V-map notes carried from the reconciliation delta (R6–R10, user decisions of 2026-08-31):**
+- **R7 face bar:** V1's stock whale face is bring-up scaffolding, never the end state; the creature face (V2) is the embodiment release bar.
+- **R8 landing sites:** E1 thinking-face cycle → V1 (present); E3 move-in greeting → V2; E5 per-creature voices → V2 "he is them" (voice is identity, same argument as the face — the spec's "after V3" deferral is superseded); E2 work-signal face reactions and E6 sleep-with-the-village-clock → the V2.5/V3 wave. **E4 idle murmurs was DECLINED:** he speaks only on a deliberate user action, never on a timer. Do not resurface.
+- **R6 latency staging:** V1 measures the 2.5–4 s band; the streaming-brain spike is the next latency release after measured V1 baselines exist. The delta placed it in the week of 2026-09-08; the hardware had not been flashed by 2026-09-14, so the calendar slips with V1, the gate does not.
+- **R9 save durability:** the robot writes to the shared save; refuse-to-boot on a newer save and the canonical durable data dir land in the foundation sprint (T1/T9, in flight in a sibling session as of 2026-09-14) before the V2.5+ wave.
+- **R10 governance:** this plan is the single build authority; CEO decision records live under `~/.gstack/projects/trmnmc-skill-village-web/ceo-plans/`. Parallel sessions write distinct filenames — never reuse another session's artifact name.
