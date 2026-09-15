@@ -5,6 +5,10 @@ void initPlayback();                 // setup()で呼ぶ
 void updatePlayback();
 bool isPlaybackActive();
 void stopPlaybackNow();              // タップ割り込み：即時停止＋キュー破棄
+// The session a tap cut short. Its later chunks are refused (409) so the
+// PC stops synthesizing instead of resuming mid-reply (delta, gap 1).
+bool wasSessionInterrupted(const String& sessionId);
+void forgetInterruptedSession();
 bool shouldResumeMic();
 void clearMicResumeRequest();
 void requestMicResume();

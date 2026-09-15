@@ -25,6 +25,7 @@ static size_t s_currentAudioSize = 0;
 static unsigned long s_playbackDeadlineMs = 0;
 static unsigned long s_playbackStartMs = 0;
 static bool s_micResumeRequested = false;
+static String s_interruptedSession = "";
 
 #define LIPSYNC_INTERVAL_MS   50
 #define LIPSYNC_CHUNK_SAMPLES 1024
@@ -482,12 +483,22 @@ bool isPlaybackActive() {
 void stopPlaybackNow() {
     if (!s_isPlaying) return;
     Serial.println("[PLAY] Tap interrupt -> stop");
+    // Remember which reply was cut short: the rest of it is refused.
+    s_interruptedSession = s_playbackState.pcmSessionId;
     if (audioGateEnter("tap-stop", 200)) {
         M5.Speaker.stop();
         audioGateLeave("tap-stop");
     }
     clearQueuedPcmPlayback();
     notifyPlaybackFinished();
+}
+
+bool wasSessionInterrupted(const String& sessionId) {
+    return s_interruptedSession.length() > 0 && sessionId == s_interruptedSession;
+}
+
+void forgetInterruptedSession() {
+    s_interruptedSession = "";
 }
 
 bool shouldResumeMic() {

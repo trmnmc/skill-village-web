@@ -20,6 +20,29 @@ static int            gif_src_height     = 0;
 static WhaleFace currentFace = WHALE_CALM;
 static bool      isTalking   = false;
 
+// ── Listening mark ─────────────────────────────────────────────────────────
+// The GIF paints only the centre 240 px of the 320 px screen (GIFDraw's
+// xOff), so the 40 px margins on each side are ours: a mark drawn there is
+// never painted over by a frame. The face task is the only writer of
+// M5.Display, so it draws the mark too — and again after every GIF switch,
+// because a switch clears the whole screen.
+#define LISTEN_MARK_X   8
+#define LISTEN_MARK_Y   16
+#define LISTEN_MARK_W   24
+#define LISTEN_MARK_H   40
+#define LISTEN_MARK_R   6
+static volatile bool s_listening      = false;
+static bool          s_markOnScreen   = false;
+
+static void paintListeningMark(bool on) {
+    const uint16_t color = on ? TFT_RED : TFT_BLACK;
+    M5.Display.fillRoundRect(LISTEN_MARK_X, LISTEN_MARK_Y,
+                             LISTEN_MARK_W, LISTEN_MARK_H, LISTEN_MARK_R, color);
+    M5.Display.fillRoundRect(320 - LISTEN_MARK_X - LISTEN_MARK_W, LISTEN_MARK_Y,
+                             LISTEN_MARK_W, LISTEN_MARK_H, LISTEN_MARK_R, color);
+    s_markOnScreen = on;
+}
+
 // ── GIF asset table ────────────────────────────────────────────────────────
 struct GifAsset { const uint8_t* data; size_t len; };
 
@@ -132,6 +155,12 @@ static void faceTask(void* param) {
                 }
             }
             gif_changed = false;
+            // fillScreen above wiped the mark; repaint if the ear is open.
+            s_markOnScreen = false;
+        }
+
+        if (s_listening != s_markOnScreen) {
+            paintListeningMark(s_listening);
         }
 
         if (current_gif_data != nullptr) {
@@ -188,7 +217,9 @@ void setFaceExpression(FaceExpression expr) {
             isTalking = false;
             break;
         case FACE_LISTENING:
-            target    = WHALE_THINKING;
+            // Listening is calm plus the red ear mark; thinking keeps its own
+            // face, so the two states never read the same (delta R2).
+            target    = WHALE_CALM;
             isTalking = false;
             break;
         case FACE_PLAYING:
@@ -222,6 +253,10 @@ void setMouthOpen(float ratio) {
     if (target != currentFace) {
         switchToFace(target);
     }
+}
+
+void setListeningIndicator(bool on) {
+    s_listening = on;
 }
 
 void setWhaleFace(WhaleFace face) {

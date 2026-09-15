@@ -77,8 +77,18 @@ static void handlePlayPcm() {
     bool stagedMode = pcmMode == "staged" || server.arg("staged") == "1" || server.arg("defer") == "1";
     uint8_t* pcmData = upload.data;
 
+    // A tapped-away reply stays away (delta, gap 1): once the owner has
+    // interrupted a session, its later chunks are refused so the PC stops
+    // synthesizing instead of resuming mid-reply.
+    if (wasSessionInterrupted(sessionId)) {
+        free(pcmData);
+        server.send(409, "application/json", "{\"success\":false,\"error\":\"interrupted\"}");
+        return;
+    }
+
     long expectedSeq = s_pcm_diag_next_seq;
     bool newDiagSession = sessionId != s_pcm_diag_session;
+    if (newDiagSession) forgetInterruptedSession();
     if (newDiagSession) {
         expectedSeq = 0;
     }

@@ -63,6 +63,13 @@
 #ifndef PRE_TRIGGER_BUFFER_SAMPLES
 #define PRE_TRIGGER_BUFFER_SAMPLES 4800
 #endif
+// An armed ear that hears nothing closes itself after this long (delta R2
+// backstop). The PC's follow-up window is 20 s; this is the device's own
+// answer to a tap-and-walk-away or a PC that died mid-window.
+#ifndef MIC_ARM_TIMEOUT_MS
+#define MIC_ARM_TIMEOUT_MS 25000
+#endif
+
 #ifndef MIC_MAGNIFICATION
 #define MIC_MAGNIFICATION 2
 #endif

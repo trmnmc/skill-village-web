@@ -41,6 +41,8 @@ static MicState mic_state = MIC_IDLE;
 static uint32_t trigger_start_ms = 0;
 static uint32_t silence_start_ms = 0;
 static volatile bool s_mic_armed = false;
+// When an armed ear that has heard nothing closes itself (delta R2).
+static uint32_t s_arm_deadline_ms = 0;
 
 // プリトリガーリングバッファ
 static int16_t pre_trigger_buf[PRE_TRIGGER_BUFFER_SAMPLES];
@@ -72,10 +74,14 @@ void armMicrophone(bool on) {
         pre_buf_write = 0;
         pre_buf_full  = false;
         mic_state = MIC_IDLE;
+        s_arm_deadline_ms = millis() + MIC_ARM_TIMEOUT_MS;
+        setListeningIndicator(true);
         setFaceExpression(FACE_LISTENING);
         Serial.println("[MIC] Armed");
     } else {
         mic_state = MIC_IDLE;
+        s_arm_deadline_ms = 0;
+        setListeningIndicator(false);
         setFaceExpression(FACE_IDLE);
         Serial.println("[MIC] Disarmed");
     }
@@ -189,6 +195,15 @@ void updateMicrophone() {
     // room says touches our RAM until someone opens the ear on purpose.
     if (!s_mic_armed) return;
 
+    // An open ear with nothing to hear closes itself: a tap-and-walk-away
+    // or a PC that died mid-window never leaves the mic hot (delta R2).
+    if ((mic_state == MIC_IDLE || mic_state == MIC_TRIGGERING) &&
+        s_arm_deadline_ms != 0 && (int32_t)(millis() - s_arm_deadline_ms) >= 0) {
+        Serial.println("[MIC] Arm timeout -> disarm");
+        armMicrophone(false);
+        return;
+    }
+
     static int16_t frame[MIC_FRAME_SAMPLES];
     if (!audioGateEnter("mic-record", 0)) return;
     bool recorded = M5.Mic.record(frame, MIC_FRAME_SAMPLES, MIC_SAMPLE_RATE);
@@ -275,8 +290,8 @@ void updateMicrophone() {
                 // One utterance per arm, and the raw samples don't linger.
                 memset(record_buffer, 0, recorded_samples * sizeof(int16_t));
                 recorded_samples = 0;
-                s_mic_armed = false;
-                mic_state = MIC_IDLE;
+                // Through armMicrophone so the ear mark goes out with the ear.
+                armMicrophone(false);
             }
             break;
         }

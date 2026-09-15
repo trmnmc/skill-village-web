@@ -31,6 +31,7 @@
 #define MIC_MIN_VALID_SAMPLES     5200
 #define MIC_VOICE_CONFIRM_RMS     0.004f
 #define PRE_TRIGGER_BUFFER_SAMPLES 4800
+#define MIC_ARM_TIMEOUT_MS        25000   // armed ear with nothing heard closes itself
 
 // マイク追加設定
 #define MIC_MAGNIFICATION         2
