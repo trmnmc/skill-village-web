@@ -48,3 +48,4 @@ Containment (router-level internet block; robot ↔ PC only) remains layered on 
 | 8 | Delete `src/drivers/SCServo/` | Dead Chinese-vendor-derived code compiled into the image |
 | 9 | Owner-scope the `M5GFX` dependency | Name-squat substitution window |
 | 10 | Face-buffer lifecycle handshake (design constraint for the V2 patch) | Use-after-free |
+| 11 | **Delete the raw TCP :9090 / UDP :9091 PCM listeners** (`pcm_stream_service.*`) and the `/audio/session` routes; the authenticated HTTP chunk path is the only way audio reaches the speaker (reconciliation delta R5, absorbed 2026-09-14). Change #1's TCP handshake token is moot with the listener gone. | Unauthenticated UDP speaker injection from any LAN host; attack surface |

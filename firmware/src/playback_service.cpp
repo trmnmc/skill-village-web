@@ -5,7 +5,6 @@
 #include "config_loader.h"
 #include "face_service.h"
 #include "audio_gate.h"
-#include "pcm_stream_service.h"
 
 struct PlaybackRuntimeState {
     size_t lipSyncOffset = 0;
@@ -36,7 +35,8 @@ static bool s_micResumeRequested = false;
 #define SPEAKER_PLAYBACK_CHANNEL 0
 
 // The download engine is gone by design: the device never fetches a URL.
-// Playback arrives only as pushed PCM (HTTP chunks, TCP stream, or UDP).
+// Playback arrives only as pushed PCM over the authenticated HTTP chunk
+// path. The raw TCP/UDP listeners are gone (delta R5): one way in.
 
 struct PcmBuffer {
     uint8_t* data;
@@ -58,7 +58,7 @@ static void processAudioQueue();
 static void clearStagedPcmPlayback();
 
 static bool hasPendingPlaybackWork() {
-    return !s_pcmQueue.empty() || isPcmStreamActive();
+    return !s_pcmQueue.empty();
 }
 
 void clearQueuedPcmPlayback() {
@@ -196,7 +196,7 @@ PcmPlaybackResult startPcmPlayback(uint8_t* pcmData, size_t pcmSize, const Strin
         Serial.printf("[PCM] Invalid size: %u\n", (unsigned)pcmSize);
         return PCM_PLAYBACK_INVALID;
     }
-    if (s_isPlaying || isPcmStreamActive() || M5.Speaker.isPlaying()) {
+    if (s_isPlaying || M5.Speaker.isPlaying()) {
         if (s_playbackState.currentIsPcm && sessionId == s_playbackState.pcmSessionId &&
             enqueuePcmBuffer(pcmData, pcmSize, sessionId, finalSegment)) {
             return PCM_PLAYBACK_QUEUED;
@@ -293,7 +293,7 @@ PcmPlaybackResult stagePcmPlayback(uint8_t* pcmData, size_t pcmSize, const Strin
         Serial.printf("[PCM] Invalid staged size: %u\n", (unsigned)pcmSize);
         return PCM_PLAYBACK_INVALID;
     }
-    if (s_isPlaying || isPcmStreamActive() || M5.Speaker.isPlaying() || !s_pcmQueue.empty()) {
+    if (s_isPlaying || M5.Speaker.isPlaying() || !s_pcmQueue.empty()) {
         Serial.printf("[PCM] Busy; refusing staged segment session=%s\n", sessionId.c_str());
         return PCM_PLAYBACK_BUSY;
     }

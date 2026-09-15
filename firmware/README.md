@@ -2,6 +2,13 @@
 
 **M5Stack CoreS3 firmware for the Stack-chan MCP robot**
 
+> **Skill Village fork (2026-08-31, hardened 2026-09-14).** This is a vendored, audited snapshot of
+> upstream `e8258a85` — see `VENDOR.md` and `../docs/robot/AUDIT.md`. Differences from the text below:
+> no camera (`GET /snapshot` is gone), no URL fetch (`POST /play` is gone), no raw TCP/UDP PCM
+> listeners (only the HTTP chunk path plays audio), every route requires the `X-Robot-Token`
+> header (`ROBOT_API_TOKEN` in `src/config.h`), the mic is disarmed until a tap or `POST /mic/arm`,
+> and an armed mic shows a red ear mark beside the face. The Japanese sections are upstream's.
+
 PC/Mac 上の MCP サーバーや補助ツールから、M5Stack CoreS3 上の Stack-chan を HTTP で制御するためのファームウェアです。
 音声再生、録音取得、表情表示、サーボ動作、カメラ撮影、環境センサー取得を担当します。
 
@@ -9,9 +16,9 @@ PC/Mac 上の MCP サーバーや補助ツールから、M5Stack CoreS3 上の S
 
 ## ✨ 特徴
 
-- **HTTP 音声再生**: `POST /play` で WAV URL を再生、`POST /play/pcm` と TCP PCM ストリームで低遅延 PCM 再生
+- **HTTP 音声再生**: `POST /play/pcm` で 24kHz mono s16le PCM をチャンク再生（このフォークでは HTTP のみ）
 - **録音の MCP pull モード**: `POST /mode` で録音状態を初期化し、`GET /audio/status` と `GET /audio` で取得
-- **表情・動作・視覚**: `POST /face`、`POST /move`、`POST /nod`、`POST /shake`、`GET /snapshot`
+- **表情・動作**: `POST /face`、`POST /move`、`POST /nod`、`POST /shake`（カメラはこのフォークにありません）
 - **診断エンドポイント**: `GET /playback/status`、`GET /servo/status`、`GET /env`、`GET /env/debug`
 - **Arduino / PlatformIO ベース**: CoreS3 向けの C++ ファームウェア
 
@@ -62,14 +69,13 @@ pio device monitor
 
 | エンドポイント | 用途 |
 |--------------|------|
-| `POST /play` | WAV URL を受け取って再生 |
 | `POST /play/pcm` | 24kHz mono s16le PCM を受け取って再生またはキュー投入 |
+| `POST /mic/arm` / `POST /mic/disarm` | マイクを開く / 閉じる（開いている間は赤い耳マークを表示） |
 | `POST /mode` | 録音状態を初期化 (`mode` は `mcp` のみ) |
 | `GET /audio/status` | 録音完了フラグを確認 |
 | `GET /audio` | 録音済み WAV を取得 |
 | `POST /move` / `POST /home` / `POST /nod` / `POST /shake` | 頭の向きとジェスチャー制御 |
 | `POST /face` / `GET /face` | 表情を変更 / 確認 |
-| `GET /snapshot` | カメラ JPEG を取得 |
 | `GET /playback/status` | 音声再生・PCM キュー診断 |
 | `GET /servo/status` | サーボ状態診断 |
 | `GET /env` | 温度・湿度・気圧を取得 |
