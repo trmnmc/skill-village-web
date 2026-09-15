@@ -16,7 +16,7 @@ _Updated: 2026-08-31 — main_
 
 ## Robot A′ redesign (see pause-2026-08-31-robot-aprime-design.md)
 
-_Updated: 2026-08-31 — design session, no branch_
+_Updated: 2026-09-15 — robot-v1 worktree; the reconciliation delta is absorbed, nothing flashed yet_
 
 - [x] Requirements + hard rule locked (persona-speaker, creature face, ~1 s, touch ×4, no Chinese-authored code in data path)
 - [x] Approach A′ approved: vendored migratorywhale/stackchan-mcp firmware + voice module in skill-village-server (WebRTC VAD, whisper.cpp, OpenAI TTS/Piper); xiaozhi stack dead
@@ -30,3 +30,8 @@ _Updated: 2026-08-31 — design session, no branch_
 - [ ] Build tooling install (tomorrow): `pip install platformio` (Python 3.12 + Node 24 present; whisper.cpp prebuilt binaries avoid cmake)
 - [ ] User homework pre-arrival (2026-09-01): router per-device internet block; robot Wi-Fi choice
 - [ ] Day one: unbox → sanity WITHOUT Wi-Fi on factory firmware → flash → router block → echo test → traffic capture
+- [x] Tasks 1–10 executed on `robot-v1` @ `0a16604` (detail in the 2026-08-31 checklist entry on main)
+- [x] **Task 10.5 (2026-09-15): reconciliation delta ABSORBED on `robot-v1`** (pushed): the plan gained Task 10.5 with every decision the delta needed; firmware — raw TCP :9090 / UDP :9091 PCM listeners deleted (audit change #11), a red ear mark in the screen margins while the mic is armed (listening ≠ thinking), a 25 s arm timeout, a tap mid-reply refuses the rest of the session (409 interrupted); server — speech guard (300 ms voiced + whisper-ghost filter; tap → "didn't catch that", follow-up window → silent, brain never called), canned rung (cached lines under `<dataDir>/robot-audio/` + a code-made chirp), timeouts on every hop (device 2/5/3/10 s, whisper 20 s, TTS 15 s, brain 15 s + hard cap), six-turn memory via `village.chat(…, { history, timeoutMs })`, persona warmed at move-in. Device-env compile SUCCESS; 1207 tests green; typecheck clean.
+- [ ] **A′ vs A″ — the owner's call before flash.** `robot-v1` is A′ as built (vendored fork, line-audited, spec final on main). The 2026-08-31 eng review on `claude/plan-eng-review-0888c7` concluded A″ (fresh ~2k-line firmware over pinned M5Unified) in a parallel session that never saw robot-v1. This session proceeded on A′ because spec, plan, audit and code agree; every server-side change carries over to A″ unchanged if the owner picks it.
+- [ ] Deferred to the R6 week (not flash-gating): server-side cancel of an in-flight brain call on tap; a persistent Piper process instead of one per sentence.
+- [ ] Known gap: the firmware native test env needs a host g++ (MinGW); the device env is the real gate.
