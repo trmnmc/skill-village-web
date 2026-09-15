@@ -94,21 +94,25 @@ ownership of an existing `HeldCreature`.
   mutated, headless-testable.
 - `launch(x, y, vx, vy, t0): Flight` — world coordinates, launch speed
   clamped so a fast flick cannot leave the strip.
-- `flightState(t, flight, groundY): { x, y, done, bounceAt }` — gravity
-  from the release point, a bounce or two damping along `groundY`,
-  then `done`. `bounceAt` names the most recent bounce instant so the
-  caller fires exactly one puff/sound per bounce (the `hopState`
-  `landedAt` trick).
-- `groundY` comes from the caller: where `resolveHeldDrop` puts the
-  feet for the arc's current x. The sim never imports layout code —
-  tests pass a plain number or a fake resolver.
+- `advance(flight, t, groundY): FlightStep` — the ballistic point at
+  `t`; on ground contact, either a damped-bounce successor `Flight`
+  (`bounced: true`, the caller's one-puff-per-bounce hook) or
+  `done: true`.
+- `groundY` is **the landing row, resolved once at launch**: the same
+  feet-corrected point an ordinary drop would resolve through
+  `resolveDrop`. Resolving against the arc's mid-air position instead
+  would snap the ground line to a back row at the apex and land the
+  throw in the sky — so a phase-1 toss travels along its launch row,
+  and row changes stay the drag-and-drop's job. The sim never imports
+  layout code — tests pass a plain number.
 
 ### 4.4 `toss.ts` — the power
 
 - `beginToss(...)` takes over the released gesture: the `HeldCreature`
-  visual, the sampled velocity, and the release point (feet, not
-  cursor — `footOffset()` applies, as the drop path already does).
-- Each frame it advances `flightState` and moves the borrowed visual;
+  visual, the sampled velocity, the release point (feet, not cursor —
+  `footOffset()` applies, as the drop path already does), and the
+  launch-resolved `groundY`.
+- Each frame it calls `advance` and moves the borrowed visual;
   the actor stays hidden exactly as during the drag.
 - On `done` it reports the landing spot back to the scene, which pins,
   reseats, releases (firing the landing puff/sound at the new spot),
