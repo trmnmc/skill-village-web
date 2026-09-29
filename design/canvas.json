@@ -1,0 +1,25 @@
+{
+  "artboards": [
+    { "file": "Vocabulary.dc.html", "x": 0, "y": 0, "w": 880, "h": 560, "title": "What exists today" },
+    { "file": "Main.dc.html", "x": 0, "y": 660, "w": 880, "h": 640, "title": "Option A — Crownless perchers" },
+    { "file": "OptionB.dc.html", "x": 940, "y": 660, "w": 880, "h": 640, "title": "Option B — Winged watchers" },
+    { "file": "OptionC.dc.html", "x": 1880, "y": 660, "w": 880, "h": 720, "title": "Option C — Motes" }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 940,
+      "y": 40,
+      "w": 400,
+      "text": "Decision on the table: how much villager vocabulary should a hook keep?\n\nAll three are drawn from the real grids.ts — same role alphabet, same 8 hues, same INK. Pick a direction, not a polish level.\n\nSettled already: ambient readout only, hooks ping the game, identity = the script path so tuning a flag keeps the same animal."
+    },
+    {
+      "id": "burst-note",
+      "x": 1880,
+      "y": 40,
+      "w": 340,
+      "text": "Open question on the burst: hooks on PostToolUse fire many times a minute. Unthrottled that is a strobe. Proposal is one burst per hook per ~2s, and a steady glow instead of bursts above that rate."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

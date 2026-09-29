@@ -1,0 +1,156 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; background: #1c1a17; color: #e8e2d6; }
+    a { color: #6fbcad; } a:hover { color: #7fbf8a; }
+    .lbl { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #8d8579; }
+  </style>
+</helmet>
+<div style="padding: 40px 44px; width: 792px;">
+
+  <div style="display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px;">
+    <div style="font-size: 22px; font-weight: 500; color: #e8e2d6;">Option C — Motes</div>
+    <div style="font-size: 12px; color: #6fbcad;">max distinction</div>
+  </div>
+  <div style="font-size: 13px; line-height: 1.7; color: #b3ab9c; max-width: 620px; margin-bottom: 4px;">
+    A body family that only hooks get: small, round, one large central eye instead of a pair. Three silhouettes, same role alphabet, same hues. Unmistakably a different animal from two zones away.
+  </div>
+  <div style="font-size: 12px; line-height: 1.7; color: #7d7568; max-width: 620px; margin-bottom: 30px;">
+    Tradeoff: this is genuinely new art — three more grids to author, review and keep consistent. It is also the only option that cannot be confused with anything already in the village.
+  </div>
+
+  <div style="display: flex; gap: 18px;">
+    <sc-for list="{{states}}" as="st" hint-placeholder-count="3">
+      <div style="flex-grow: 1; background: #232019; border: 1px solid #332e25; padding: 22px 18px 18px;">
+        <div class="lbl" style="margin-bottom: 4px;">{{st.name}}</div>
+        <div style="font-size: 11px; color: #6d665b; line-height: 1.6; height: 44px;">{{st.note}}</div>
+        <div style="position: relative; height: 150px; display: flex; align-items: flex-end; justify-content: center;">
+          <sc-for list="{{st.sparks}}" as="sp" hint-placeholder-count="0">
+            <div style="{{sp.s}}"></div>
+          </sc-for>
+          <div style="display: flex; flex-direction: column; align-items: center;">
+            <div style="display: grid; grid-template-columns: repeat({{st.cols}}, 8px);">
+              <sc-for list="{{st.cells}}" as="cell" hint-placeholder-count="36">
+                <div style="{{cell.s}}"></div>
+              </sc-for>
+            </div>
+            <div style="width: {{st.perchW}}px; height: 8px; background: #4a4238;"></div>
+            <div style="width: {{st.perchW}}px; height: 8px; background: #38312a;"></div>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="margin-top: 26px; padding-top: 20px; border-top: 1px solid #332e25;">
+    <div class="lbl" style="margin-bottom: 14px;">The mote family — assigned by DNA, same as bodies are today</div>
+    <div style="display: flex; gap: 40px; align-items: flex-end;">
+      <sc-for list="{{family}}" as="m" hint-placeholder-count="3">
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 10px;">
+          <div style="display: grid; grid-template-columns: repeat({{m.cols}}, 8px);">
+            <sc-for list="{{m.cells}}" as="cell" hint-placeholder-count="36">
+              <div style="{{cell.s}}"></div>
+            </sc-for>
+          </div>
+          <div style="font-size: 11px; color: #8d8579;">{{m.name}}</div>
+        </div>
+      </sc-for>
+      <div style="font-size: 12px; line-height: 1.9; color: #b3ab9c; flex-grow: 1;">
+        one 2×2 eye, never a pair — the cheapest possible "not a villager"<br>
+        6–8 px wide against a villager's 7–12, and always perched<br>
+        no crown slot exists on a mote at all, so it can never grow one<br>
+        the eye is the burst origin: it widens a frame before it fires
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"hue":{"editor":"color","default":"#6fbcad","options":["#6fbcad","#7fb6d9","#b79fd6","#9dba77"],"section":"Creature"},"mote":{"editor":"enum","options":["orb","tall","wide"],"default":"orb","section":"Creature"},"$preview":{"width":880,"height":700}}'>
+class Component extends DCLogic {
+  hsl(hex) {
+    const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+    const mx = Math.max(r,g,b), mn = Math.min(r,g,b), l = (mx+mn)/2;
+    if (mx === mn) return [0,0,l*100];
+    const d = mx-mn, s = l > 0.5 ? d/(2-mx-mn) : d/(mx+mn);
+    let h; if (mx===r) h=(g-b)/d+(g<b?6:0); else if (mx===g) h=(b-r)/d+2; else h=(r-g)/d+4;
+    return [(h/6)*360, s*100, l*100];
+  }
+  hex(hD,sP,lP) {
+    const h=(((hD%360)+360)%360)/360, s=Math.min(100,Math.max(0,sP))/100, l=Math.min(100,Math.max(0,lP))/100;
+    let r,g,b;
+    if (s===0) { r=g=b=l; } else {
+      const q = l<0.5 ? l*(1+s) : l+s-l*s, p = 2*l-q;
+      const f=(t0)=>{ let t=t0; if(t<0)t+=1; if(t>1)t-=1;
+        if(t<1/6) return p+(q-p)*6*t; if(t<1/2) return q; if(t<2/3) return p+(q-p)*(2/3-t)*6; return p; };
+      r=f(h+1/3); g=f(h); b=f(h-1/3);
+    }
+    const c=(v)=>Math.round(v*255).toString(16).padStart(2,'0');
+    return '#'+c(r)+c(g)+c(b);
+  }
+  palette(base) { const [h,s,l] = this.hsl(base); return { base, lite: this.hex(h,s+6,l+14), dark: this.hex(h,s,l-14) }; }
+  motes() {
+    return {
+      orb:  { name:'orb',  w:6, eye:[2,2], rows:['.XXXX.','XXXXXX','XXWWXX','XXWWXX','XXXXXX','.XXXX.'] },
+      tall: { name:'tall', w:6, eye:[2,1], rows:['.XXXX.','XXWWXX','XXWWXX','XXXXXX','XXXXXX','XXXXXX','.XXXX.'] },
+      wide: { name:'wide', w:8, eye:[3,2], rows:['..XXXX..','.XXXXXX.','XXXWWXXX','XXXWWXXX','.XXXXXX.'] },
+    };
+  }
+  grid(m, pal, mode, px) {
+    const INK = { eye:'#FFF9EE', pupil:'#33241C' };
+    const skin = mode === 'dormant' ? pal.dark : pal.base;
+    const out = [];
+    m.rows.forEach((row, r) => row.split('').forEach((ch, c) => {
+      let bg = null;
+      if (ch === 'X' || ch === 'D') bg = skin;
+      else if (ch === 'A') bg = pal.lite;
+      else if (ch === 'K') bg = INK.pupil;
+      else if (ch === 'W') {
+        if (mode === 'dormant') bg = r === m.eye[1] + 1 ? INK.pupil : skin;
+        else if (mode === 'firing') bg = INK.eye;
+        else bg = (r === m.eye[1] + 1) ? INK.pupil : INK.eye;
+      }
+      out.push({ s: 'width:'+px+'px;height:'+px+'px;' + (bg ? 'background:'+bg+';' : '') });
+    }));
+    return out;
+  }
+  sparks(pal, mode) {
+    if (mode !== 'firing') return [];
+    const ring = [[0,-56],[-30,-46],[30,-46],[-48,-20],[48,-20],[-52,8],[52,8],[-30,30],[30,30],[0,42]];
+    return ring.map((p,i) => ({
+      s: 'position:absolute;left:calc(50% + '+p[0]+'px);top:calc(50% + '+p[1]+'px);'
+       + 'width:'+(i%3===0?8:6)+'px;height:'+(i%3===0?8:6)+'px;'
+       + 'background:'+(i%2?pal.lite:pal.base)+';opacity:'+(0.95-i*0.055)+';'
+    }));
+  }
+  renderVals() {
+    const pal = this.palette(this.props.hue ?? '#6fbcad');
+    const m = this.motes()[this.props.mote ?? 'orb'];
+    const defs = [
+      { key:'dormant', name:'Dormant', note:'No ping in 7+ days. Eye shut to a dark line, dark palette, no drift.' },
+      { key:'roosting', name:'Roosting', note:'Fired recently. Eye open with a pupil that tracks its zone.' },
+      { key:'firing', name:'Firing', note:'A ping lands. Pupil vanishes into full white, burst from the eye.' },
+    ];
+    const fam = this.motes();
+    return {
+      states: defs.map((d) => ({
+        name: d.name, note: d.note, cols: m.w, perchW: m.w * 8 + 16,
+        cells: this.grid(m, pal, d.key, 8), sparks: this.sparks(pal, d.key),
+      })),
+      family: ['orb','tall','wide'].map((k) => ({
+        name: fam[k].name, cols: fam[k].w, cells: this.grid(fam[k], pal, 'roosting', 8),
+      })),
+    };
+  }
+}
+</script>
+</body>
+</html>

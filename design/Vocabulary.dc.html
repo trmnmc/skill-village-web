@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; background: #1c1a17; color: #e8e2d6; }
+    a { color: #e2b45e; } a:hover { color: #e58c68; }
+    .lbl { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #8d8579; }
+  </style>
+</helmet>
+<div style="padding: 40px 44px; width: 792px;">
+
+  <div style="font-size: 22px; font-weight: 500; margin-bottom: 6px;">The vocabulary today — what a hook has to differ from</div>
+  <div style="font-size: 13px; line-height: 1.7; color: #b3ab9c; max-width: 640px; margin-bottom: 32px;">
+    Rebuilt from <span style="color:#e8e2d6">packages/core/src/appearance/grids.ts</span> — the real rows, the real parametric crowns, the real <span style="color:#e8e2d6">WING</span>, at true relative scale. Judge the hook options against this, not against a description.
+  </div>
+
+  <div style="display: flex; gap: 26px; align-items: flex-end; background: #232019; border: 1px solid #332e25; padding: 32px 28px 26px;">
+    <sc-for list="{{cast}}" as="c" hint-placeholder-count="4">
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+        <div style="display: flex; align-items: flex-start;">
+          <sc-if value="{{c.wings}}" hint-placeholder-val="{{ false }}">
+            <div style="display: grid; grid-template-columns: repeat(4, {{c.px}}px); margin-top: {{c.wingTop}}px;">
+              <sc-for list="{{c.wingL}}" as="w" hint-placeholder-count="12">
+                <div style="{{w.s}}"></div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <div style="display: grid; grid-template-columns: repeat({{c.cols}}, {{c.px}}px);">
+            <sc-for list="{{c.cells}}" as="cell" hint-placeholder-count="80">
+              <div style="{{cell.s}}"></div>
+            </sc-for>
+          </div>
+          <sc-if value="{{c.wings}}" hint-placeholder-val="{{ false }}">
+            <div style="display: grid; grid-template-columns: repeat(4, {{c.px}}px); margin-top: {{c.wingTop}}px;">
+              <sc-for list="{{c.wingR}}" as="w" hint-placeholder-count="12">
+                <div style="{{w.s}}"></div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+        <div style="width: 100%; height: 3px; background: #4a4238;"></div>
+        <div style="text-align: center;">
+          <div style="font-size: 12px; color: #e8e2d6; margin-bottom: 3px;">{{c.name}}</div>
+          <div style="font-size: 11px; color: #7d7568; line-height: 1.6;">{{c.note}}</div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="display: flex; gap: 32px; margin-top: 26px;">
+    <div style="flex-grow: 1;">
+      <div class="lbl" style="margin-bottom: 8px;">What already carries meaning</div>
+      <div style="font-size: 12px; line-height: 1.9; color: #b3ab9c;">
+        <span style="color:#e8e2d6">crown</span> — every villager may have one; it reads as citizenship<br>
+        <span style="color:#e8e2d6">wings</span> — already means agent, not "flies"<br>
+        <span style="color:#e8e2d6">feet (D)</span> — marks the walk cycle; agents lose them to the flight underside<br>
+        <span style="color:#e8e2d6">a pair of 2×2 eyes</span> — every body in the village has exactly two
+      </div>
+    </div>
+    <div style="flex-grow: 1;">
+      <div class="lbl" style="margin-bottom: 8px;">So a hook can only differ by</div>
+      <div style="font-size: 12px; line-height: 1.9; color: #b3ab9c;">
+        never having a crown — free, but weak on its own<br>
+        never standing on the ground — strong, costs nothing to draw<br>
+        being visibly smaller — strong at a distance, needs no new art<br>
+        having one eye instead of two — strongest, and the only new art
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":880,"height":560}}'>
+class Component extends DCLogic {
+  hsl(hex) {
+    const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+    const mx = Math.max(r,g,b), mn = Math.min(r,g,b), l = (mx+mn)/2;
+    if (mx === mn) return [0,0,l*100];
+    const d = mx-mn, s = l > 0.5 ? d/(2-mx-mn) : d/(mx+mn);
+    let h; if (mx===r) h=(g-b)/d+(g<b?6:0); else if (mx===g) h=(b-r)/d+2; else h=(r-g)/d+4;
+    return [(h/6)*360, s*100, l*100];
+  }
+  hex(hD,sP,lP) {
+    const h=(((hD%360)+360)%360)/360, s=Math.min(100,Math.max(0,sP))/100, l=Math.min(100,Math.max(0,lP))/100;
+    let r,g,b;
+    if (s===0) { r=g=b=l; } else {
+      const q = l<0.5 ? l*(1+s) : l+s-l*s, p = 2*l-q;
+      const f=(t0)=>{ let t=t0; if(t<0)t+=1; if(t>1)t-=1;
+        if(t<1/6) return p+(q-p)*6*t; if(t<1/2) return q; if(t<2/3) return p+(q-p)*(2/3-t)*6; return p; };
+      r=f(h+1/3); g=f(h); b=f(h-1/3);
+    }
+    const c=(v)=>Math.round(v*255).toString(16).padStart(2,'0');
+    return '#'+c(r)+c(g)+c(b);
+  }
+  palette(base) { const [h,s,l] = this.hsl(base); return { base, lite: this.hex(h,s+6,l+14), dark: this.hex(h,s,l-14) }; }
+  crownCells(id, w) {
+    const c = Math.floor((w - 1) / 2), L = 1, R = w - 2;
+    if (id === 'crest') return { h:3, cells:[[c,-3],[c-1,-2],[c,-2],[c+1,-2],[c-2,-1],[c-1,-1],[c,-1],[c+1,-1],[c+2,-1]] };
+    if (id === 'ears') return { h:3, cells:[[L,-3],[R,-3],[L,-2],[R,-2],[L,-1],[L+1,-1],[R-1,-1],[R,-1]] };
+    if (id === 'horns') return { h:2, cells:[[L,-2],[R,-2],[L,-1],[L+1,-1],[R-1,-1],[R,-1]] };
+    if (id === 'tuft') return { h:1, cells:[[c-1,-1],[c+1,-1]] };
+    return { h:0, cells:[] };
+  }
+  withCrown(rows, w, crown) {
+    const k = this.crownCells(crown, w);
+    if (!k.h) return rows;
+    const top = [];
+    for (let r = -k.h; r < 0; r++) {
+      let line = '';
+      for (let c = 0; c < w; c++) line += k.cells.some((p) => p[0] === c && p[1] === r) ? 'X' : '.';
+      top.push(line);
+    }
+    return top.concat(rows);
+  }
+  grid(rows, pal, px, eyes, eyeRowOffset) {
+    const INK = { eye:'#FFF9EE', pupil:'#33241C', mouth:'#33241C' };
+    const pupils = {};
+    if (eyes) eyes.forEach((e,i) => { pupils[(e[0]+(i===0?1:0))+','+(e[1]+eyeRowOffset+1)] = true; });
+    const out = [];
+    rows.forEach((row, r) => row.split('').forEach((ch, c) => {
+      let bg = null;
+      if (ch === 'X' || ch === 'D') bg = pal.base;
+      else if (ch === 'A') bg = pal.lite;
+      else if (ch === 'K') bg = INK.mouth;
+      else if (ch === 'W') bg = pupils[c+','+r] ? INK.pupil : INK.eye;
+      out.push({ s: 'width:'+px+'px;height:'+px+'px;' + (bg ? 'background:'+bg+';' : '') });
+    }));
+    return out;
+  }
+  wing(pal, side, px) {
+    const FULL = ['XXX.','XXXX','.XX.'];
+    const rows = side === 'L' ? FULL.map((r) => r.split('').reverse().join('')) : FULL;
+    return this.grid(rows, pal, px, null, 0);
+  }
+  renderVals() {
+    const coral = this.palette('#e58c68'), sky = this.palette('#7fb6d9'), teal = this.palette('#6fbcad'), sage = this.palette('#9dba77');
+    const round = { rows:['.XXXXXXX.','XXXXXXXXX','XXWWXWWXX','XXWWXWWXX','XXXXKXXXX','XXXXXXXXX','.XXXXXXX.','..DD.DD..'], eyes:[[2,2],[5,2]], w:9 };
+    const bean  = { rows:['.XXXXX.','XXXXXXX','XWWXWWX','XWWXWWX','XXXKXXX','XXXXXXX','XXXXXXX','.XXXXX.','..XXX..'], eyes:[[1,2],[4,2]], w:7 };
+    const pip   = { rows:['..XXX..','.XXXXX.','XWWXWWX','XWWXWWX','XXXKXXX','.XXXXX.','..DDD..'], eyes:[[1,2],[4,2]], w:7 };
+    const orb   = { rows:['.XXXX.','XXXXXX','XXWWXX','XXWWXX','XXXXXX','.XXXX.'], eyes:[[2,2]], w:6 };
+
+    const skillRows = this.withCrown(round.rows, round.w, 'crest');
+    const agentRows = this.withCrown(bean.rows, bean.w, 'ears');
+
+    return {
+      cast: [
+        { name:'skill villager', note:'round + crest\ncrown, feet, walks', cols:round.w, px:8, wings:false, wingTop:0,
+          cells:this.grid(skillRows, coral, 8, round.eyes, 3), wingL:[], wingR:[] },
+        { name:'agent villager', note:'bean + ears + wings\nflight underside', cols:bean.w, px:8, wings:true, wingTop:34,
+          cells:this.grid(agentRows, sky, 8, bean.eyes, 3), wingL:this.wing(sky,'L',8), wingR:this.wing(sky,'R',8) },
+        { name:'hook — Option A', note:'pip, crownless\n60% scale, perched', cols:pip.w, px:5, wings:false, wingTop:0,
+          cells:this.grid(pip.rows, sage, 5, pip.eyes, 0), wingL:[], wingR:[] },
+        { name:'hook — Option C', note:'orb mote\none eye, perched', cols:orb.w, px:6, wings:false, wingTop:0,
+          cells:this.grid(orb.rows, teal, 6, orb.eyes, 0), wingL:[], wingR:[] },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>
